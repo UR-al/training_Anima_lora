@@ -1,0 +1,96 @@
+# Shared infrastructure settings — rarely change between experiments.
+
+pretrained_model_name_or_path = "models/diffusion_models/anima-base-v1.0.safetensors"
+qwen3 = "models/text_encoders/qwen_3_06b_base.safetensors"
+vae = "models/vae/qwen_image_vae.safetensors"
+
+output_dir = "output/ckpt"
+output_name = "anima_lora"
+logging_dir = "output/logs"
+log_with = "tensorboard"
+
+network_module = "networks.lora_anima"
+network_train_unet_only = true
+
+# ── Dataset paths (shared preprocess ↔ training contract) ──────────────────
+# Top-level scalars so any preset / method can override (the merge chain is
+# base.toml → presets.toml[<preset>] → methods/<method>.toml). 
+# NOTE: preprocess-only knobs (source_image_dir, drop_lowres_images,
+# min_pixels) now live in configs/preprocess.toml
+
+resized_image_dir = "post_image_dataset/resized"
+lora_cache_dir = "post_image_dataset/lora"
+
+# fnmatch glob applied to each image's path relative to its subset's image_dir.
+# `*` (or unset) trains on everything. Use `|` to OR-combine patterns:
+#   `char_a/*`           → one subfolder
+#   `char_a/*|char_b/*`  → two subfolders
+#   `*portrait*`         → any path containing "portrait"
+# Same blueprint applies to validation enumeration.
+path_pattern = "*"
+
+# Multi-scale constant-token tiers (`target_res`) live in configs/preprocess.toml.
+# It's a preprocess knob that training mirrors, and — unlike this file — it is
+# preserved across `make update` (base.toml rides the code-file path and is
+# overwritten so new infra keys ship). Set your resolution tiers there.
+
+optimizer_type = "AdamW"
+lr_scheduler = "cosine"
+lr_warmup_steps = 0.05
+
+timestep_sampling = "sigmoid"
+sigmoid_bias = 0.0
+discrete_flow_shift = 1.0
+
+gradient_checkpointing = false
+unsloth_offload_checkpointing = false
+
+use_vae_cache = true
+use_text_cache = true
+skip_cache_check = true
+vae_chunk_size = 64
+vae_disable_cache = true
+masked_loss = true
+torch_compile = true
+attn_mode = "flash"
+compile_dynamic_seq = true
+# Partitioner recompute cap — restores the pre-2026-06-10 no-grad-ckpt VRAM
+# footprint after the custom-autograd removal (which had implicitly pinned the
+# saved-for-backward set). 0.85 ≈ old peak at identical step time. Auto-skipped
+# (logged) when gradient_checkpointing=true — incompatible and redundant there.
+activation_memory_budget = 0.99
+log_every_n_steps=2
+dataloader_pin_memory = true
+persistent_data_loader_workers= true
+use_cmmd = false
+channel_scaling_alpha = 0.5
+gradient_accumulation_steps=1
+
+[general]
+[[datasets]]
+batch_size = 1
+
+# validation_split = 0.025
+validation_split_num = 0
+validation_seed = 42
+
+# Kohya-style folder repeats: when true, images under a subfolder named
+# {n}_... (e.g. image_dataset/5_mychar/) are repeated n times per epoch
+# instead of num_repeats; 0_... drops the folder from training. Folder names
+# survive preprocessing (resize/caches mirror the source tree), so this
+# applies to the resized tree too. Training pool only. Kept at the dataset
+# level (subset-ascendable) so the GUI's [[datasets]] override can flip it.
+repeat_by_folder_name = false
+
+  [[datasets.subsets]]
+  # Templates resolve against top-level path keys (source_image_dir,
+  # resized_image_dir, lora_cache_dir) at load time — see
+  # library.config.io.load_dataset_config_from_base.
+  image_dir = '{resized_image_dir}'
+  cache_dir = '{lora_cache_dir}'
+  num_repeats = 1
+  # Walk subfolders under image_dir. Resized output and caches mirror the
+  # source subdir layout, but image stems must still be unique across the
+  # entire tree — the trainer enforces this and the matching preprocess
+  # scripts pass --recursive automatically.
+  recursive = true

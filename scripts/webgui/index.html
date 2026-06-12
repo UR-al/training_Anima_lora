@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anima LoRA — Trainer</title>
+<style>
+  :root{--bg:#15161a;--panel:#1d1f25;--panel2:#23262e;--line:#30343d;--txt:#e6e7ea;--mut:#9aa0ab;--acc:#7f77dd;--ok:#1d9e75;--warn:#d85a30;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,'Segoe UI',sans-serif}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  header .tag{font-size:12px;color:var(--mut)}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 12px}
+  .full{grid-column:1/3}
+  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+  input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font:13px ui-sans-serif,system-ui,sans-serif}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+  textarea{resize:vertical;min-height:38px;font-family:ui-monospace,Consolas,monospace}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .chk{display:flex;align-items:center;gap:8px;margin-top:12px}
+  .chk input{width:auto}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  button{cursor:pointer;border:0;border-radius:8px;padding:9px 16px;font:600 13px ui-sans-serif,system-ui,sans-serif}
+  .primary{background:var(--acc);color:#fff}
+  .ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+  .danger{background:var(--warn);color:#fff}
+  pre{background:#101116;border:1px solid var(--line);border-radius:8px;padding:12px;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;color:#c9cdd6;margin:8px 0 0}
+  .status{display:flex;align-items:center;gap:10px;font-size:13px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#666}
+  .dot.run{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  a{color:var(--acc)}
+  .hint{font-size:11px;color:var(--mut);margin-top:3px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Anima&nbsp;LoRA</h1>
+  <span class="tag">merged trainer · web control panel</span>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Model / method</h2>
+    <label>Method</label><select id="method"></select>
+    <label>Preset (VRAM profile)</label><select id="preset"></select>
+    <div class="row">
+      <div><label>Network dim (rank)</label><input id="network_dim" type="number" placeholder="32"></div>
+      <div><label>Max train epochs</label><input id="max_train_epochs" type="number" placeholder="e.g. 16"></div>
+    </div>
+    <label>Dataset config (.toml)</label><input id="dataset_config" placeholder="path\to\dataset_config.toml (blank = base.toml default)">
+    <div class="row">
+      <div><label>Output name</label><input id="output_name" placeholder="my_lora"></div>
+      <div><label>Seed</label><input id="seed" type="number" placeholder="42"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Optimizer / scheduler</h2>
+    <label>Optimizer (~89 available)</label><select id="optimizer_type"></select>
+    <label>Learning rate</label><input id="learning_rate" placeholder="e.g. 1e-4 (blank = method default)">
+    <label>Optimizer args <span class="hint">space-separated key=value</span></label>
+    <textarea id="optimizer_args" placeholder="base_optimizer_type='CAME' weight_decay=0.01"></textarea>
+    <label>LR scheduler</label><select id="lr_scheduler_type"></select>
+    <div class="row">
+      <div><label>Scheduler args</label><input id="lr_scheduler_args" placeholder="gamma=0.9 first_cycle_max_steps=200"></div>
+      <div><label>LR warmup steps</label><input id="lr_warmup_steps" placeholder="0 for custom sched"></div>
+    </div>
+  </div>
+
+  <div class="panel full">
+    <h2>Monitor &amp; extra</h2>
+    <div class="row">
+      <div class="chk"><input id="monitor" type="checkbox" checked><label style="margin:0">Live web monitor</label></div>
+      <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
+    </div>
+    <label>Extra CLI flags <span class="hint">appended verbatim, e.g. --network_alpha 16 --save_every_n_epochs 4</span></label>
+    <input id="extra_flags" placeholder="">
+    <div class="btns">
+      <button class="ghost" onclick="preview()">Preview command</button>
+      <button class="primary" onclick="start()">▶ Start training</button>
+      <button class="danger" onclick="stop()">■ Stop</button>
+      <a id="monlink" href="#" target="_blank" style="margin-left:auto;align-self:center;display:none">Open monitor ↗</a>
+    </div>
+    <pre id="cmd" style="display:none"></pre>
+    <div class="status" style="margin-top:12px"><span class="dot" id="dot"></span><span id="stat">idle</span></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function fill(sel, items, cur){ sel.innerHTML = items.map(x=>`<option ${x===cur?'selected':''}>${x}</option>`).join(''); }
+function form(extra){
+  const f = {};
+  ['method','preset','network_dim','max_train_epochs','dataset_config','output_name','seed',
+   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args',
+   'lr_warmup_steps','monitor_port','extra_flags'].forEach(k=>{ f[k] = $(k).value; });
+  f.monitor = $('monitor').checked;
+  return Object.assign(f, extra||{});
+}
+async function post(path, body){ const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); }
+function showCmd(t){ const p=$('cmd'); p.style.display='block'; p.textContent=t; }
+
+async function preview(){ const r = await post('/api/launch', form({dry_run:true})); showCmd(r.command || ('error: '+(r.error||'?'))); }
+async function start(){
+  const r = await post('/api/launch', form());
+  if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
+  showCmd('$ '+r.command);
+  if(r.monitor_url){ const a=$('monlink'); a.href=r.monitor_url; a.style.display='inline'; a.textContent='Open monitor ('+r.monitor_url+') ↗'; }
+  poll();
+}
+async function stop(){ const r = await post('/api/stop', {}); if(!r.ok) showCmd('✗ '+(r.error||'')); }
+async function poll(){
+  try{
+    const s = await (await fetch('/api/status')).json();
+    $('dot').className = 'dot' + (s.running ? ' run' : '');
+    if(s.running){ const m = Math.floor((s.elapsed||0)/60), sec = Math.floor((s.elapsed||0)%60); $('stat').textContent = `training (pid ${s.pid}) — ${m}m ${sec}s`; }
+    else if(s.returncode===0){ $('stat').textContent = 'finished ✓'; }
+    else if(s.returncode!=null){ $('stat').textContent = 'exited (code '+s.returncode+')'; }
+    else { $('stat').textContent = 'idle'; }
+    if(s.monitor_url){ const a=$('monlink'); a.href=s.monitor_url; a.style.display='inline'; }
+  }catch(e){}
+}
+(async function init(){
+  const o = await (await fetch('/api/options')).json();
+  fill($('method'), o.methods, 'lora');
+  fill($('preset'), o.presets, 'default');
+  fill($('optimizer_type'), o.optimizers, 'AdamW');
+  fill($('lr_scheduler_type'), o.schedulers, 'cosine');
+  setInterval(poll, 2000); poll();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv
+*.egg-info/
+dist/
+build/
+output/
+*.safetensors
+# Ship the SmoothQuant-style per-channel calibration as a vendored asset —
+# small (~3.5MB), strictly an input-magnitude prior on the base DiT, not a
+# checkpoint. Regenerate via `bench/channel_stats/analyze_lora_input_channels.py`.
+!networks/calibration/channel_stats.safetensors
+!networks/calibration/cond_channel_stats.safetensors
+*.ckpt
+*.pt
+.DS_Store
+*.whl
+image_dataset
+post_image_dataset/
+ip-adapter-dataset/
+easycontrol-dataset/
+masks/
+masks_mit/
+masks_sam/
+archive/graft/runtime/train_images/
+archive/graft/runtime/candidates/
+archive/graft/runtime/survivors/
+archive/graft/runtime/generation_prompts.txt
+/models/
+!library/models/
+test_output/
+output_temp/
+/workflows
+results
+logs
+.claude
+.env
+.anima-update-backups
+node.zip
+_archive/
+configs/gui-methods/custom/
+near_twins_temp.toml
+# web monitor runtime state (regenerated each run)
+library/monitoring/monitor_data/
+smoke_data/
