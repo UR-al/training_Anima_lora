@@ -1377,13 +1377,33 @@ def import_config(path: str) -> dict:
                 if k not in ("datasets", "general", "subsets")
             }
 
-    # Dataset blueprint (anima/kohya): pull subsets from the [[datasets]] blocks.
+    # Dataset blueprint (anima/kohya): pull subsets from the [[datasets]] blocks,
+    # annotating each with its block's resolution / batch_size / skip so a multi-
+    # block (multi-resolution) kohya dataset maps to per-subset tiers + batch (the
+    # GUI multi-scale per-block model) instead of flattening to one tier.
     res_for_tier = flat.get("resolution")
+    _block_tiers: list[int] = []
     if datasets and not subsets:
         for ds in datasets:
-            if isinstance(ds, dict):
-                res_for_tier = res_for_tier or ds.get("resolution")
-                subsets.extend(ds.get("subsets") or [])
+            if not isinstance(ds, dict):
+                continue
+            res_for_tier = res_for_tier or ds.get("resolution")
+            d_tier = (
+                _snap_tier(ds.get("resolution"))
+                if ds.get("resolution") is not None
+                else None
+            )
+            d_bs = ds.get("batch_size")
+            if d_tier and d_tier not in _block_tiers:
+                _block_tiers.append(d_tier)
+            for sub in ds.get("subsets") or []:
+                if isinstance(sub, dict):
+                    sub = dict(sub)
+                    if d_tier:
+                        sub["_tier"] = d_tier
+                    if d_bs is not None:
+                        sub["_batch"] = d_bs
+                    subsets.append(sub)
 
     form: dict = {"method": "lora"}
 
@@ -1491,13 +1511,24 @@ def import_config(path: str) -> dict:
             "warmup_ratio can't convert to steps without total steps — set LR warmup manually."
         )
 
-    # resolution → target_res tier(s)
-    tier = _snap_tier(res_for_tier) if res_for_tier is not None else None
-    if tier:
-        form["target_res"] = [str(tier)]
+    # resolution → target_res tier(s). Multi-block kohya dataset (one [[datasets]]
+    # block per resolution) → multi-scale across each block's tier; the per-tier
+    # "skip upscaling" auto-default (next-lower tier) reproduces skip_image_resolution.
+    if len(_block_tiers) >= 2:
+        form["target_res"] = [str(t) for t in sorted(set(_block_tiers))]
+        form["multiscale"] = True
         notes.append(
-            f"resolution {res_for_tier} → target_res tier {tier} (anima constant-token)."
+            f"{len(datasets)} dataset blocks → multi-scale tiers "
+            f"{sorted(set(_block_tiers))} (per-block batch/repeat kept; "
+            "skip_image_resolution → auto 'skip upscaling')."
         )
+    else:
+        tier = _snap_tier(res_for_tier) if res_for_tier is not None else None
+        if tier:
+            form["target_res"] = [str(tier)]
+            notes.append(
+                f"resolution {res_for_tier} → target_res tier {tier} (anima constant-token)."
+            )
 
     # Flow-matching / timestep settings → auto-arg overrides (the form's adv[]),
     # which setForm checks on + fills in. kohya's discrete min/max_timestep (0~1000)
@@ -1573,19 +1604,23 @@ def import_config(path: str) -> dict:
     for s in subsets:
         if not isinstance(s, dict) or not s.get("image_dir"):
             continue
-        out_subs.append(
-            {
-                "image_dir": s.get("image_dir"),
-                "num_repeats": s.get("num_repeats", 1),
-                "keep_tokens": s.get("keep_tokens", 0),
-                "caption_extension": s.get("caption_extension", ".txt"),
-                "caption_dropout_rate": s.get("caption_dropout_rate", 0),
-                "flip_aug": bool(s.get("flip_aug")),
-                "random_crop": bool(s.get("random_crop")),
-                "random_crop_padding_percent": s.get("random_crop_padding_percent", 0.05),
-                "recursive": bool(s.get("recursive")),
-            }
-        )
+        entry = {
+            "image_dir": s.get("image_dir"),
+            "num_repeats": s.get("num_repeats", 1),
+            "keep_tokens": s.get("keep_tokens", 0),
+            "caption_extension": s.get("caption_extension", ".txt"),
+            "caption_dropout_rate": s.get("caption_dropout_rate", 0),
+            "flip_aug": bool(s.get("flip_aug")),
+            "random_crop": bool(s.get("random_crop")),
+            "random_crop_padding_percent": s.get("random_crop_padding_percent", 0.05),
+            "recursive": bool(s.get("recursive")),
+        }
+        # per-block tier + batch (multi-resolution kohya dataset → per-subset)
+        if s.get("_tier"):
+            entry["tiers"] = [s["_tier"]]
+        if s.get("_batch") is not None:
+            entry["batch_size"] = s["_batch"]
+        out_subs.append(entry)
 
     dropped = sorted(k for k in _IMPORT_DROP if k in flat)
     if dropped:
