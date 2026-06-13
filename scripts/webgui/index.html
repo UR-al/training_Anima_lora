@@ -93,7 +93,8 @@
 </style>
 </head>
 <body>
-<header><h1>Anima&nbsp;LoRA</h1><span class="tag">merged trainer · web control panel</span></header>
+<header><h1>Anima&nbsp;LoRA</h1><span class="tag">merged trainer · web control panel</span>
+<select id="lang" onchange="setLang(this.value)" style="width:auto;margin-left:auto"><option value="en">English</option><option value="ko">한국어</option></select></header>
 
 <div class="wrap">
   <div class="panel">
@@ -335,6 +336,39 @@ function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cu
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
 function showCmd(t){ const p=$('cmd'); p.style.display='block'; p.textContent=t; }
 
+// ---- i18n (English default; Korean overlay on plain-text labels/headings/buttons) ----
+const KO={
+  "Model / method":"모델 / 방법","Adapter / LoRA type":"어댑터 / LoRA 종류",
+  "Optimizer / scheduler":"옵티마이저 / 스케줄러","Dataset & preprocessing":"데이터셋 & 전처리",
+  "Monitor & run":"모니터 & 실행","Queue & saved configs":"큐 & 저장된 설정",
+  "Method":"방법","Preset (VRAM profile)":"프리셋 (VRAM 프로필)","Max train epochs":"최대 학습 epoch",
+  "Seed":"시드","Output name":"출력 이름","LyCORIS algo":"LyCORIS 알고리즘",
+  "LyCORIS preset (target)":"LyCORIS 프리셋 (타깃)","Network dim (rank)":"네트워크 차원(rank)",
+  "Network alpha":"네트워크 alpha","Learning rate":"학습률","LR scheduler":"LR 스케줄러",
+  "Scheduler args":"스케줄러 args","LR warmup steps":"LR warmup 스텝","Optimizer":"옵티마이저","Scheduler":"스케줄러",
+  "Raw images folder":"원본 이미지 폴더","Dataset name":"데이터셋 이름","Batch size":"배치 크기",
+  "Repeats / image":"이미지당 반복","Keep tokens":"keep tokens","Caption ext":"캡션 확장자",
+  "Caption dropout rate":"캡션 드롭아웃 비율","Monitor port":"모니터 포트","Extra CLI flags":"추가 CLI 플래그",
+  "DiT / base model":"DiT / 베이스 모델","Text encoder (qwen3)":"텍스트 인코더(qwen3)",
+  "Flip augment":"좌우 반전","Random crop":"랜덤 크롭","MIT text threshold":"MIT 텍스트 임계값",
+  "MIT dilate (px)":"MIT 팽창(px)","SAM3 checkpoint":"SAM3 체크포인트",
+  "Name this job / config":"작업/설정 이름","Load saved config":"저장된 설정 불러오기",
+  "Preview command":"명령 미리보기","▶ Start now":"▶ 지금 시작","■ Stop":"■ 정지",
+  "+ Add image subset":"+ 이미지 subset 추가","Build & use ↓":"생성 & 사용 ↓",
+  "+ Add to queue":"+ 큐에 추가","Save config":"설정 저장","Load":"불러오기","Delete":"삭제",
+  "▶ Run queue":"▶ 큐 실행","Clear":"비우기","Go":"이동","↑ Up":"↑ 상위","Select this folder":"이 폴더 선택",
+};
+let _orig=new WeakMap();
+function setLang(l){ try{localStorage.setItem('anima_lang',l);}catch(e){}
+  const sel=$('lang'); if(sel) sel.value=l;
+  document.querySelectorAll('h2,h3,label,button,summary').forEach(el=>{
+    if(el.children.length) return;  // skip rich labels (with <b>/<code>/<span>) to not break markup
+    if(!_orig.has(el)) _orig.set(el, el.textContent);
+    const en=_orig.get(el).trim();
+    el.textContent=(l==='ko'&&KO[en])?KO[en]:_orig.get(el);
+  });
+}
+
 function form(extra){
   const f={}; FIELDS.forEach(k=>{ const el=$(k); if(el) f[k]=el.value; });
   CHECKS.forEach(k=>{ const el=$(k); if(el) f[k]=el.checked; });
@@ -536,6 +570,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   renderArgs(o.arg_groups); addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
   optHelp('optimizer_type'); optHelp('lr_scheduler_type');
+  let _lang='en'; try{ _lang=localStorage.getItem('anima_lang')||'en'; }catch(e){} setLang(_lang);
   setInterval(poll,2000); poll();
 })();
 </script>
