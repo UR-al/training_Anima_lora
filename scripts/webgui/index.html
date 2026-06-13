@@ -194,35 +194,25 @@
 
   <div class="panel full">
     <h2>Dataset &amp; preprocessing</h2>
-    <div class="chk"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) → train, all from one Start (like latent caching)</label></div>
-    <p class="hint" id="manual_hint">Multiple image folders, or already resized + cached dirs? <b>Uncheck</b> the box above for the multi-subset builder (<code>+ Add image subset</code>).</p>
+    <div class="row">
+      <div><label>Dataset name</label><input id="ds_name" placeholder="my_char"></div>
+      <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
+    </div>
+    <h3>Subsets <span style="text-transform:none;color:var(--mut)">— image folder(s) + per-subset settings</span></h3>
+    <div id="subsets"></div>
+    <div class="btns" style="margin-top:8px"><button class="ghost" onclick="addSubset()">+ Add image subset</button></div>
 
-    <div id="autoblock">
-      <label>Raw images folder <span class="hint">images + matching <code>.txt</code> caption files</span></label>
-      <div class="pathrow"><input id="raw_image_dir" placeholder="C:\path\to\images"><button class="pickbtn" title="Browse folders" onclick="pickFolder('raw_image_dir')">📁</button></div>
-      <div class="row">
-        <div><label>Dataset name</label><input id="ds_name" placeholder="my_char"></div>
-        <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
-      </div>
-      <div class="row3">
-        <div><label>Repeats / image</label><input id="ds_num_repeats" type="number" value="1"></div>
-        <div><label>Keep tokens</label><input id="ds_keep_tokens" type="number" value="0"></div>
-        <div><label>Caption ext</label><input id="ds_caption_extension" value=".txt"></div>
-      </div>
-      <div class="row3">
-        <div><label>Caption dropout rate</label><input id="ds_caption_dropout_rate" value="0"></div>
-        <div class="chk"><input id="ds_flip_aug" type="checkbox"><label>Flip augment</label></div>
-        <div class="chk"><input id="ds_random_crop" type="checkbox"><label>Random crop</label></div>
-      </div>
+    <div class="chk" style="margin-top:14px"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) each subset folder, then train, from one Start. <b>Off</b> = the subset folders are already resized + cached (set each subset's <code>cache_dir</code>).</label></div>
+
+    <div id="prep_settings">
       <div class="chk"><input id="drop_lowres" type="checkbox" checked><label>Drop low-res source images (&lt;0.5MP)</label></div>
-
       <h3>Resolution tiers <span style="text-transform:none;color:var(--mut)">(target_res)</span></h3>
       <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow.</p>
       <div id="tiers" class="tiers"></div>
       <div class="chk"><input id="multiscale" type="checkbox" onchange="updateMultiscale()"><label><b>Multi-scale</b> — train every image at <b>all</b> selected tiers at once (kohya-style, e.g. 512+1024+1536). Off = each image goes to its single best-fit tier.</label></div>
       <div class="chk" id="ms_skip_row" style="display:none"><input id="ms_skip_upscale" type="checkbox" checked onchange="updateMultiscale()"><label>Skip upscaling — a tier only takes images big enough for it (anima equivalent of kohya <code>skip_image_resolution</code>). Uncheck to force every image into every tier.</label></div>
       <div id="ms_skip_inputs" style="display:none;margin-top:6px"></div>
-      <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier (or only tiers it's large enough for, if "Skip upscaling" is on), one <code>[[datasets]]</code> block per tier. Needs ≥2 tiers checked.</p>
+      <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier (or only tiers it's large enough for, if "Skip upscaling" is on), one <code>[[datasets]]</code> block per tier per subset. Needs ≥2 tiers checked.</p>
       <div class="row" style="margin-top:10px">
         <div><label>Caption shuffle variants <span class="hint">0 = off</span></label><input id="caption_shuffle_variants" type="number" value="4"></div>
         <div><label>Tag dropout rate <span class="hint">preprocess</span></label><input id="caption_tag_dropout_rate" value="0.1"></div>
@@ -245,21 +235,8 @@
       </div>
     </div>
 
-    <div id="manualblock" style="display:none">
-      <p class="hint">Manual mode: point at already-resized + cached dirs. Build a dataset config from one or more subsets.</p>
-      <div class="row">
-        <div><label>Dataset name</label><input id="m_ds_name" placeholder="my_dataset"></div>
-        <div><label>Batch size</label><input id="m_ds_batch" type="number" value="1"></div>
-      </div>
-      <div id="subsets"></div>
-      <div class="btns" style="margin-top:10px">
-        <button class="ghost" onclick="addSubset()">+ Add image subset</button>
-        <button class="primary" onclick="buildDataset()">Build &amp; use ↓</button>
-      </div>
-    </div>
-
-    <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-set in auto mode · built/typed in manual mode</span></label>
-    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode" onchange="if(this.value.trim())importConfigFile(this.value.trim())"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml',importConfigFile)">📁</button></div>
+    <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-built from the subsets on Start · or type / import one to override</span></label>
+    <div class="pathrow"><input id="dataset_config" placeholder="auto-built from subsets" onchange="if(this.value.trim())importConfigFile(this.value.trim())"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml',importConfigFile)">📁</button></div>
     <p class="hint">Entering / picking a dataset .toml auto-fills the subsets &amp; tiers. To import a <b>LoRA_Easy / kohya</b> config, use "Import config file" in Queue &amp; saved configs below.</p>
   </div>
 
@@ -334,10 +311,9 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
   'monitor_port','extra_flags',
   'dit_path','te_path','vae_path',
-  'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
-  'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
+  'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
-const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','ds_random_crop','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit'];
+const CHECKS = ['monitor','daemon','auto_preprocess','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
@@ -383,6 +359,7 @@ function form(extra){
   f.target_res=[...document.querySelectorAll('.tier:checked')].map(c=>c.value);
   const sk=[...document.querySelectorAll('#ms_skip_inputs .skipin')].map(i=>i.dataset.t+':'+(i.value||'0'));
   if(sk.length) f.ms_skip=sk.join(',');  // per-tier skip 'tier:edge,...' for multi-scale
+  f.subsets=collectSubsets();  // the dataset definition (image_dir [+cache_dir] + per-subset settings)
   const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en||!en.checked) return;
     if(a.is_bool){ adv.push({flag:a.flag,is_bool:true,value:true}); }
     else { const v=$('advv_'+a.dest); adv.push({flag:a.flag,is_bool:false,nargs:a.nargs,value:v?v.value:''}); } });
@@ -391,6 +368,7 @@ function form(extra){
 function setForm(f){ if(!f) return;
   Object.keys(f).forEach(k=>{ const el=$(k); if(el){ if(el.type==='checkbox') el.checked=!!f[k]; else if(k!=='target_res'&&k!=='adv') el.value=(f[k]==null?'':f[k]); } });
   if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
+  if(Array.isArray(f.subsets)){ $('subsets').innerHTML=''; f.subsets.forEach(s=>addSubset(s)); }
   (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
     const en=$('adv_'+a.dest); if(en) en.checked=true; const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
   // parse a loaded network_args string back into the structured controls (known
@@ -430,8 +408,13 @@ function updateAlgo(){ const lyco=($('network_module').value||'').includes('lyco
   const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?(id==='na_grp_oft'?'flex':'block'):'none'; };
   show('na_grp_lokr', algo==='lokr'); show('na_grp_dylora', algo==='dylora'); show('na_grp_oft', algo==='diag-oft'||algo==='boft');
 }
-function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block';
-  const mh=$('manual_hint'); if(mh) mh.style.display=auto?'block':'none'; }
+function updatePrep(){ $('prep_settings').style.display=$('auto_preprocess').checked?'block':'none'; }
+function collectSubsets(){ return [...document.querySelectorAll('#subsets .subset')].map(d=>{
+  const g=c=>{const e=d.querySelector(c);return e?(e.type==='checkbox'?e.checked:e.value):'';};
+  return {image_dir:(g('.s_image_dir')||'').trim(), cache_dir:(g('.s_cache_dir')||'').trim(),
+    num_repeats:g('.s_num_repeats'), keep_tokens:g('.s_keep_tokens'), caption_extension:g('.s_caption_extension'),
+    caption_dropout_rate:g('.s_caption_dropout_rate'), flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'), recursive:g('.s_recursive')};
+  }).filter(s=>s.image_dir); }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
   const sr=$('ms_skip_row'); if(sr) sr.style.display=on?'flex':'none';
@@ -523,10 +506,10 @@ function filterArgs(q){ q=(q||'').toLowerCase();
 // ---- manual dataset builder ----
 function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.className='subset';
   div.innerHTML=`<button class="x" onclick="this.parentElement.remove()">✕</button>
-    <label>image_dir (resized)</label>
-    <div class="pathrow"><input class="s_image_dir" value="${esc(s.image_dir||'')}" placeholder="post_image_dataset\\resized\\..."><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
-    <label>cache_dir</label>
-    <div class="pathrow"><input class="s_cache_dir" value="${esc(s.cache_dir||'')}" placeholder="post_image_dataset\\lora\\..."><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
+    <label>image_dir <span class="hint">raw images when auto-preprocess is ON · resized dir when OFF</span></label>
+    <div class="pathrow"><input class="s_image_dir" value="${esc(s.image_dir||'')}" placeholder="C:\\path\\to\\images"><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
+    <label>cache_dir <span class="hint">only when auto-preprocess is OFF (pre-cached latents); auto-derived when ON</span></label>
+    <div class="pathrow"><input class="s_cache_dir" value="${esc(s.cache_dir||'')}" placeholder="(auto when preprocessing)"><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
     <div class="row3">
       <div><label>num_repeats</label><input class="s_num_repeats" type="number" value="${esc(s.num_repeats||1)}"></div>
       <div><label>keep_tokens</label><input class="s_keep_tokens" type="number" value="${esc(s.keep_tokens||0)}"></div>
@@ -535,22 +518,12 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
     <div class="row3">
       <div><label>caption_dropout_rate</label><input class="s_caption_dropout_rate" value="${esc(s.caption_dropout_rate||0)}"></div>
       <div class="chk"><input type="checkbox" class="s_flip_aug" ${s.flip_aug?'checked':''}><label>flip_aug</label></div>
-      <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive</label></div>
-    </div>`;
+      <div class="chk"><input type="checkbox" class="s_random_crop" ${s.random_crop?'checked':''}><label>random_crop</label></div>
+    </div>
+    <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive (walk subfolders)</label></div>`;
   $('subsets').appendChild(div);
 }
 function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub_'+Math.random().toString(36).slice(2); inp.id=tmp; pickFolder(tmp); }
-async function buildDataset(){
-  const subs=[...document.querySelectorAll('#subsets .subset')].map(d=>({
-    image_dir:d.querySelector('.s_image_dir').value, cache_dir:d.querySelector('.s_cache_dir').value,
-    num_repeats:d.querySelector('.s_num_repeats').value, keep_tokens:d.querySelector('.s_keep_tokens').value,
-    caption_extension:d.querySelector('.s_caption_extension').value,
-    caption_dropout_rate:d.querySelector('.s_caption_dropout_rate').value,
-    recursive:d.querySelector('.s_recursive').checked, flip_aug:d.querySelector('.s_flip_aug').checked }));
-  const r=await post('/api/dataset/build',{name:$('m_ds_name').value,batch_size:$('m_ds_batch').value,subsets:subs});
-  if(r.ok){ $('dataset_config').value=r.path; showCmd('dataset written → '+r.path+'\n\n'+r.toml); }
-  else showCmd('✗ '+(r.error||'dataset build failed'));
-}
 
 // ---- run / queue / configs ----
 async function preview(){ const r=await post('/api/launch',form({dry_run:true})); showCmd(r.command||('error: '+(r.error||'?'))); }

@@ -503,6 +503,72 @@ def cmd_preprocess_multiscale(extra):
             cmd_mask([], resized_dir=rdst, mask_dir=f"{mask_base}/{t}")
 
 
+def cmd_preprocess_manifest(extra):
+    """Preprocess from a JSON manifest — one entry per (dataset subset × tier).
+
+    Generalizes single-folder / multi-folder / multi-scale / skip into one loop so
+    the web GUI can preprocess an arbitrary set of source folders (the subset
+    builder) at training start. ``MANIFEST_FILE`` env → a JSON file::
+
+        {"caption_shuffle_variants": "4", "caption_tag_dropout_rate": "0.1",
+         "vae": "...", "qwen3": "...", "dit": "...",
+         "entries": [{"src","resized","cache","target_res","min_pixels","mask"?}, …]}
+
+    Each entry: bucket-resize ``src`` → ``resized`` (``--target_res`` may be one
+    tier for multi-scale or several for best-fit; ``--min_pixels`` is the skip
+    threshold), VAE+TE-cache → ``cache``, and mask → ``mask`` when set. Model/dir
+    paths fall back to the CONFIG_FILE-resolved defaults when absent in the spec.
+    """
+    import json
+
+    from .masking import cmd_mask
+
+    mf = os.environ.get("MANIFEST_FILE")
+    if not mf or not os.path.isfile(mf):
+        raise SystemExit(f"preprocess-manifest: MANIFEST_FILE not found ({mf})")
+    spec = json.loads(open(mf, encoding="utf-8").read())
+    vae = spec.get("vae") or _path("vae", "models/vae/qwen_image_vae.safetensors")
+    qwen3 = spec.get("qwen3") or _path(
+        "qwen3", "models/text_encoders/qwen_3_06b_base.safetensors"
+    )
+    dit = spec.get("dit") or _path(
+        "pretrained_model_name_or_path",
+        "models/diffusion_models/anima-base-v1.0.safetensors",
+    )
+    shuffle = str(spec.get("caption_shuffle_variants", "4"))
+    tagdrop = str(spec.get("caption_tag_dropout_rate", "0.1"))
+    entries = spec.get("entries") or []
+    for i, e in enumerate(entries):
+        tr = str(e.get("target_res", "")).split()
+        print(f"\n=== manifest entry {i + 1}/{len(entries)}: {e['src']} → {e['resized']} ===")
+        run(
+            [
+                PY, "scripts/preprocess/resize_images.py",
+                "--src", e["src"], "--dst", e["resized"],
+                *(["--target_res", *tr] if tr else []),
+                "--min_pixels", str(e.get("min_pixels", "0")), "--recursive",
+            ]
+        )
+        run(
+            [
+                PY, "scripts/preprocess/cache_latents.py",
+                "--dir", e["resized"], "--cache_dir", e["cache"],
+                "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
+            ]
+        )
+        run(
+            [
+                PY, "scripts/preprocess/cache_text_embeddings.py",
+                "--dir", e["src"], "--cache_dir", e["cache"],
+                "--qwen3", qwen3, "--dit", dit,
+                "--caption_shuffle_variants", shuffle,
+                "--caption_tag_dropout_rate", tagdrop, "--recursive",
+            ]
+        )
+        if e.get("mask"):
+            cmd_mask([], resized_dir=e["resized"], mask_dir=e["mask"])
+
+
 def cmd_preprocess_config(extra):
     """Preprocess the exact directories named in a ``--dataset_config`` TOML.
 

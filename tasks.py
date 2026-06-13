@@ -165,6 +165,11 @@ COMMANDS = {
         "Multi-scale: resize+cache each image into EVERY MULTISCALE_TIERS tier "
         "(512,1024,1536) so it trains at all resolutions at once (kohya parity).",
     ),
+    "preprocess-manifest": (
+        preprocess.cmd_preprocess_manifest,
+        "Preprocess from a JSON manifest (MANIFEST_FILE) — one entry per dataset "
+        "subset × tier. The web GUI's unified auto-preprocess chain.",
+    ),
     "preprocess-config": (
         preprocess.cmd_preprocess_config,
         "Preprocess the dirs named in a --dataset_config TOML (resize --src "

@@ -748,6 +748,81 @@ def _monitor_url(form: dict):
     return f"http://{shown}:{port}"
 
 
+def _dataset_subsets(form: dict) -> list[dict]:
+    """Normalize the GUI subset list (or the legacy single raw_image_dir + ds_*
+    fields) into clean subset dicts: image_dir [+ cache_dir] + per-subset settings.
+    This is the single dataset definition both the auto-preprocess and pre-cached
+    paths consume."""
+    out: list[dict] = []
+    for s in form.get("subsets") or []:
+        if not isinstance(s, dict):
+            continue
+        img = str(s.get("image_dir") or "").strip()
+        if not img:
+            continue
+        d: dict = {"image_dir": img}
+        if str(s.get("cache_dir") or "").strip():
+            d["cache_dir"] = str(s["cache_dir"]).strip()
+        for k, cast in (("num_repeats", int), ("keep_tokens", int),
+                        ("caption_extension", str), ("caption_dropout_rate", float)):
+            v = s.get(k)
+            if v in (None, ""):
+                continue
+            try:
+                d[k] = cast(v)
+            except (TypeError, ValueError):
+                pass
+        for fk in ("flip_aug", "random_crop"):
+            if s.get(fk):
+                d[fk] = True
+        out.append(d)
+    if not out:  # back-compat: a single raw folder + the panel-level ds_* fields
+        raw = str(form.get("raw_image_dir") or "").strip()
+        if raw:
+            d = {"image_dir": raw}
+            if str(form.get("ds_num_repeats") or "").strip():
+                d["num_repeats"] = int(form["ds_num_repeats"])
+            if str(form.get("ds_keep_tokens") or "").strip():
+                d["keep_tokens"] = int(form["ds_keep_tokens"])
+            if str(form.get("ds_caption_extension") or "").strip():
+                d["caption_extension"] = form["ds_caption_extension"]
+            cdr = str(form.get("ds_caption_dropout_rate") or "").strip()
+            if cdr:
+                try:
+                    d["caption_dropout_rate"] = float(cdr)
+                except ValueError:
+                    pass
+            if form.get("ds_flip_aug"):
+                d["flip_aug"] = True
+            if form.get("ds_random_crop"):
+                d["random_crop"] = True
+            out.append(d)
+    return out
+
+
+def _build_precached_config(form: dict) -> str | None:
+    """Auto-preprocess OFF → build a dataset config from the subsets treated as
+    already resized + cached (image_dir + cache_dir as given). Returns its path."""
+    import toml as _toml
+
+    subs = _dataset_subsets(form)
+    if not subs:
+        return None
+    bs = int(form.get("ds_batch") or 1)
+    keep = ("image_dir", "cache_dir", "num_repeats", "keep_tokens",
+            "caption_extension", "caption_dropout_rate", "flip_aug", "random_crop")
+    blocks = []
+    for s in subs:
+        blk = {k: s[k] for k in keep if k in s}
+        blk.setdefault("recursive", True)
+        blocks.append({"batch_size": bs, "subsets": [blk]})
+    name = _safe_name(form.get("ds_name") or "dataset")
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    path = DATASET_DIR / f"{name}_precached.toml"
+    path.write_text(_toml.dumps({"datasets": blocks}), encoding="utf-8")
+    return str(path)
+
+
 def _prepare_auto_preprocess(form: dict) -> dict:
     """Set up the auto-preprocess→train daemon chain from the form.
 
@@ -764,148 +839,116 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     against the user's folder without editing configs/. Both preprocess and mask
     read these path overrides; masking self-skips via RUN_SAM_MASK/RUN_MIT_MASK.
     """
+    import json as _json
     import toml as _toml
 
-    raw = (form.get("raw_image_dir") or "").strip()
-    if not raw:
-        return {"error": "Auto-preprocess is on but no raw image folder is set."}
-    if not Path(raw).is_dir():
-        return {"error": f"Raw image folder not found: {raw}"}
+    subs = _dataset_subsets(form)
+    if not subs:
+        return {"error": "Auto-preprocess is on but no dataset subset / image folder is set."}
+    for s in subs:
+        if not Path(s["image_dir"]).is_dir():
+            return {"error": f"Image folder not found: {s['image_dir']}"}
 
     name = _safe_name(form.get("ds_name") or form.get("output_name") or "gui")
-    resized = f"post_image_dataset/resized/{name}"
-    cache = f"post_image_dataset/lora/{name}"
-    masks = f"post_image_dataset/masks/{name}"
+    base_resized = f"post_image_dataset/resized/{name}"
+    base_cache = f"post_image_dataset/lora/{name}"
+    base_mask = f"post_image_dataset/masks/{name}"
     masking = bool(form.get("mask_enable"))
-    tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
-    # Multi-scale = train the SAME images at EVERY selected tier at once (kohya
-    # parity). Needs ≥2 tiers to be meaningful; falls back to single otherwise.
+    tiers = sorted(int(t) for t in (form.get("target_res") or []) if str(t).strip()) or [1024]
     multiscale = bool(form.get("multiscale")) and len(tiers) >= 2
+    bs = int(form.get("ds_batch") or 1)
 
-    def _mk_subset(image_dir: str, cache_dir: str, mask_dir: str | None) -> dict:
-        s = {
-            "image_dir": image_dir,
-            "cache_dir": cache_dir,
-            "num_repeats": int(form.get("ds_num_repeats") or 1),
-            "keep_tokens": int(form.get("ds_keep_tokens") or 0),
-            "caption_extension": form.get("ds_caption_extension") or ".txt",
-            "recursive": True,
-        }
-        if form.get("ds_flip_aug"):
-            s["flip_aug"] = True
-        if form.get("ds_random_crop"):
-            s["random_crop"] = True
-        cdr = str(form.get("ds_caption_dropout_rate") or "").strip()
-        if cdr:
+    # per-tier skip edges (multi-scale): explicit ms_skip "tier:edge,…", else auto
+    # (next-lower tier), unless "skip upscaling" is off (force every image in).
+    skip_map: dict[int, int] = {}
+    for part in str(form.get("ms_skip") or "").split(","):
+        if ":" in part:
+            tk, sk = part.split(":", 1)
             try:
-                s["caption_dropout_rate"] = float(cdr)
+                skip_map[int(tk)] = int(sk)
             except ValueError:
                 pass
-        if mask_dir:
-            s["mask_dir"] = mask_dir
-        return s
+    no_skip = form.get("ms_skip_upscale") is False
 
-    # 1) Training dataset config → points at the (to-be-created) cache dirs.
-    #    Multi-scale: one [[datasets]] block per tier (resized/<tier> + cache/<tier>).
-    bs = int(form.get("ds_batch") or 1)
-    if multiscale:
-        datasets = [
-            {
-                "batch_size": bs,
-                "subsets": [
-                    _mk_subset(
-                        f"{resized}/{t}",
-                        f"{cache}/{t}",
-                        f"{masks}/{t}" if masking else None,
-                    )
-                ],
-            }
-            for t in tiers
-        ]
-    else:
-        datasets = [
-            {
-                "batch_size": bs,
-                "subsets": [_mk_subset(resized, cache, masks if masking else None)],
-            }
-        ]
+    def _skip_minpx(idx: int, tier: int) -> int:
+        if no_skip:
+            return 0
+        edge = skip_map.get(tier, 0 if idx == 0 else tiers[idx - 1])
+        return edge * edge
+
+    entries: list[dict] = []
+    datasets: list[dict] = []
+    for i, s in enumerate(subs):
+        block_common = {k: s[k] for k in ("num_repeats", "keep_tokens", "caption_extension", "caption_dropout_rate") if s.get(k) not in (None, "")}
+        for fk in ("flip_aug", "random_crop"):
+            if s.get(fk):
+                block_common[fk] = True
+        if multiscale:
+            for idx, t in enumerate(tiers):
+                rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
+                mdir = f"{base_mask}/{i}/{t}" if masking else None
+                e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
+                     "target_res": str(t), "min_pixels": _skip_minpx(idx, t)}
+                if mdir:
+                    e["mask"] = mdir
+                entries.append(e)
+                blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
+                if mdir:
+                    blk["mask_dir"] = mdir
+                datasets.append({"batch_size": bs, "subsets": [blk]})
+        else:
+            rdir, cdir = f"{base_resized}/{i}", f"{base_cache}/{i}"
+            mdir = f"{base_mask}/{i}" if masking else None
+            e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
+                 "target_res": " ".join(str(t) for t in tiers),
+                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000}
+            if mdir:
+                e["mask"] = mdir
+            entries.append(e)
+            blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
+            if mdir:
+                blk["mask_dir"] = mdir
+            datasets.append({"batch_size": bs, "subsets": [blk]})
+
+    # training dataset config → the (to-be-created) cache dirs
     ds_toml = _toml.dumps({"datasets": datasets})
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
     ds_path = DATASET_DIR / f"{name}_auto.toml"
     ds_path.write_text(ds_toml, encoding="utf-8")
     form["dataset_config"] = str(ds_path)
 
-    # 2) CONFIG_FILE snapshot redirecting the standard pipeline at the raw folder.
-    snap: dict = {
-        "source_image_dir": raw,
-        "resized_image_dir": resized,
-        "lora_cache_dir": cache,
-        "mask_dir": masks,
+    # preprocess manifest (one entry per subset × tier)
+    manifest: dict = {
+        "caption_shuffle_variants": str(form.get("caption_shuffle_variants") or "4"),
+        "caption_tag_dropout_rate": str(form.get("caption_tag_dropout_rate") or "0.1"),
+        "entries": entries,
     }
-    # Model-path overrides ride the snapshot so preprocess (VAE/TE caching) uses
-    # the same DiT/TE/VAE the training job will — e.g. forge-neo / ComfyUI files.
-    for snap_key, form_key in (
-        ("pretrained_model_name_or_path", "dit_path"),
-        ("qwen3", "te_path"),
-        ("vae", "vae_path"),
-    ):
-        v = (form.get(form_key) or "").strip()
+    for mk, fk in (("vae", "vae_path"), ("qwen3", "te_path"), ("dit", "dit_path")):
+        v = (form.get(fk) or "").strip()
         if v:
-            snap[snap_key] = v
-    if tiers:
-        snap["target_res"] = tiers
-    if form.get("drop_lowres") is False:
-        snap["drop_lowres_images"] = False
+            manifest[mk] = v
     STORE_DIR.mkdir(parents=True, exist_ok=True)
-    snap_path = STORE_DIR / f"preprocess_{name}.toml"
-    snap_path.write_text(_toml.dumps(snap), encoding="utf-8")
+    mf_path = STORE_DIR / f"manifest_{name}.json"
+    mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
 
-    # 3) Command-job env + target.
-    env = {"CONFIG_FILE": str(snap_path)}
-    if str(form.get("caption_shuffle_variants") or "").strip():
-        env["CAPTION_SHUFFLE_VARIANTS"] = str(form["caption_shuffle_variants"])
-    if str(form.get("caption_tag_dropout_rate") or "").strip():
-        env["CAPTION_TAG_DROPOUT_RATE"] = str(form["caption_tag_dropout_rate"])
-
-    def _add_mask_env() -> None:
+    env = {"MANIFEST_FILE": str(mf_path)}
+    if masking:
         env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
         env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
         if str(form.get("mit_text_threshold") or "").strip():
             env["MIT_TEXT_THRESHOLD"] = str(form["mit_text_threshold"])
         if str(form.get("mit_dilate") or "").strip():
             env["MIT_DILATE"] = str(form["mit_dilate"])
-        # SAM3 is a gated HF repo — let the user point at an existing checkpoint
-        # instead of forcing `make download-sam3` (which needs `hf auth login`).
         if form.get("mask_sam") and str(form.get("sam3_path") or "").strip():
             env["SAM3_CHECKPOINT"] = str(form["sam3_path"]).strip()
-
-    if multiscale:
-        target = "preprocess-multiscale"
-        env["MULTISCALE_TIERS"] = ",".join(str(t) for t in tiers)
-        # "Skip upscaling" on (default) = downscale-only. Unchecked = force every
-        # image into every tier. When on, per-tier skip resolutions (ms_skip,
-        # "tier:edge,…") let the user override the auto threshold (e.g. 1536 tier
-        # skip only <512 instead of <1024).
-        if form.get("ms_skip_upscale") is False:
-            env["MULTISCALE_NO_SKIP"] = "1"
-        elif str(form.get("ms_skip") or "").strip():
-            env["MULTISCALE_SKIP"] = str(form["ms_skip"]).strip()
-        if masking:
-            env["MULTISCALE_MASK"] = "1"
-            _add_mask_env()
-    elif masking:
-        target = "preprocess-and-mask"
-        _add_mask_env()
-    else:
-        target = "preprocess"
     return {
-        "argv": ["tasks.py", target],
+        "argv": ["tasks.py", "preprocess-manifest"],
         "extra_env": env,
         "dataset_config": str(ds_path),
         "training_toml": ds_toml,
         "masking": masking,
         "multiscale": multiscale,
-        "target": target,
+        "target": "preprocess-manifest",
     }
 
 
@@ -921,6 +964,12 @@ def launch(form: dict) -> dict:
         prep = _prepare_auto_preprocess(form)
         if prep.get("error"):
             return {"ok": False, "error": prep["error"]}
+    elif form.get("subsets") and not (form.get("dataset_config") or "").strip():
+        # Auto-preprocess OFF + a dataset defined → treat the subsets as already
+        # resized + cached and build the dataset config straight from them.
+        pc = _build_precached_config(form)
+        if pc:
+            form["dataset_config"] = pc
 
     if form.get("dry_run"):
         cmd = " ".join(build_command(form))
