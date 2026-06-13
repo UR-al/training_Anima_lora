@@ -1182,6 +1182,13 @@ def launch(form: dict) -> dict:
                 daemon_job=resp.get("job_id"),
                 daemon_base=getattr(cl, "base", None),
             )
+            # Real-time tqdm bar in the GUI's cmd window (LoRA_Easy-style \r live
+            # gauge), unless the user turned it off. Default on.
+            _STATE["live_cmd"] = form.get("live_cmd_progress", True) is not False
+            if _STATE["live_cmd"]:
+                _start_progress_stream(form.get("cmd_progress_interval") or 0.5)
+            else:
+                _stop_progress_stream()
             return {
                 "ok": True,
                 "daemon": True,
@@ -1282,30 +1289,33 @@ def _report_and_tail(job, n: int = 40):
     return tail
 
 
-def _report_progress(job):
-    """Mirror the live tqdm progress bar to the webgui console.
+def _extract_tqdm_line(stdout_path):
+    """The latest tqdm progress line in a job's stdout.log.
 
-    The daemon runs train.py DETACHED — its stdout goes to the per-job stdout.log,
-    not this terminal — so the cmd window running the GUI otherwise shows nothing.
-    Tail that file for the latest tqdm line (``steps: …N/total… , 2.38s/it,
-    avr_loss=…``) and print it verbatim, throttled ~3s + deduped, so the cmd shows
-    the same climbing gauge a normal trainer would.
+    The daemon runs train.py detached (stdout → file). tqdm rewrites its bar in
+    place with \\r, so scan from the end for the line carrying it/s or s/it +
+    an N/total fraction. ``None`` if there isn't one yet.
     """
-    path = job.get("stdout_path")
-    if not path:
-        return
+    if not stdout_path:
+        return None
     try:
-        data = Path(path).read_text(encoding="utf-8", errors="replace")
+        data = Path(stdout_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return
-    # tqdm rewrites its bar in place with \r; scan from the end for the latest
-    # progress line (carries it/s or s/it + an N/total fraction).
-    line = None
+        return None
     for seg in reversed(data.replace("\r", "\n").split("\n")):
         seg = seg.strip()
         if seg and ("it/s" in seg or "s/it" in seg) and "/" in seg:
-            line = seg
-            break
+            return seg
+    return None
+
+
+def _report_progress(job):
+    """Throttled (~3s) NEW-LINE progress mirror — the fallback when the live \\r
+    streamer is OFF. Skipped when ``_STATE['live_cmd']`` (the streamer owns the
+    console then, so we don't double-print)."""
+    if _STATE.get("live_cmd"):
+        return
+    line = _extract_tqdm_line(job.get("stdout_path"))
     if not line:
         return
     st = _STATE.setdefault("_prog", {"t": 0.0, "line": None})
@@ -1313,10 +1323,63 @@ def _report_progress(job):
     if line == st.get("line") or (now - st.get("t", 0.0)) < 3.0:
         return
     st["t"], st["line"] = now, line
-    import sys as _sys
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
 
-    _sys.stdout.write(line + "\n")
-    _sys.stdout.flush()
+
+_progress_gen = 0
+
+
+def _stop_progress_stream():
+    """Bump the generation so any running live-progress thread exits promptly."""
+    global _progress_gen
+    _progress_gen += 1
+
+
+def _start_progress_stream(interval=0.5):
+    """Mirror the ACTIVE daemon job's tqdm bar to the webgui console in REAL TIME,
+    updating in place with \\r — the LoRA_Easy live-gauge feel. Runs in a daemon
+    thread that follows whichever job is active (so it shows both the preprocess
+    bars and training). A new run (or stop) bumps the generation → the old thread
+    exits; it also self-exits ~12s after nothing is running.
+    """
+    global _progress_gen
+    _progress_gen += 1
+    gen = _progress_gen
+    interval = max(0.1, min(float(interval or 0.5), 5.0))
+
+    def _loop():
+        from scripts.daemon import client as _dc
+
+        last, width, idle = None, 0, 0.0
+        while gen == _progress_gen:
+            try:
+                cl = _dc.DaemonClient()
+                active = (cl.health() or {}).get("active_job")
+                if not active:
+                    idle += interval
+                    if idle > 12.0:  # nothing running for a while → run finished
+                        break
+                    time.sleep(interval)
+                    continue
+                idle = 0.0
+                seg = _extract_tqdm_line((cl.get(active) or {}).get("stdout_path"))
+                if seg and seg != last:
+                    pad = " " * max(0, width - len(seg))  # clear leftover of a longer prior line
+                    width = len(seg)
+                    sys.stdout.write("\r" + seg + pad)
+                    sys.stdout.flush()
+                    last = seg
+            except Exception:  # noqa: BLE001 — best-effort console mirror
+                pass
+            time.sleep(interval)
+        try:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=_loop, daemon=True).start()
 
 
 def _train_phase(cl, train_id, out, job=None):
@@ -1436,6 +1499,7 @@ def status() -> dict:
 
 
 def stop() -> dict:
+    _stop_progress_stream()  # halt the live cmd bar
     # Direct-Popen path (daemon disabled): terminate the spawned process.
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:

@@ -371,7 +371,11 @@
       <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
     </div>
     <div class="row">
-      <div><label>Monitor / log every N steps <span class="hint">metric + monitor-chart + cmd progress cadence (--log_every_n_steps · blank = 1)</span></label><input id="log_every_n_steps" type="number" min="1" placeholder="1"></div>
+      <div><label>Monitor / log every N steps <span class="hint">metric + monitor-chart cadence (--log_every_n_steps · blank = 1)</span></label><input id="log_every_n_steps" type="number" min="1" placeholder="1"></div>
+    </div>
+    <div class="row3">
+      <div class="chk"><input id="live_cmd_progress" type="checkbox" checked><label title="Stream the live tqdm bar to the cmd window in real time — updates in place (\\r), LoRA_Easy-style climbing gauge. Off = a new progress line every ~3s.">Live cmd progress bar</label></div>
+      <div><label>cmd refresh (sec) <span class="hint">how often the live bar redraws</span></label><input id="cmd_progress_interval" type="number" step="0.1" min="0.1" value="0.5"></div>
     </div>
     <div class="btns">
       <button class="ghost" onclick="preview()">Preview command</button>
@@ -461,12 +465,12 @@ const $ = id => document.getElementById(id);
 const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epochs','dataset_config','output_name','seed',
   'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
-  'monitor_port','log_every_n_steps','extra_flags',
+  'monitor_port','log_every_n_steps','cmd_progress_interval','extra_flags',
   'output_dir','resume','sample_prompts',
   'dit_path','te_path','vae_path',
   'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
-const CHECKS = ['monitor','daemon','auto_preprocess','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit'];
+const CHECKS = ['monitor','daemon','auto_preprocess','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit','live_cmd_progress'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
