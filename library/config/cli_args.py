@@ -576,6 +576,18 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="file for prompts to generate sample images",
     )
     parser.add_argument(
+        "--sample_sampler",
+        type=str,
+        default="euler",
+        choices=["euler", "er_sde"],
+        help=(
+            "Sampler for train-time sample images: 'euler' (deterministic ODE, "
+            "fast) or 'er_sde' (Extended Reverse-Time SDE, ER-SDE-Solver-3 — the "
+            "stochastic sampler from AnimaLoraToolkit; often crisper detail). "
+            "Inference (inference.py) has its own --sampler with the same options."
+        ),
+    )
+    parser.add_argument(
         "--sample_decode_inline",
         type=_optional_bool,
         default=None,

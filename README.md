@@ -7,8 +7,8 @@ A fast **Anima** LoRA trainer with a browser control panel, a ~89-optimizer zoo,
 | From | What | Vendored as |
 |---|---|---|
 | **[anima_lora](https://github.com/sorryhyun/anima_lora)** (MIT) | the fast base: `torch.compile` LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader) | the repo itself |
-| **LoRA_Easy_Training_Scripts** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `LoraEasyCustomOptimizer/` |
-| **AnimaLoraToolkit** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
+| **[LoRA_Easy_Training_Scripts](https://github.com/67372a/LoRA_Easy_Training_Scripts)** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `LoraEasyCustomOptimizer/` |
+| **[AnimaLoraToolkit](https://github.com/Moeblack/AnimaLoraToolkit)** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
 
 ## Web control panel — `run_gui.bat`
 

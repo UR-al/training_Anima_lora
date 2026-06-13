@@ -21,12 +21,27 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from ._common import PY, ROOT, run
+from ._common import PY, ROOT, _path, run
 
+# Defaults (standard layout). The *effective* dirs are resolved at call time via
+# `_path()` so a CONFIG_FILE override — e.g. the web GUI's auto-preprocess
+# snapshot pointing at a per-dataset subdir — redirects masking exactly like it
+# redirects resize / latent caching. Reading them lazily (not at import) is what
+# makes the override reach this module.
 MASK_OUTPUT_DIR = ROOT / "post_image_dataset" / "masks"
 RESIZED_IMAGE_DIR = ROOT / "post_image_dataset" / "resized"
 SAM_CONFIG = ROOT / "configs" / "sam_mask.yaml"
 _UNSET = object()
+
+
+def _resized_dir() -> Path:
+    """The resized-image dir to mask (CONFIG_FILE-aware; falls back to default)."""
+    return ROOT / _path("resized_image_dir", "post_image_dataset/resized")
+
+
+def _mask_output_dir() -> Path:
+    """The mask output dir (CONFIG_FILE-aware; falls back to default)."""
+    return ROOT / _path("mask_dir", "post_image_dataset/masks")
 
 
 def _runtime_sam_config() -> dict | None:
@@ -80,7 +95,9 @@ def _sam_config_path(cfg: dict, tmp_root: str, *, from_env: bool) -> str:
     return str(path)
 
 
-def _run_sam(image_dir: Path, out_dir: Path, extra: list[str], config_path: str) -> None:
+def _run_sam(
+    image_dir: Path, out_dir: Path, extra: list[str], config_path: str
+) -> None:
     run(
         [
             PY,
@@ -144,6 +161,8 @@ def cmd_mask(extra):
     if not (run_sam or run_mit):
         print("Both SAM and MIT masking are disabled — nothing to do.")
         return
+    resized_dir = _resized_dir()
+    mask_out_dir = _mask_output_dir()
     runtime_sam_cfg = _runtime_sam_config()
     sam_cfg = _load_sam_config(runtime_sam_cfg)
     pattern = _config_path_pattern(sam_cfg)
@@ -157,26 +176,32 @@ def cmd_mask(extra):
         merge_sources: list[str] = []
         if run_sam:
             tmp_sam = Path(tmp_root) / "sam"
-            _run_sam(RESIZED_IMAGE_DIR, tmp_sam, [*pattern_args], sam_config_path)
+            _run_sam(resized_dir, tmp_sam, [*pattern_args], sam_config_path)
             merge_sources.append(str(tmp_sam))
         if run_mit:
             tmp_mit = Path(tmp_root) / "mit"
-            _run_mit(RESIZED_IMAGE_DIR, tmp_mit, [*pattern_args])
+            _run_mit(resized_dir, tmp_mit, [*pattern_args])
             merge_sources.append(str(tmp_mit))
-        MASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        mask_out_dir.mkdir(parents=True, exist_ok=True)
         run(
             [
                 PY,
                 "scripts/preprocess/merge_masks.py",
                 *merge_sources,
                 "--output-dir",
-                str(MASK_OUTPUT_DIR),
+                str(mask_out_dir),
                 *extra,
             ]
         )
 
 
 def cmd_mask_clean(_extra):
-    if MASK_OUTPUT_DIR.exists():
-        shutil.rmtree(MASK_OUTPUT_DIR)
-        print(f"  Removed {MASK_OUTPUT_DIR.relative_to(ROOT)}/")
+    mask_out_dir = _mask_output_dir()
+    if mask_out_dir.exists():
+        shutil.rmtree(mask_out_dir)
+        rel = (
+            mask_out_dir.relative_to(ROOT)
+            if ROOT in mask_out_dir.parents
+            else mask_out_dir
+        )
+        print(f"  Removed {rel}/")

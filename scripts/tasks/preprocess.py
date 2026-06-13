@@ -390,6 +390,21 @@ def cmd_preprocess(extra):
         )
 
 
+def cmd_preprocess_and_mask(extra):
+    """Full preprocess (resize + VAE + TE + caption index) THEN SAM3/MIT masking.
+
+    The web GUI's auto-preprocess-at-train-start chain submits this as one daemon
+    command job (then auto-chains the training job). It's a safe superset of
+    ``preprocess``: masking self-skips when both ``RUN_SAM_MASK`` and
+    ``RUN_MIT_MASK`` are off (env-gated inside ``cmd_mask``). ``--target_res`` is a
+    resize-only flag the mask scripts don't define, so it's stripped before masking
+    (the resize step inside ``cmd_preprocess`` already consumed it)."""
+    from .masking import cmd_mask
+
+    cmd_preprocess(extra)
+    cmd_mask(_pop_target_res(extra))
+
+
 def cmd_preprocess_config(extra):
     """Preprocess the exact directories named in a ``--dataset_config`` TOML.
 

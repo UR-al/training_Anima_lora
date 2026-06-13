@@ -11,17 +11,20 @@
   header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
   header h1{font-size:17px;margin:0;font-weight:700}
   header .tag{font-size:12px;color:var(--mut)}
-  .wrap{max-width:1040px;margin:0 auto;padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .wrap{max-width:1100px;margin:0 auto;padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
   .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 12px}
+  .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut);margin:16px 0 6px;border-top:1px solid var(--line);padding-top:12px}
   .full{grid-column:1/3}
   label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
   input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font:13px ui-sans-serif,system-ui,sans-serif}
   input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
   textarea{resize:vertical;min-height:38px;font-family:ui-monospace,Consolas,monospace}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   .chk{display:flex;align-items:center;gap:8px;margin-top:12px}
   .chk input{width:auto}
+  .chk label{margin:0}
   .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
   button{cursor:pointer;border:0;border-radius:8px;padding:9px 16px;font:600 13px ui-sans-serif,system-ui,sans-serif}
   .primary{background:var(--acc);color:#fff}
@@ -32,11 +35,36 @@
   .dot{width:9px;height:9px;border-radius:50%;background:#666}
   .dot.run{background:var(--ok);box-shadow:0 0 8px var(--ok)}
   a{color:var(--acc)}
-  .hint{font-size:11px;color:var(--mut)}
+  .hint{font-size:11px;color:var(--mut);margin:4px 0 0}
+  /* path field + browse button */
+  .pathrow{display:flex;gap:6px}
+  .pathrow input{flex:1}
+  .pickbtn{flex:0 0 auto;padding:8px 11px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-size:14px}
+  /* optimizer help side drawer */
+  .optwrap{display:flex;gap:16px;align-items:flex-start}
+  .optfields{flex:1;min-width:0}
+  .optdrawer{flex:0 0 330px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;align-self:stretch}
+  .optdrawer.collapsed{display:none}
+  .drawerhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .drawerhead .dt{font-weight:600;font-size:12px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .drawerhead button{padding:3px 9px;font-size:11px;background:#101116;border:1px solid var(--line);color:var(--mut)}
+  #help_body{max-height:340px;overflow:auto}
+  .hrow{padding:6px 0;border-bottom:1px solid var(--line)}
+  .hrow:last-child{border-bottom:0}
+  .hrow code{background:#101116;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:#c9cdd6;font-size:12px}
+  .hrow .hdesc{display:block;color:var(--mut);font-size:11px;margin-top:3px}
+  .hnote{color:var(--mut);font-size:11px;margin-top:8px;line-height:1.5}
+  #drawer_show{display:none;margin-top:8px}
+  /* resolution tier chips */
+  .tiers{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .tier-lab{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
+  .tier-lab input{width:auto}
+  /* queue */
   .qitem{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px}
   .qname{font-weight:600;font-size:13px;white-space:nowrap}.qsub{flex:1;color:var(--mut);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .qbtns{display:flex;gap:4px}.qbtns button{padding:3px 9px;font-size:12px;background:#101116;border:1px solid var(--line);color:var(--txt)}
   .qbtns button:disabled{opacity:.35;cursor:default}.qempty{color:var(--mut);font-size:12px;padding:10px}
+  /* all-args */
   details.argroup{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--panel2)}
   details.argroup>summary{cursor:pointer;padding:9px 12px;font-weight:600;font-size:13px;list-style:none}
   details.argroup>summary::-webkit-details-marker{display:none}
@@ -46,10 +74,19 @@
   .argrow input[type=checkbox]{width:auto;flex:0 0 auto}
   .argrow .an{flex:0 0 44%;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
   .argrow .av{flex:1;padding:5px 8px;font-size:12px}
+  /* dataset subset */
   .subset{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;position:relative}
   .subset .x{position:absolute;top:8px;right:8px;padding:2px 8px;font-size:12px;background:#101116;border:1px solid var(--line);color:var(--txt)}
-  .ohelp{font-size:11px;color:var(--mut);margin-top:5px;line-height:1.6;word-break:break-word}
-  .ohelp code{background:#101116;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:#c9cdd6}
+  /* folder picker modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50}
+  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(620px,92vw);max-height:82vh;display:flex;flex-direction:column;padding:16px}
+  .modalhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .modalhead .mtitle{font-weight:600;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .modalhead .x{padding:2px 9px;background:#101116;border:1px solid var(--line);color:var(--txt)}
+  .flist{flex:1;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel2);min-height:180px}
+  .frow{padding:7px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+  .frow:hover{background:#101116}.frow .ic{color:var(--mut)}
+  .fempty{padding:14px;color:var(--mut);font-size:12px}
 </style>
 </head>
 <body>
@@ -61,14 +98,10 @@
     <label>Method</label><select id="method"></select>
     <label>Preset (VRAM profile)</label><select id="preset"></select>
     <div class="row">
-      <div><label>Network dim (rank)</label><input id="network_dim" type="number" placeholder="32"></div>
       <div><label>Max train epochs</label><input id="max_train_epochs" type="number" placeholder="e.g. 16"></div>
-    </div>
-    <label>Dataset config (.toml)</label><input id="dataset_config" placeholder="path or build one below">
-    <div class="row">
-      <div><label>Output name</label><input id="output_name" placeholder="my_lora"></div>
       <div><label>Seed</label><input id="seed" type="number" placeholder="42"></div>
     </div>
+    <label>Output name</label><input id="output_name" placeholder="my_lora">
   </div>
 
   <div class="panel">
@@ -78,34 +111,108 @@
       <div><label>LyCORIS algo</label><select id="algo"></select></div>
       <div><label>LyCORIS preset (target)</label><select id="lycoris_preset"></select></div>
     </div>
-    <label>Network alpha</label><input id="network_alpha" placeholder="1">
+    <div class="row">
+      <div><label>Network dim (rank)</label><input id="network_dim" type="number" placeholder="32"></div>
+      <div><label>Network alpha</label><input id="network_alpha" placeholder="1"></div>
+    </div>
     <label>network_args <span class="hint">space-separated, e.g. factor=4 full_matrix=True</span></label>
     <textarea id="network_args" placeholder="factor=4 train_norm=False"></textarea>
-    <p class="hint" style="margin-top:6px">lycoris.kohya = all LyCORIS types. For the Anima DiT use <code>attn-mlp</code>/<code>unet-transformer-only</code> to target the transformer blocks.</p>
+    <p class="hint">Anima DiT: use <code>networks.lycoris_anima</code> + an <code>anima-*</code> preset to wrap the transformer blocks (the stock presets target diffusers names the Anima DiT doesn't use).</p>
   </div>
 
-  <div class="panel">
+  <div class="panel full">
     <h2>Optimizer / scheduler</h2>
-    <label>Optimizer (~89 available)</label><select id="optimizer_type" onchange="optHelp('optimizer_type','opt_help')"></select>
-    <label>Learning rate</label><input id="learning_rate" placeholder="e.g. 1e-4 (blank = default)">
-    <label>Optimizer args <span class="hint">space-separated key=value</span></label>
-    <textarea id="optimizer_args" placeholder="weight_decay=0.01 betas=(0.9,0.999)"></textarea>
-    <div id="opt_help" class="ohelp"></div>
-    <label>LR scheduler</label><select id="lr_scheduler_type" onchange="updateWarmup();optHelp('lr_scheduler_type','sch_help')"></select>
-    <div class="row">
-      <div><label>Scheduler args</label><input id="lr_scheduler_args" placeholder="gamma=0.9 first_cycle_max_steps=200"></div>
-      <div><label>LR warmup steps</label><input id="lr_warmup_steps" placeholder="0 for custom sched"></div>
+    <div class="optwrap">
+      <div class="optfields">
+        <div class="row">
+          <div><label>Optimizer (~89 available)</label><select id="optimizer_type" onchange="optHelp('optimizer_type')"></select></div>
+          <div><label>Learning rate</label><input id="learning_rate" placeholder="e.g. 1e-4 (blank = default)"></div>
+        </div>
+        <label>Optimizer args <span class="hint">space-separated key=value</span></label>
+        <textarea id="optimizer_args" placeholder="weight_decay=0.01 betas=(0.9,0.999)"></textarea>
+        <label>LR scheduler</label><select id="lr_scheduler_type" onchange="updateWarmup();optHelp('lr_scheduler_type')"></select>
+        <div class="row">
+          <div><label>Scheduler args</label><input id="lr_scheduler_args" placeholder="gamma=0.9 first_cycle_max_steps=200"></div>
+          <div><label>LR warmup steps</label><input id="lr_warmup_steps" placeholder="0 for custom sched"></div>
+        </div>
+        <button class="ghost" id="drawer_show" onclick="toggleDrawer()">ℹ Show arg help</button>
+      </div>
+      <div class="optdrawer" id="optdrawer">
+        <div class="drawerhead"><span class="dt" id="drawer_title">Arg help</span><button onclick="toggleDrawer()">⟨ hide</button></div>
+        <div id="help_body"><p class="hnote">Pick an optimizer or scheduler — its accepted args + descriptions show here.</p></div>
+      </div>
     </div>
-    <div id="sch_help" class="ohelp"></div>
   </div>
 
-  <div class="panel">
-    <h2>Monitor &amp; run</h2>
-    <div class="row">
-      <div class="chk"><input id="monitor" type="checkbox" checked><label style="margin:0">Live web monitor</label></div>
-      <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
+  <div class="panel full">
+    <h2>Dataset &amp; preprocessing</h2>
+    <div class="chk"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) → train, all from one Start (like latent caching)</label></div>
+
+    <div id="autoblock">
+      <label>Raw images folder <span class="hint">images + matching <code>.txt</code> caption files</span></label>
+      <div class="pathrow"><input id="raw_image_dir" placeholder="C:\path\to\images"><button class="pickbtn" title="Browse folders" onclick="pickFolder('raw_image_dir')">📁</button></div>
+      <div class="row">
+        <div><label>Dataset name</label><input id="ds_name" placeholder="my_char"></div>
+        <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
+      </div>
+      <div class="row3">
+        <div><label>Repeats / image</label><input id="ds_num_repeats" type="number" value="1"></div>
+        <div><label>Keep tokens</label><input id="ds_keep_tokens" type="number" value="0"></div>
+        <div><label>Caption ext</label><input id="ds_caption_extension" value=".txt"></div>
+      </div>
+      <div class="row3">
+        <div><label>Caption dropout rate</label><input id="ds_caption_dropout_rate" value="0"></div>
+        <div class="chk"><input id="ds_flip_aug" type="checkbox"><label>Flip augment</label></div>
+        <div class="chk"><input id="drop_lowres" type="checkbox" checked><label>Drop low-res (&lt;0.5MP)</label></div>
+      </div>
+
+      <h3>Resolution tiers <span style="text-transform:none;color:var(--mut)">(target_res)</span></h3>
+      <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow. Each image lands in the tier that resizes it least. (This replaces kohya's min/max bucket reso + steps, which don't apply here.)</p>
+      <div id="tiers" class="tiers"></div>
+      <div class="row" style="margin-top:10px">
+        <div><label>Caption shuffle variants <span class="hint">0 = off</span></label><input id="caption_shuffle_variants" type="number" value="4"></div>
+        <div><label>Tag dropout rate <span class="hint">preprocess</span></label><input id="caption_tag_dropout_rate" value="0.1"></div>
+      </div>
+
+      <h3>Masking <span style="text-transform:none;color:var(--mut)">(masked loss — ignore text / focus subject)</span></h3>
+      <div class="chk"><input id="mask_enable" type="checkbox" onchange="updateMask()"><label>Generate masks &amp; train with masked loss</label></div>
+      <div id="maskblock" style="display:none">
+        <div class="row">
+          <div class="chk"><input id="mask_mit" type="checkbox" checked><label>MIT — text / lettering removal</label></div>
+          <div class="chk"><input id="mask_sam" type="checkbox"><label>SAM3 — speech bubbles / subject</label></div>
+        </div>
+        <div class="row">
+          <div><label>MIT text threshold</label><input id="mit_text_threshold" placeholder="0.8"></div>
+          <div><label>MIT dilate (px)</label><input id="mit_dilate" placeholder="5"></div>
+        </div>
+        <p class="hint" id="sam_note"></p>
+      </div>
     </div>
-    <div class="chk"><input id="daemon" type="checkbox" checked><label style="margin:0">Run via daemon (survives page close; queues + logs)</label></div>
+
+    <div id="manualblock" style="display:none">
+      <p class="hint">Manual mode: point at already-resized + cached dirs. Build a dataset config from one or more subsets.</p>
+      <div class="row">
+        <div><label>Dataset name</label><input id="m_ds_name" placeholder="my_dataset"></div>
+        <div><label>Batch size</label><input id="m_ds_batch" type="number" value="1"></div>
+      </div>
+      <div id="subsets"></div>
+      <div class="btns" style="margin-top:10px">
+        <button class="ghost" onclick="addSubset()">+ Add image subset</button>
+        <button class="primary" onclick="buildDataset()">Build &amp; use ↓</button>
+      </div>
+    </div>
+
+    <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-set in auto mode · built/typed in manual mode</span></label>
+    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode"><button class="pickbtn" title="Browse files" onclick="pickFolder('dataset_config',true)">📁</button></div>
+  </div>
+
+  <div class="panel full">
+    <h2>Monitor &amp; run</h2>
+    <div class="row3">
+      <div class="chk"><input id="monitor" type="checkbox" checked><label>Live web monitor</label></div>
+      <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
+      <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
+    </div>
     <label>Extra CLI flags</label><input id="extra_flags" placeholder="--save_every_n_epochs 4">
     <div class="btns">
       <button class="ghost" onclick="preview()">Preview command</button>
@@ -115,20 +222,6 @@
     </div>
     <pre id="cmd" style="display:none"></pre>
     <div class="status" style="margin-top:12px"><span class="dot" id="dot"></span><span id="stat">idle</span></div>
-  </div>
-
-  <div class="panel full">
-    <h2>Dataset builder</h2>
-    <div class="row">
-      <div><label>Dataset name</label><input id="ds_name" placeholder="my_dataset"></div>
-      <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
-    </div>
-    <div id="subsets"></div>
-    <div class="btns" style="margin-top:10px">
-      <button class="ghost" onclick="addSubset()">+ Add image subset</button>
-      <button class="primary" onclick="buildDataset()">Build &amp; use ↑</button>
-    </div>
-    <p class="hint" style="margin-top:6px">Writes an anima_lora dataset TOML and fills "Dataset config" above. Caption shuffling is the <code>--shuffle_caption</code> flag in "All arguments" below.</p>
   </div>
 
   <div class="panel full">
@@ -158,16 +251,31 @@
     <h2>All arguments — toggle any <code>--flag</code></h2>
     <input id="argfilter" placeholder="filter args…" oninput="filterArgs(this.value)" style="margin-bottom:10px">
     <div id="all-args"></div>
-    <p class="hint">Check a row to send that flag (its tooltip shows the help + default). Unchecked args use the config-chain defaults.</p>
+    <p class="hint">Grouped by role (LoRA_Easy-style); anything without a home lands in <b>Misc / other (기타)</b>. Check a row to send that flag — its tooltip shows the help + default. Unchecked args use the config-chain defaults.</p>
+  </div>
+</div>
+
+<!-- folder/file picker modal -->
+<div id="fmodal" class="modal" style="display:none">
+  <div class="modalbox">
+    <div class="modalhead"><span class="mtitle" id="fpath">—</span><button class="x" onclick="closePicker()">✕</button></div>
+    <div class="pathrow" style="margin-bottom:8px"><input id="fpathin" placeholder="type a path then Go"><button class="ghost" onclick="navFolder($('fpathin').value)">Go</button><button class="ghost" onclick="navUp()">↑ Up</button></div>
+    <div class="flist" id="flist"></div>
+    <div class="btns"><button class="primary" id="fselect" onclick="choosePicker()">Select this folder</button></div>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-const FIELDS = ['method','preset','network_dim','max_train_epochs','dataset_config','output_name','seed',
-  'network_module','algo','lycoris_preset','network_alpha','network_args',
-  'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args',
-  'lr_warmup_steps','monitor_port','extra_flags'];
+// text/select/number fields collected by .value
+const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epochs','dataset_config','output_name','seed',
+  'network_module','algo','lycoris_preset','network_args',
+  'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
+  'monitor_port','extra_flags',
+  'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
+  'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate'];
+// checkbox fields collected by .checked
+const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','drop_lowres','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
@@ -175,29 +283,56 @@ function showCmd(t){ const p=$('cmd'); p.style.display='block'; p.textContent=t;
 
 function form(extra){
   const f={}; FIELDS.forEach(k=>{ const el=$(k); if(el) f[k]=el.value; });
-  f.monitor=$('monitor').checked; f.daemon=$('daemon').checked;
+  CHECKS.forEach(k=>{ const el=$(k); if(el) f[k]=el.checked; });
+  f.target_res=[...document.querySelectorAll('.tier:checked')].map(c=>c.value);
   const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en||!en.checked) return;
     if(a.is_bool){ adv.push({flag:a.flag,is_bool:true,value:true}); }
     else { const v=$('advv_'+a.dest); adv.push({flag:a.flag,is_bool:false,nargs:a.nargs,value:v?v.value:''}); } });
   f.adv=adv; return Object.assign(f,extra||{});
 }
 function setForm(f){ if(!f) return;
-  Object.keys(f).forEach(k=>{ const el=$(k); if(el){ if(el.type==='checkbox') el.checked=!!f[k]; else el.value=(f[k]==null?'':f[k]); } });
+  Object.keys(f).forEach(k=>{ const el=$(k); if(el){ if(el.type==='checkbox') el.checked=!!f[k]; else if(k!=='target_res'&&k!=='adv') el.value=(f[k]==null?'':f[k]); } });
+  if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
   (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
     const en=$('adv_'+a.dest); if(en) en.checked=true; const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
-  updateWarmup(); updateAlgo();
+  updateWarmup(); updateAlgo(); updatePrep(); updateMask();
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
   w.disabled=no; w.style.opacity=no?.45:1; if(no){ w.value=''; w.placeholder='n/a for this scheduler'; } else if(w.placeholder==='n/a for this scheduler') w.placeholder='0 for custom sched'; }
 function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris'); ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; }); }
-function optHelp(srcId,outId){ const n=$(srcId).value||''; const out=$(outId);
-  if(!n||n.includes(' ')){ out.innerHTML=''; return; }
+function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block'; }
+function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
+
+// ---- optimizer/scheduler help drawer ----
+let _drawerOpen=true;
+function toggleDrawer(){ _drawerOpen=!_drawerOpen; $('optdrawer').classList.toggle('collapsed',!_drawerOpen); $('drawer_show').style.display=_drawerOpen?'none':'inline-block'; }
+function optHelp(srcId){ const n=$(srcId).value||''; const body=$('help_body'); $('drawer_title').textContent=n||'Arg help';
+  if(!n||n.includes(' ')){ body.innerHTML='<p class="hnote">No introspectable args.</p>'; return; }
+  if(!_drawerOpen) toggleDrawer();
   fetch('/api/optimizer_args?name='+encodeURIComponent(n)).then(r=>r.json()).then(d=>{
-    let h=''; if(d.args&&d.args.length) h='accepts: '+d.args.map(a=>`<code>${esc(a.name)}${a.default!=null?'='+esc(a.default):(a.required?'*':'')}</code>`).join(' ');
-    if(d.note) h+=(h?'<br>':'')+esc(d.note);
-    out.innerHTML=h; });
+    let h='';
+    if(d.args&&d.args.length){ h=d.args.map(a=>{
+      const head=`<code>${esc(a.name)}${a.default!=null?'='+esc(a.default):(a.required?' *':'')}</code>`;
+      return `<div class="hrow">${head}${a.desc?`<span class="hdesc">${esc(a.desc)}</span>`:''}</div>`; }).join(''); }
+    else h='<p class="hnote">No args / package not installed.</p>';
+    if(d.note) h+=`<p class="hnote">${esc(d.note)}</p>`;
+    body.innerHTML=h; });
 }
+
+// ---- folder / file picker modal ----
+let _pick={input:null,cur:'',parent:null,fileMode:false};
+function pickFolder(inputId,fileMode){ _pick.input=inputId; _pick.fileMode=!!fileMode;
+  $('fselect').textContent=fileMode?'Select this folder (then type file)':'Select this folder';
+  $('fmodal').style.display='flex'; const start=($(inputId).value||'').trim(); navFolder(start); }
+function closePicker(){ $('fmodal').style.display='none'; }
+function navFolder(path){ fetch('/api/browse?path='+encodeURIComponent(path||'')).then(r=>r.json()).then(d=>{
+  _pick.cur=d.path||''; _pick.parent=d.parent; $('fpath').textContent=d.path||'(drives)'; $('fpathin').value=d.path||'';
+  const list=$('flist'); const dirs=d.dirs||[];
+  if(!dirs.length){ list.innerHTML='<div class="fempty">(no subfolders)</div>'; return; }
+  list.innerHTML=dirs.map(x=>`<div class="frow" onclick="navFolder('${esc(x.path).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"><span class="ic">📁</span>${esc(x.name)}</div>`).join(''); }); }
+function navUp(){ if(_pick.parent!=null) navFolder(_pick.parent); }
+function choosePicker(){ if(_pick.input&&_pick.cur) $(_pick.input).value=_pick.cur; closePicker(); }
 
 // ---- all-args render ----
 function renderArgs(groups){
@@ -221,31 +356,34 @@ function filterArgs(q){ q=(q||'').toLowerCase();
   if(q) document.querySelectorAll('#all-args details').forEach(d=>d.open=true);
 }
 
-// ---- dataset builder ----
+// ---- manual dataset builder ----
 function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.className='subset';
   div.innerHTML=`<button class="x" onclick="this.parentElement.remove()">✕</button>
-    <label>image_dir</label><input class="s_image_dir" value="${esc(s.image_dir||'')}" placeholder="C:\\path\\to\\images">
-    <div class="row">
+    <label>image_dir (resized)</label>
+    <div class="pathrow"><input class="s_image_dir" value="${esc(s.image_dir||'')}" placeholder="post_image_dataset\\resized\\..."><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
+    <label>cache_dir</label>
+    <div class="pathrow"><input class="s_cache_dir" value="${esc(s.cache_dir||'')}" placeholder="post_image_dataset\\lora\\..."><button class="pickbtn" onclick="pickSubset(this)">📁</button></div>
+    <div class="row3">
       <div><label>num_repeats</label><input class="s_num_repeats" type="number" value="${esc(s.num_repeats||1)}"></div>
       <div><label>keep_tokens</label><input class="s_keep_tokens" type="number" value="${esc(s.keep_tokens||0)}"></div>
-    </div>
-    <div class="row">
       <div><label>caption_extension</label><input class="s_caption_extension" value="${esc(s.caption_extension||'.txt')}"></div>
-      <div><label>caption_dropout_rate</label><input class="s_caption_dropout_rate" value="${esc(s.caption_dropout_rate||0)}"></div>
     </div>
-    <div class="row" style="margin-top:8px">
-      <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label style="margin:0">recursive</label></div>
-      <div class="chk"><input type="checkbox" class="s_flip_aug" ${s.flip_aug?'checked':''}><label style="margin:0">flip_aug</label></div>
+    <div class="row3">
+      <div><label>caption_dropout_rate</label><input class="s_caption_dropout_rate" value="${esc(s.caption_dropout_rate||0)}"></div>
+      <div class="chk"><input type="checkbox" class="s_flip_aug" ${s.flip_aug?'checked':''}><label>flip_aug</label></div>
+      <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive</label></div>
     </div>`;
   $('subsets').appendChild(div);
 }
+function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub_'+Math.random().toString(36).slice(2); inp.id=tmp; pickFolder(tmp); }
 async function buildDataset(){
   const subs=[...document.querySelectorAll('#subsets .subset')].map(d=>({
-    image_dir:d.querySelector('.s_image_dir').value, num_repeats:d.querySelector('.s_num_repeats').value,
-    keep_tokens:d.querySelector('.s_keep_tokens').value, caption_extension:d.querySelector('.s_caption_extension').value,
+    image_dir:d.querySelector('.s_image_dir').value, cache_dir:d.querySelector('.s_cache_dir').value,
+    num_repeats:d.querySelector('.s_num_repeats').value, keep_tokens:d.querySelector('.s_keep_tokens').value,
+    caption_extension:d.querySelector('.s_caption_extension').value,
     caption_dropout_rate:d.querySelector('.s_caption_dropout_rate').value,
     recursive:d.querySelector('.s_recursive').checked, flip_aug:d.querySelector('.s_flip_aug').checked }));
-  const r=await post('/api/dataset/build',{name:$('ds_name').value,batch_size:$('ds_batch').value,subsets:subs});
+  const r=await post('/api/dataset/build',{name:$('m_ds_name').value,batch_size:$('m_ds_batch').value,subsets:subs});
   if(r.ok){ $('dataset_config').value=r.path; showCmd('dataset written → '+r.path+'\n\n'+r.toml); }
   else showCmd('✗ '+(r.error||'dataset build failed'));
 }
@@ -253,7 +391,9 @@ async function buildDataset(){
 // ---- run / queue / configs ----
 async function preview(){ const r=await post('/api/launch',form({dry_run:true})); showCmd(r.command||('error: '+(r.error||'?'))); }
 async function start(){ const r=await post('/api/launch',form()); if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
-  showCmd((r.daemon?('submitted to daemon — job '+(r.job_id||'?')+'\n$ '):'$ ')+r.command+(r.note?('\n('+r.note+')'):''));
+  let msg=r.daemon?('submitted to daemon — job '+(r.job_id||'?')):'started';
+  if(r.preprocess) msg+=' (auto-preprocess → train chain)';
+  showCmd(msg+'\n$ '+r.command+(r.note?('\n('+r.note+')'):''));
   if(r.monitor_url){ const a=$('monlink'); a.href=r.monitor_url; a.style.display='inline'; a.textContent='Open monitor ('+r.monitor_url+') ↗'; } poll(); }
 async function stopRun(){ const r=await post('/api/stop',{}); if(!r.ok) showCmd('✗ '+(r.error||'')); }
 function refreshQueue(){ fetch('/api/queue/list').then(r=>r.json()).then(d=>{ const el=$('queue-list'),q=d.queue||[]; window._q=q;
@@ -286,9 +426,16 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   fill($('optimizer_type'),o.optimizers,'AdamW'); fill($('lr_scheduler_type'),o.schedulers,'cosine');
   fill($('network_module'),o.network_modules,'networks.lora_anima'); fill($('algo'),o.lycoris_algos,'lokr');
   fill($('lycoris_preset'),o.lycoris_presets,'anima-attn-mlp');
+  // resolution tiers (default-check 1024 + 896 = preprocess.toml default)
+  const defTiers=['1024','896'];
+  $('tiers').innerHTML=(o.target_res_tiers||[]).map(t=>`<label class="tier-lab"><input type="checkbox" class="tier" value="${t}" ${defTiers.includes(String(t))?'checked':''}>${t}</label>`).join('');
+  // SAM3 availability note
+  const sn=$('sam_note');
+  if(o.sam3_available) sn.textContent='SAM3 weights present.'; else sn.innerHTML='⚠ SAM3 weights not downloaded (gated) — run <code>hf auth login</code> then <code>make download-sam3</code>. MIT works now.';
+  if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
   renderArgs(o.arg_groups); addSubset();
-  updateWarmup(); updateAlgo(); refreshConfigs(); refreshQueue();
-  optHelp('optimizer_type','opt_help');
+  updateWarmup(); updateAlgo(); updatePrep(); updateMask(); refreshConfigs(); refreshQueue();
+  optHelp('optimizer_type');
   setInterval(poll,2000); poll();
 })();
 </script>

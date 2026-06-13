@@ -815,8 +815,9 @@ def do_sample(
     flow_shift: float = 3.0,
     neg_crossattn_emb: Optional[torch.Tensor] = None,
     show_progress: bool = True,
+    sampler: str = "euler",
 ) -> torch.Tensor:
-    """Generate a sample using Euler discrete sampling for rectified flow.
+    """Generate a sample for rectified flow.
 
     Args:
         height, width: Output image dimensions
@@ -829,6 +830,8 @@ def do_sample(
         guidance_scale: CFG scale (1.0 = no guidance)
         flow_shift: Flow shift parameter for rectified flow
         neg_crossattn_emb: Negative cross-attention embeddings for CFG
+        sampler: "euler" (deterministic ODE) or "er_sde" (Extended Reverse-Time
+            SDE, ER-SDE-Solver-3 — reuses the inference ``ERSDESampler``).
 
     Returns:
         Denoised latents
@@ -860,6 +863,15 @@ def do_sample(
     # Start from pure noise
     x = noise.clone()
 
+    # ER-SDE: the stochastic ER-SDE-Solver-3 (reuses the inference sampler so the
+    # train-time preview matches AnimaLoraToolkit / inference.py --sampler er_sde).
+    # It consumes the model's x0 estimate (denoised) rather than the raw velocity.
+    er_sde = None
+    if sampler == "er_sde":
+        from library.inference import sampling as _inf_sampling
+
+        er_sde = _inf_sampling.ERSDESampler(sigmas, seed=seed, device=device)
+
     # Padding mask (zeros = no padding) — resized in prepare_embedded_sequence to match latent dims
     padding_mask = torch.zeros(1, 1, latent_h, latent_w, dtype=dtype, device=device)
 
@@ -881,10 +893,16 @@ def do_sample(
             model_output = dit(x, t, crossattn_emb, padding_mask=padding_mask)
             model_output = model_output.float()
 
-        # Euler step: x_{t-1} = x_t - (sigma_t - sigma_{t-1}) * model_output
-        dt = sigmas[i + 1] - sigma
-        x = x + model_output * dt
-        x = x.to(dtype)
+        if er_sde is not None:
+            # x0 estimate for flow-matching: denoised = x_t - σ_t * v (same as the
+            # inference path), then the ER-SDE update + stochastic noise injection.
+            denoised = x.float() - sigma.float() * model_output
+            x = er_sde.step(x.float(), denoised, i).to(dtype)
+        else:
+            # Euler step: x_{t-1} = x_t - (sigma_t - sigma_{t-1}) * model_output
+            dt = sigmas[i + 1] - sigma
+            x = x + model_output * dt
+            x = x.to(dtype)
 
     return x
 
@@ -1215,6 +1233,7 @@ def _sample_image_inference(
         scale,
         flow_shift,
         neg_crossattn_emb,
+        sampler=prompt_dict.get("sample_sampler") or getattr(args, "sample_sampler", "euler"),
     )
 
     # Stash the latent instead of decoding now. Loading the VAE to GPU mid-run

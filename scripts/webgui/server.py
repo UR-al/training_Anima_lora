@@ -27,8 +27,14 @@ ROOT = Path(__file__).resolve().parents[2]
 HTML_FILE = Path(__file__).resolve().parent / "index.html"
 
 # Last launch this panel issued (direct Popen and/or a daemon job id).
-_STATE: dict = {"proc": None, "cmd": None, "monitor_url": None, "started_at": None,
-                "daemon_job": None, "daemon_base": None}
+_STATE: dict = {
+    "proc": None,
+    "cmd": None,
+    "monitor_url": None,
+    "started_at": None,
+    "daemon_job": None,
+    "daemon_base": None,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -53,8 +59,15 @@ def list_presets() -> list[str]:
 def list_optimizers() -> list[str]:
     """kohya built-ins first, then the vendored zoo (class names, available only)."""
     builtins = [
-        "AdamW", "AdamW8bit", "PagedAdamW8bit", "Lion", "Prodigy",
-        "DAdaptAdam", "Adafactor", "RAdamScheduleFree", "AdamWScheduleFree",
+        "AdamW",
+        "AdamW8bit",
+        "PagedAdamW8bit",
+        "Lion",
+        "Prodigy",
+        "DAdaptAdam",
+        "Adafactor",
+        "RAdamScheduleFree",
+        "AdamWScheduleFree",
     ]
     custom: list[str] = []
     try:
@@ -75,8 +88,13 @@ def list_optimizers() -> list[str]:
 
 def list_schedulers() -> list[str]:
     return [
-        "cosine", "cosine_with_restarts", "constant", "constant_with_warmup",
-        "linear", "polynomial", "warmup_stable_decay",
+        "cosine",
+        "cosine_with_restarts",
+        "constant",
+        "constant_with_warmup",
+        "linear",
+        "polynomial",
+        "warmup_stable_decay",
         "LoraEasyCustomOptimizer.CosineAnnealingWarmRestarts.CosineAnnealingWarmRestarts",
         "LoraEasyCustomOptimizer.RexAnnealingWarmRestarts.RexAnnealingWarmRestarts",
     ]
@@ -100,36 +118,140 @@ def list_network_modules() -> list[str]:
 def list_lycoris_algos() -> list[str]:
     """LyCORIS algorithms (used with lycoris.kohya via network_args algo=...).
     The full set LoRA_Easy exposes."""
-    return ["lora", "loha", "lokr", "dylora", "glora", "full", "diag-oft", "boft", "ia3"]
+    return [
+        "lora",
+        "loha",
+        "lokr",
+        "dylora",
+        "glora",
+        "full",
+        "diag-oft",
+        "boft",
+        "ia3",
+    ]
 
 
 # Args owned by the curated panels (don't duplicate them in the auto-generated
 # "all arguments" section).
 _CURATED_ARGS = {
-    "method", "preset", "help", "optimizer_type", "learning_rate", "optimizer_args",
-    "lr_scheduler", "lr_scheduler_type", "lr_scheduler_args", "lr_warmup_steps",
-    "network_module", "network_args", "network_alpha", "network_dim",
-    "dataset_config", "max_train_epochs", "output_name", "seed",
-    "monitor", "monitor_host", "monitor_port", "monitor_open_browser",
+    "method",
+    "preset",
+    "help",
+    "optimizer_type",
+    "learning_rate",
+    "optimizer_args",
+    "lr_scheduler",
+    "lr_scheduler_type",
+    "lr_scheduler_args",
+    "lr_warmup_steps",
+    "network_module",
+    "network_args",
+    "network_alpha",
+    "network_dim",
+    "dataset_config",
+    "max_train_epochs",
+    "output_name",
+    "seed",
+    "monitor",
+    "monitor_host",
+    "monitor_port",
+    "monitor_open_browser",
 }
 
 # Role buckets (first keyword match wins; order = display order).
 _ROLE_RULES = [
-    ("Speed / compile", ["compile", "attn", "flash", "sdpa", "sage", "flex", "block_swap",
-                         "blocks_to_swap", "cudagraph", "dynamo", "channel_scal",
-                         "activation_memory", "persistent_data", "pin_memory",
-                         "dataloader", "highvram", "split_attn", "vae_chunk", "full_bf16",
-                         "fp8", "unsloth", "gradient_checkpoint"]),
-    ("Training", ["lr", "epoch", "step", "batch", "grad", "warmup", "loss", "huber",
-                  "timestep", "sigmoid", "weighting", "discrete_flow", "shift", "noise",
-                  "min_snr", "edm", "scale_weight", "mixed_precision", "clip", "accum",
-                  "prior", "masked_loss", "vr_"]),
+    (
+        "Speed / compile",
+        [
+            "compile",
+            "attn",
+            "flash",
+            "sdpa",
+            "sage",
+            "flex",
+            "block_swap",
+            "blocks_to_swap",
+            "cudagraph",
+            "dynamo",
+            "channel_scal",
+            "activation_memory",
+            "persistent_data",
+            "pin_memory",
+            "dataloader",
+            "highvram",
+            "split_attn",
+            "vae_chunk",
+            "full_bf16",
+            "fp8",
+            "unsloth",
+            "gradient_checkpoint",
+        ],
+    ),
+    (
+        "Training",
+        [
+            "lr",
+            "epoch",
+            "step",
+            "batch",
+            "grad",
+            "warmup",
+            "loss",
+            "huber",
+            "timestep",
+            "sigmoid",
+            "weighting",
+            "discrete_flow",
+            "shift",
+            "noise",
+            "min_snr",
+            "edm",
+            "scale_weight",
+            "mixed_precision",
+            "clip",
+            "accum",
+            "prior",
+            "masked_loss",
+            "vr_",
+        ],
+    ),
     ("Network / adapter", ["network", "dim", "alpha", "dropout", "conv", "rank"]),
-    ("Dataset / caching", ["dataset", "cache", "bucket", "resolution", "caption",
-                           "shuffle", "token", "reg_", "repeat", "flip", "color", "crop",
-                           "mask", "image_dir", "max_data_loader"]),
-    ("Paths / model", ["path", "_dir", "vae", "qwen", "t5", "tokenizer", "pretrained",
-                       "model", "logging", "_weights", "base_weights"]),
+    (
+        "Dataset / caching",
+        [
+            "dataset",
+            "cache",
+            "bucket",
+            "resolution",
+            "caption",
+            "shuffle",
+            "token",
+            "reg_",
+            "repeat",
+            "flip",
+            "color",
+            "crop",
+            "mask",
+            "image_dir",
+            "max_data_loader",
+        ],
+    ),
+    (
+        "Paths / model",
+        [
+            "path",
+            "_dir",
+            "vae",
+            "qwen",
+            "t5",
+            "tokenizer",
+            "pretrained",
+            "model",
+            "logging",
+            "_weights",
+            "base_weights",
+        ],
+    ),
     ("Saving / resume", ["save", "resume", "state", "snapshot", "output"]),
     ("Sampling / validation", ["sample", "valid", "cmmd", "prompt"]),
     ("Logging / misc", ["log", "wandb", "tensorboard", "progress", "metadata"]),
@@ -179,15 +301,26 @@ def list_arg_groups() -> list:
         flag = max(a.option_strings, key=len)  # the long --form
         is_bool = _arg_type(a) == "bool"
         item = {
-            "dest": dest, "flag": flag, "type": _arg_type(a), "is_bool": is_bool,
-            "default": _jsonable(a.default), "help": (a.help or "").strip(),
+            "dest": dest,
+            "flag": flag,
+            "type": _arg_type(a),
+            "is_bool": is_bool,
+            "default": _jsonable(a.default),
+            "help": (a.help or "").strip(),
             "choices": [str(c) for c in a.choices] if a.choices else [],
-            "nargs": a.nargs if a.nargs in ("*", "+") or isinstance(a.nargs, int) else None,
+            "nargs": a.nargs
+            if a.nargs in ("*", "+") or isinstance(a.nargs, int)
+            else None,
         }
         buckets.setdefault(_arg_role(dest), []).append(item)
     order = [r for r, _ in _ROLE_RULES] + ["Other"]
-    return [{"role": r, "args": sorted(buckets[r], key=lambda x: x["dest"])}
-            for r in order if r in buckets]
+    # "Other" is the LoRA_Easy-style "기타 / Extra args" catch-all bucket.
+    label = {"Other": "Misc / other (기타)"}
+    return [
+        {"role": label.get(r, r), "args": sorted(buckets[r], key=lambda x: x["dest"])}
+        for r in order
+        if r in buckets
+    ]
 
 
 # Anima-specific LyCORIS presets ship as TOML files (stock built-in presets list
@@ -206,8 +339,15 @@ def list_lycoris_presets() -> list[str]:
     (anima-attn-mlp → 197 modules, attention+MLP; anima-full → 314, +adaln/embeds).
     The stock built-ins target standard diffusers class names and are kept only
     for non-Anima base models."""
-    return [*_ANIMA_LYCORIS_PRESETS, "full", "full-lin", "attn-mlp", "attn-only",
-            "unet-transformer-only", "unet-convblock-only"]
+    return [
+        *_ANIMA_LYCORIS_PRESETS,
+        "full",
+        "full-lin",
+        "attn-mlp",
+        "attn-only",
+        "unet-transformer-only",
+        "unet-convblock-only",
+    ]
 
 
 # kohya built-in optimizer aliases -> the real class get_optimizer constructs.
@@ -235,33 +375,152 @@ _BUILTIN_OPT_MAP = {
 _BUILTIN_SCHED_ARGS = {
     "cosine": ["lr_warmup_steps", "lr_scheduler_num_cycles"],
     "cosine_with_restarts": ["lr_warmup_steps", "lr_scheduler_num_cycles"],
-    "cosine_with_min_lr": ["lr_warmup_steps", "lr_scheduler_num_cycles", "lr_scheduler_min_lr_ratio"],
+    "cosine_with_min_lr": [
+        "lr_warmup_steps",
+        "lr_scheduler_num_cycles",
+        "lr_scheduler_min_lr_ratio",
+    ],
     "constant": [],
     "constant_with_warmup": ["lr_warmup_steps"],
     "linear": ["lr_warmup_steps"],
     "polynomial": ["lr_warmup_steps", "lr_scheduler_power"],
     "inverse_sqrt": ["lr_warmup_steps", "lr_scheduler_timescale"],
     "piecewise_constant": [],
-    "warmup_stable_decay": ["lr_warmup_steps", "lr_decay_steps", "lr_scheduler_min_lr_ratio", "lr_scheduler_num_cycles"],
+    "warmup_stable_decay": [
+        "lr_warmup_steps",
+        "lr_decay_steps",
+        "lr_scheduler_min_lr_ratio",
+        "lr_scheduler_num_cycles",
+    ],
     "adafactor": [],
 }
 
 
+# Short (<= 8 word) plain-language descriptions, keyed by optimizer/scheduler arg
+# name. Merged into optimizer_arg_help()'s per-arg rows via _arg_desc() so the GUI
+# help drawer can show "name=default — description". Optional per-optimizer
+# overrides live under the "_by_opt" sub-dict (key = lowercase registry name).
+# Curated (not docstring-scraped) because the vendored zoo uses inconsistent
+# docstring conventions and some packages aren't even installed.
+_ARG_DESCRIPTIONS = {
+    # core step / learning rate
+    "lr": "Base learning rate (step size).",
+    "learning_rate": "Base learning rate (step size).",
+    "maximize": "Maximize the objective instead of minimizing.",
+    "momentum": "Fraction of previous update kept each step.",
+    "nesterov": "Use Nesterov look-ahead momentum.",
+    "dampening": "Damps momentum accumulation.",
+    # Adam-family betas & moments
+    "betas": "EMA decay rates for gradient moments.",
+    "beta1": "First-moment (mean) EMA decay rate.",
+    "beta2": "Second-moment (variance) EMA decay rate.",
+    "beta3": "Third EMA decay (slow moment / mix).",
+    "amsgrad": "Use max-of-past variance for stability.",
+    "ams_bound": "AMSBound variant for tighter bounds.",
+    "centered": "Normalize by centered (variance) gradient.",
+    "rho": "Decay rate for squared-gradient average.",
+    "alpha": "Smoothing / decay coefficient.",
+    # numerical stability
+    "eps": "Tiny constant preventing divide-by-zero.",
+    "eps1": "Stability epsilon for the denominator.",
+    "eps2": "Secondary stability epsilon term.",
+    "clip_threshold": "Clamp on RMS of the update.",
+    # weight decay
+    "weight_decay": "L2 / weight-decay regularization strength.",
+    "weight_decouple": "Decouple weight decay like AdamW.",
+    "decouple": "Decouple weight decay from gradient.",
+    "fixed_decay": "Use a fixed (un-scaled) weight decay.",
+    "cautious_weight_decay": "Decay only sign-aligned coordinates.",
+    # Prodigy / D-Adaptation auto-LR
+    "d_coef": "Multiplier on the estimated learning rate.",
+    "d0": "Initial learning-rate estimate.",
+    "use_bias_correction": "Apply Adam-style bias correction.",
+    "bias_correction": "Apply Adam-style bias correction.",
+    "safeguard_warmup": "Stabilize LR estimate during warmup.",
+    # update strategy / cautious / schedule-free
+    "cautious": "Mask updates conflicting with the gradient.",
+    "update_strategy": "Update-masking mode (cautious / grams / etc.).",
+    "r": "Schedule-free polynomial weighting power.",
+    "weight_lr_power": "LR weighting exponent for averaging.",
+    # low-precision / performance
+    "foreach": "Batch ops across params for speed.",
+    "fused": "Use a fused CUDA kernel.",
+    "kahan_sum": "Kahan compensation for low-precision updates.",
+    "stochastic_rounding": "Stochastic rounding for bf16/fp16 updates.",
+    "compile_step": "torch.compile the per-parameter step.",
+    # factored / memory-efficient state
+    "factored": "Factorize second moment to save memory.",
+    "non_factored_confidence": "Apply confidence term to 1D params.",
+    "slice_p": "Subsample params for LR estimation.",
+    "sync_chunk_size": "Chunk size for cross-device state sync.",
+    "state_storage_dtype": "Dtype for stored optimizer state.",
+    "state_storage_device": "Device holding optimizer state (e.g. cpu).",
+    # misc shared
+    "gamma": "Per-step decay / shrink factor.",
+    "growth_rate": "Cap on per-step learning-rate growth.",
+    "warmup_steps": "Steps to linearly ramp up.",
+    "warmup_init": "Start warmup from a tiny LR.",
+    # scheduler args
+    "num_cycles": "Number of cosine restart cycles.",
+    "power": "Polynomial decay exponent.",
+    "min_lr": "Lower bound on the learning rate.",
+    "min_lr_ratio": "Floor LR as a fraction of peak.",
+    "restart_decay": "LR scale applied after each restart.",
+    "warmup_ratio": "Fraction of training spent warming up.",
+    "first_cycle_steps": "Length of the first restart cycle.",
+    "first_cycle_max_steps": "Length of the first restart cycle.",
+    "cycle_mult": "Per-cycle length multiplier.",
+    "max_lr": "Peak learning rate at cycle start.",
+    "d": "Rex schedule shape parameter.",
+    # per-optimizer overrides (key = lowercase registry name)
+    "_by_opt": {
+        "adopt": {"clip": "Gradient clip; ADOPT default 0.25."},
+        "scion": {"gamma": "Norm/constraint scaling for Scion LMO."},
+    },
+}
+
+
+def _arg_desc(arg_name: str, opt_key: str | None = None) -> str | None:
+    """Short description for an optimizer/scheduler arg (None if unknown).
+    Per-optimizer override (``_by_opt[opt_key][arg]``) wins over the flat map."""
+    a = (arg_name or "").lstrip("-").lower()
+    if opt_key:
+        ov = _ARG_DESCRIPTIONS.get("_by_opt", {}).get(opt_key.lower())
+        if ov and a in ov:
+            return ov[a]
+    return _ARG_DESCRIPTIONS.get(a)
+
+
 def optimizer_arg_help(name: str) -> dict:
-    """What an optimizer/scheduler accepts, for the GUI help line. Introspects the
+    """What an optimizer/scheduler accepts, for the GUI help drawer. Introspects the
     class __init__ for custom/3rd-party optimizers; resolves kohya built-in aliases
     to their real class; and for built-in schedulers (functions, not classes) lists
-    the trainer --flags they read."""
+    the trainer --flags they read. Each arg row carries a short ``desc``."""
     import importlib
     import inspect
 
     key = name.lower()
     if key in _BUILTIN_SCHED_ARGS:  # built-in scheduler -> trainer flags
         flags = _BUILTIN_SCHED_ARGS[key]
-        note = ("configured via the main flags (see All arguments): "
-                + (", ".join("--" + f for f in flags) if flags else "no extra args needed"))
-        return {"ok": True, "builtin_scheduler": True, "note": note,
-                "args": [{"name": "--" + f, "default": None, "required": False} for f in flags]}
+        note = "configured via the main flags (see All arguments): " + (
+            ", ".join("--" + f for f in flags) if flags else "no extra args needed"
+        )
+        return {
+            "ok": True,
+            "builtin_scheduler": True,
+            "note": note,
+            "args": [
+                {
+                    "name": "--" + f,
+                    "default": None,
+                    "required": False,
+                    "desc": _arg_desc(
+                        f.replace("lr_scheduler_", "").replace("lr_", "")
+                    ),
+                }
+                for f in flags
+            ],
+        }
 
     cls = None
     try:
@@ -282,22 +541,58 @@ def optimizer_arg_help(name: str) -> dict:
     except Exception:
         cls = None
     if cls is None:
-        return {"ok": False, "args": [],
-                "note": "no introspectable args (its package may not be installed)"}
+        return {
+            "ok": False,
+            "args": [],
+            "note": "no introspectable args (its package may not be installed)",
+        }
     try:
         sig = inspect.signature(cls.__init__)
     except Exception:
         return {"ok": False, "args": []}
     args = []
     for pn, p in sig.parameters.items():
-        if pn in ("self", "params", "model", "optimizer", "base_optimizer") or p.kind in (
-            p.VAR_POSITIONAL, p.VAR_KEYWORD
-        ):
+        if pn in (
+            "self",
+            "params",
+            "model",
+            "optimizer",
+            "base_optimizer",
+        ) or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
             continue
         empty = p.default is inspect.Parameter.empty
-        args.append({"name": pn, "default": None if empty else _jsonable(p.default),
-                     "required": empty})
+        args.append(
+            {
+                "name": pn,
+                "default": None if empty else _jsonable(p.default),
+                "required": empty,
+                "desc": _arg_desc(pn, key),
+            }
+        )
     return {"ok": True, "cls": f"{cls.__module__}.{cls.__qualname__}", "args": args}
+
+
+# Constant-token resolution tiers (the honest anima equivalent of kohya's
+# min/max bucket reso + steps — anima has no per-image bucket knobs; each tier
+# edge maps to a curated token-count bucket family). Source of truth:
+# library.datasets.buckets.ALLOWED_TARGET_RES.
+def list_target_res_tiers() -> list[int]:
+    try:
+        from library.datasets.buckets import ALLOWED_TARGET_RES
+
+        return sorted(int(e) for e in ALLOWED_TARGET_RES)
+    except Exception:
+        return [512, 768, 896, 1024, 1280, 1536]
+
+
+def _sam3_available() -> bool:
+    """Whether SAM3 masking can run (its gated weights are present)."""
+    d = ROOT / "models" / "sam3"
+    return (d / "sam3.pt").exists() or (d / "config.json").exists()
+
+
+def _mit_available() -> bool:
+    return (ROOT / "models" / "mit" / "model.pth").exists()
 
 
 _OPTIONS_CACHE = None
@@ -317,6 +612,9 @@ def options() -> dict:
             "lycoris_algos": list_lycoris_algos(),
             "lycoris_presets": list_lycoris_presets(),
             "arg_groups": list_arg_groups(),
+            "target_res_tiers": list_target_res_tiers(),
+            "sam3_available": _sam3_available(),
+            "mit_available": _mit_available(),
         }
     return _OPTIONS_CACHE
 
@@ -360,8 +658,10 @@ def _method_preset_extra(form: dict):
         else:
             extra += ["--lr_scheduler", sched]
 
-    for flag, key in (("--optimizer_args", "optimizer_args"),
-                      ("--lr_scheduler_args", "lr_scheduler_args")):
+    for flag, key in (
+        ("--optimizer_args", "optimizer_args"),
+        ("--lr_scheduler_args", "lr_scheduler_args"),
+    ):
         v = (form.get(key) or "").strip()
         if v:
             extra += [flag, *v.split()]
@@ -440,12 +740,126 @@ def _monitor_url(form: dict):
     return f"http://{shown}:{port}"
 
 
+def _prepare_auto_preprocess(form: dict) -> dict:
+    """Set up the auto-preprocess→train daemon chain from the form.
+
+    Resizes/caches (and optionally masks) a RAW image folder at training start —
+    like latent caching, but kicked off automatically. Returns the command-job
+    spec (``argv`` + ``extra_env``) for ``submit_command``; the caller chains the
+    train job after it via ``chain_train``. Also REWRITES ``form['dataset_config']``
+    to the auto-generated config pointing at the to-be-created cache dirs, so the
+    chained train job reads the fresh caches. Returns ``{"error": …}`` on a bad
+    folder.
+
+    Mechanism: a CONFIG_FILE snapshot redirects source/resized/cache/mask dirs
+    (+ target_res tiers) so the standard ``preprocess`` / ``mask`` pipeline runs
+    against the user's folder without editing configs/. Both preprocess and mask
+    read these path overrides; masking self-skips via RUN_SAM_MASK/RUN_MIT_MASK.
+    """
+    import toml as _toml
+
+    raw = (form.get("raw_image_dir") or "").strip()
+    if not raw:
+        return {"error": "Auto-preprocess is on but no raw image folder is set."}
+    if not Path(raw).is_dir():
+        return {"error": f"Raw image folder not found: {raw}"}
+
+    name = _safe_name(form.get("ds_name") or form.get("output_name") or "gui")
+    resized = f"post_image_dataset/resized/{name}"
+    cache = f"post_image_dataset/lora/{name}"
+    masks = f"post_image_dataset/masks/{name}"
+    masking = bool(form.get("mask_enable"))
+
+    # 1) Training dataset config → points at the (to-be-created) cache dirs.
+    sub = {
+        "image_dir": resized,
+        "cache_dir": cache,
+        "num_repeats": form.get("ds_num_repeats") or 1,
+        "keep_tokens": form.get("ds_keep_tokens") or 0,
+        "caption_extension": form.get("ds_caption_extension") or ".txt",
+        "recursive": True,
+    }
+    if form.get("ds_flip_aug"):
+        sub["flip_aug"] = True
+    if str(form.get("ds_caption_dropout_rate") or "").strip():
+        sub["caption_dropout_rate"] = form["ds_caption_dropout_rate"]
+    if masking:
+        sub["mask_dir"] = masks
+    built = build_dataset_toml(
+        {
+            "name": f"{name}_auto",
+            "batch_size": form.get("ds_batch") or 1,
+            "subsets": [sub],
+        }
+    )
+    if not built.get("ok"):
+        return {"error": built.get("error", "could not build dataset config")}
+    form["dataset_config"] = built["path"]
+
+    # 2) CONFIG_FILE snapshot redirecting the standard pipeline at the raw folder.
+    snap: dict = {
+        "source_image_dir": raw,
+        "resized_image_dir": resized,
+        "lora_cache_dir": cache,
+        "mask_dir": masks,
+    }
+    tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
+    if tiers:
+        snap["target_res"] = tiers
+    if form.get("drop_lowres") is False:
+        snap["drop_lowres_images"] = False
+    STORE_DIR.mkdir(parents=True, exist_ok=True)
+    snap_path = STORE_DIR / f"preprocess_{name}.toml"
+    snap_path.write_text(_toml.dumps(snap), encoding="utf-8")
+
+    # 3) Command-job env + target (preprocess, or preprocess-and-mask).
+    env = {"CONFIG_FILE": str(snap_path)}
+    if str(form.get("caption_shuffle_variants") or "").strip():
+        env["CAPTION_SHUFFLE_VARIANTS"] = str(form["caption_shuffle_variants"])
+    if str(form.get("caption_tag_dropout_rate") or "").strip():
+        env["CAPTION_TAG_DROPOUT_RATE"] = str(form["caption_tag_dropout_rate"])
+    target = "preprocess"
+    if masking:
+        target = "preprocess-and-mask"
+        env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
+        env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
+        if str(form.get("mit_text_threshold") or "").strip():
+            env["MIT_TEXT_THRESHOLD"] = str(form["mit_text_threshold"])
+        if str(form.get("mit_dilate") or "").strip():
+            env["MIT_DILATE"] = str(form["mit_dilate"])
+    return {
+        "argv": ["tasks.py", target],
+        "extra_env": env,
+        "dataset_config": built["path"],
+        "training_toml": built["toml"],
+        "masking": masking,
+        "target": target,
+    }
+
+
 def launch(form: dict) -> dict:
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
         return {"ok": False, "error": "A direct run is already in progress."}
+
+    # Auto-preprocess: rewrite form['dataset_config'] to the fresh-cache config and
+    # build the preprocess command-job spec, to be chained → train via the daemon.
+    prep = None
+    if form.get("auto_preprocess"):
+        prep = _prepare_auto_preprocess(form)
+        if prep.get("error"):
+            return {"ok": False, "error": prep["error"]}
+
     if form.get("dry_run"):
-        return {"ok": True, "dry_run": True, "command": " ".join(build_command(form))}
+        cmd = " ".join(build_command(form))
+        if prep:
+            pj = "tasks.py " + " ".join(prep["argv"][1:])
+            envs = " ".join(f"{k}={v}" for k, v in prep["extra_env"].items())
+            cmd = (
+                f"# 1) preprocess job (daemon): {pj}\n#    env: {envs}\n"
+                f"#    dataset → {prep['dataset_config']}\n# 2) then chains → train:\n{cmd}"
+            )
+        return {"ok": True, "dry_run": True, "command": cmd}
 
     method, preset, extra = _method_preset_extra(form)
     mon = _monitor_url(form)
@@ -460,14 +874,45 @@ def launch(form: dict) -> dict:
             from scripts.daemon import client as _dc
 
             cl = _dc.ensure_daemon()
-            resp = cl.submit(method=method, preset=preset, extra=extra)
-            _STATE.update(proc=None, cmd=None, started_at=None, monitor_url=mon,
-                          daemon_job=resp.get("job_id"), daemon_base=getattr(cl, "base", None))
-            return {"ok": True, "daemon": True, "job_id": resp.get("job_id"),
-                    "daemon_base": getattr(cl, "base", None), "monitor_url": mon,
-                    "command": cmd_str}
+            if prep:
+                # preprocess command-job → auto-chains the train job on success
+                # (manager._finalize). One Start click; both phases survive close.
+                resp = cl.submit_command(
+                    label=prep["target"],
+                    argv=prep["argv"],
+                    extra_env=prep["extra_env"],
+                    chain_train={"method": method, "preset": preset, "extra": extra},
+                )
+            else:
+                resp = cl.submit(method=method, preset=preset, extra=extra)
+            _STATE.update(
+                proc=None,
+                cmd=None,
+                started_at=None,
+                monitor_url=mon,
+                daemon_job=resp.get("job_id"),
+                daemon_base=getattr(cl, "base", None),
+            )
+            return {
+                "ok": True,
+                "daemon": True,
+                "job_id": resp.get("job_id"),
+                "daemon_base": getattr(cl, "base", None),
+                "monitor_url": mon,
+                "preprocess": bool(prep),
+                "command": cmd_str,
+                "note": ("auto-preprocess → train chain submitted" if prep else None),
+            }
         except Exception as exc:  # noqa: BLE001 — fall back to a direct spawn
             fallback_note = f"daemon unavailable ({exc}); ran directly instead"
+
+    # Direct-spawn fallback can't express the preprocess→train chain (no job queue).
+    if prep:
+        return {
+            "ok": False,
+            "error": "Auto-preprocess needs the daemon (it chains "
+            "preprocess → train). Enable 'Run via daemon' or preprocess manually.",
+        }
 
     cmd = build_command(form)
     env = os.environ.copy()
@@ -476,9 +921,16 @@ def launch(form: dict) -> dict:
         proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"failed to spawn: {exc}"}
-    _STATE.update(proc=proc, cmd=cmd, started_at=time.time(), monitor_url=mon, daemon_job=None)
-    return {"ok": True, "command": cmd_str, "pid": proc.pid, "monitor_url": mon,
-            "note": fallback_note}
+    _STATE.update(
+        proc=proc, cmd=cmd, started_at=time.time(), monitor_url=mon, daemon_job=None
+    )
+    return {
+        "ok": True,
+        "command": cmd_str,
+        "pid": proc.pid,
+        "monitor_url": mon,
+        "note": fallback_note,
+    }
 
 
 def status() -> dict:
@@ -490,7 +942,9 @@ def status() -> dict:
         "returncode": (proc.poll() if proc else None) if not running else None,
         "command": " ".join(_STATE["cmd"]) if _STATE.get("cmd") else None,
         "monitor_url": _STATE.get("monitor_url"),
-        "elapsed": (time.time() - _STATE["started_at"]) if _STATE.get("started_at") and running else None,
+        "elapsed": (time.time() - _STATE["started_at"])
+        if _STATE.get("started_at") and running
+        else None,
         "daemon_job": _STATE.get("daemon_job"),
         "daemon_base": _STATE.get("daemon_base"),
     }
@@ -575,13 +1029,21 @@ def queue_run() -> dict:
         form["daemon"] = True
         form.pop("dry_run", None)
         r = launch(form)
-        results.append({"name": item.get("name"), "ok": bool(r.get("ok")),
-                        "job_id": r.get("job_id"), "error": r.get("error")})
+        results.append(
+            {
+                "name": item.get("name"),
+                "ok": bool(r.get("ok")),
+                "job_id": r.get("job_id"),
+                "error": r.get("error"),
+            }
+        )
     return {"ok": True, "submitted": results}
 
 
 def config_list() -> list:
-    return sorted(p.stem for p in CONFIG_DIR.glob("*.json")) if CONFIG_DIR.is_dir() else []
+    return (
+        sorted(p.stem for p in CONFIG_DIR.glob("*.json")) if CONFIG_DIR.is_dir() else []
+    )
 
 
 def config_save(name: str, form: dict) -> dict:
@@ -607,22 +1069,46 @@ def config_delete(name: str) -> dict:
     return {"ok": True, "configs": config_list()}
 
 
+# Valid anima_lora subset keys the builder may emit. These all pass
+# `library.config.dataset_keys.lint_dataset_sections` (the training validator).
+# NOTE: `caption_tag_dropout_rate` is intentionally EXCLUDED — it is a real subset
+# key but HARD-CRASHES under the default `use_text_cache=true` (the TE cacheability
+# assert), so per-tag dropout is a preprocess knob (`--caption_tag_dropout_rate` on
+# cache_text_embeddings) instead. Likewise `shuffle_caption` is NOT a dataset key
+# and NOT a CLI flag in anima — caption shuffling is `--caption_shuffle_variants`
+# at TE-cache time (the Preprocess panel), not a train-time toggle.
 _SUBSET_KEYS = {
-    "image_dir": str, "cache_dir": str, "num_repeats": int, "keep_tokens": int,
-    "caption_extension": str, "recursive": bool, "caption_dropout_rate": float,
-    "caption_tag_dropout_rate": float, "flip_aug": bool, "color_aug": bool,
-    "random_crop": bool, "caption_prefix": str, "caption_suffix": str,
+    "image_dir": str,
+    "cache_dir": str,
+    "mask_dir": str,
+    "num_repeats": int,
+    "keep_tokens": int,
+    "caption_extension": str,
+    "recursive": bool,
+    "caption_dropout_rate": float,
+    "caption_dropout_every_n_epochs": int,
+    "flip_aug": bool,
+    "color_aug": bool,
+    "random_crop": bool,
+    "caption_prefix": str,
+    "caption_suffix": str,
 }
 
 
 def build_dataset_toml(data: dict) -> dict:
     """Write an anima_lora-compatible dataset config TOML from the GUI builder
     (one or more image subsets) and return its path — set it as dataset_config.
-    NOTE: caption SHUFFLING is a top-level --shuffle_caption flag in anima_lora,
-    not a dataset key, so it lives in the 'all arguments' section."""
+
+    `mask_dir` (per subset) wires SAM3/MIT masks into masked_loss; the GUI sets it
+    when masking is enabled (default `post_image_dataset/masks`). Caption shuffling
+    is NOT emitted here — it's `--caption_shuffle_variants` at preprocess time."""
     import toml as _toml
 
     name = _safe_name(data.get("name") or "dataset")
+    # A top-level mask_dir (set by the Masking panel) applies to every subset that
+    # doesn't override it — so enabling masking wires masked_loss without the user
+    # editing each subset.
+    global_mask_dir = (data.get("mask_dir") or "").strip()
     ds = {"batch_size": int(data.get("batch_size") or 1), "subsets": []}
     for s in data.get("subsets") or []:
         sub = {}
@@ -635,6 +1121,8 @@ def build_dataset_toml(data: dict) -> dict:
             except (TypeError, ValueError):
                 continue
         if sub.get("image_dir"):
+            if global_mask_dir and not sub.get("mask_dir"):
+                sub["mask_dir"] = global_mask_dir
             ds["subsets"].append(sub)
     if not ds["subsets"]:
         return {"ok": False, "error": "add at least one subset with an image_dir"}
@@ -643,6 +1131,49 @@ def build_dataset_toml(data: dict) -> dict:
     path = DATASET_DIR / f"{name}.toml"
     path.write_text(toml_str, encoding="utf-8")
     return {"ok": True, "path": str(path), "toml": toml_str}
+
+
+# --------------------------------------------------------------------------- #
+# Server-side folder browser (the GUI "Browse…" picker — local tool, real FS)
+# --------------------------------------------------------------------------- #
+def browse(path: str | None) -> dict:
+    """List immediate subdirectories of ``path`` for the GUI folder picker.
+
+    A browser can't open a native folder dialog with a real on-disk path, so the
+    local server lists the filesystem itself and the client navigates. Empty path
+    → Windows drive letters (or ``/`` on POSIX). Returns the resolved dir, its
+    parent, and each subfolder as ``{name, path}`` so the client navigates by path.
+    """
+    import string
+
+    p = (path or "").strip()
+    if not p:
+        if os.name == "nt":
+            drives = [
+                f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")
+            ]
+            return {
+                "ok": True,
+                "path": "",
+                "parent": None,
+                "dirs": [{"name": d, "path": d} for d in drives],
+            }
+        p = "/"
+    try:
+        base = Path(p)
+        if not base.is_dir():
+            base = base.parent if base.parent.is_dir() else Path.home()
+        base = base.resolve()
+        subs = sorted(
+            (e for e in os.scandir(base) if e.is_dir() and not e.name.startswith(".")),
+            key=lambda e: e.name.lower(),
+        )
+        dirs = [{"name": e.name, "path": str(Path(base, e.name))} for e in subs]
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "path": p, "dirs": []}
+    same = str(base.parent) == str(base)
+    parent = ("" if os.name == "nt" else None) if same else str(base.parent)
+    return {"ok": True, "path": str(base), "parent": parent, "dirs": dirs}
 
 
 # --------------------------------------------------------------------------- #
@@ -680,6 +1211,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/optimizer_args":
             qs = parse_qs(urlparse(self.path).query or "")
             self._json(optimizer_arg_help((qs.get("name") or [""])[0]))
+        elif path == "/api/browse":
+            qs = parse_qs(urlparse(self.path).query or "")
+            self._json(browse((qs.get("path") or [""])[0]))
         else:
             self._json({"error": "not found"}, 404)
 
@@ -726,7 +1260,9 @@ def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) 
     # so the first page load doesn't wait on it.
     threading.Thread(target=options, daemon=True).start()
     if open_browser:
-        threading.Thread(target=lambda: (time.sleep(0.6), webbrowser.open(url)), daemon=True).start()
+        threading.Thread(
+            target=lambda: (time.sleep(0.6), webbrowser.open(url)), daemon=True
+        ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

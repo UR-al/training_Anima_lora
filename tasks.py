@@ -155,6 +155,11 @@ COMMANDS = {
         "Full preprocessing (resize + VAE + text embeddings + caption index "
         "when the tagger vocab is present)",
     ),
+    "preprocess-and-mask": (
+        preprocess.cmd_preprocess_and_mask,
+        "Full preprocess THEN SAM3/MIT masking (masking self-skips when "
+        "RUN_SAM_MASK/RUN_MIT_MASK are off). The web GUI's auto-preprocess chain.",
+    ),
     "preprocess-config": (
         preprocess.cmd_preprocess_config,
         "Preprocess the dirs named in a --dataset_config TOML (resize --src "
