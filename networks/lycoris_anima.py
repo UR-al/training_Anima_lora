@@ -21,7 +21,9 @@ cleanly skips the text-encoder branch) and otherwise delegates verbatim to
     network_args = [
         "algo=lokr",                                       # or loha / lokr / full / ...
         "preset=configs/lycoris_presets/anima_attn_mlp.toml",
-        "factor=4", "full_matrix=True", "enable_conv=False",
+        "factor=4", "full_matrix=True",
+        "train_llm_adapter=False",                         # drop the Qwen3 LLM-adapter (*_te_layers_*)
+        "exclude_patterns=['.*adaln_modulation.*']",       # regex module excludes (NO spaces inside!)
     ]
 
 The preset file is what makes LyCORIS actually target the Anima blocks — stock
@@ -31,6 +33,19 @@ which match almost nothing in the Anima DiT. See
 ``anima_full.toml`` (Block+embeds+final, includes adaln). Both pass the Anima
 class names through the ``unet_target_module`` key that the kohya wrapper reads.
 
+Module exclusion (``exclude_patterns`` / ``train_llm_adapter``)
+--------------------------------------------------------------
+Stock ``lycoris.kohya`` targets by class/name (the preset) but has **no** regex
+EXCLUDE and no ``train_llm_adapter`` knob — LoRA_Easy carried those in its own
+patched ``networks/{loha,lokr}.py``, which this fork does not vendor (it uses
+stock ``lycoris-lora``). We replicate them here: after creation (and before
+``train.py`` calls ``apply_to``, which is what registers the modules), any wrapped
+LoRA whose ``lora_name`` matches an ``exclude_patterns`` regex is dropped, plus
+the Qwen3 LLM-adapter (``*_te_layers_*``) unless ``train_llm_adapter=true``
+(default false, matching ``networks.lora_anima``). ``exclude_patterns`` takes a
+python-literal list — **no spaces inside** (network_args are space-split):
+``exclude_patterns=['.*_te_layers_.*','.*adaln_modulation.*']``.
+
 Everything past creation (``apply_to`` / ``prepare_optimizer_params`` /
 ``save_weights`` / the per-step lifecycle hooks) is the unmodified
 ``LycorisNetworkKohya`` instance, so it rides the generic kohya trainer path.
@@ -38,7 +53,49 @@ Everything past creation (``apply_to`` / ``prepare_optimizer_params`` /
 
 from __future__ import annotations
 
+import logging
+import re
+
 import lycoris.kohya as _lyk
+
+from networks.lora_anima.config import _as_bool, _as_str_list
+
+logger = logging.getLogger(__name__)
+
+
+def _apply_exclusions(network, exclude_patterns, train_llm_adapter):
+    """Drop wrapped LoRA modules matching ``exclude_patterns`` (+ the LLM-adapter
+    unless ``train_llm_adapter``) from the freshly-built network.
+
+    Stock ``lycoris.kohya`` has no exclude mechanism, so we filter the module
+    lists (``unet_loras`` / ``text_encoder_loras``) here — before ``apply_to``
+    registers them as submodules, so excluded modules never enter the state_dict
+    or optimizer. ``apply_to`` re-derives ``self.loras`` from these two lists.
+    """
+    patterns = list(_as_str_list(exclude_patterns) or [])
+    if not _as_bool(train_llm_adapter):
+        patterns.append(r".*_te_layers_.*")  # Qwen3 LLM-adapter, frozen by default
+    if not patterns:
+        return network
+    regs = [re.compile(p) for p in patterns]
+
+    def _excluded(m) -> bool:
+        name = getattr(m, "lora_name", "") or ""
+        return any(r.search(name) for r in regs)
+
+    removed = 0
+    for attr in ("unet_loras", "text_encoder_loras"):
+        lst = getattr(network, attr, None)
+        if isinstance(lst, list):
+            kept = [m for m in lst if not _excluded(m)]
+            removed += len(lst) - len(kept)
+            setattr(network, attr, kept)
+    network.loras = list(getattr(network, "text_encoder_loras", []) or []) + list(
+        getattr(network, "unet_loras", []) or []
+    )
+    if removed:
+        logger.info("lycoris_anima: excluded %d module(s) via %s", removed, patterns)
+    return network
 
 
 def _sanitize_te(text_encoder):
@@ -73,7 +130,11 @@ def create_network(
     """
     if neuron_dropout is not None and "dropout" not in kwargs:
         kwargs["dropout"] = neuron_dropout
-    return _lyk.create_network(
+    # Pull the LoRA_Easy-compat exclusion knobs out before delegating — stock
+    # lycoris.kohya would silently ignore them; we apply them to the built network.
+    exclude_patterns = kwargs.pop("exclude_patterns", None)
+    train_llm_adapter = kwargs.pop("train_llm_adapter", False)
+    network = _lyk.create_network(
         multiplier,
         network_dim,
         network_alpha,
@@ -82,6 +143,7 @@ def create_network(
         unet,
         **kwargs,
     )
+    return _apply_exclusions(network, exclude_patterns, train_llm_adapter)
 
 
 def create_network_from_weights(
@@ -94,7 +156,14 @@ def create_network_from_weights(
     for_inference=False,
     **kwargs,
 ):
-    """Delegate to ``lycoris.kohya.create_network_from_weights`` (TE sanitized)."""
+    """Delegate to ``lycoris.kohya.create_network_from_weights`` (TE sanitized).
+
+    Inference rebuilds from the saved weights, which already omit any modules
+    excluded at train time — so drop the training-only exclusion knobs (no
+    filtering needed here) before delegating.
+    """
+    kwargs.pop("exclude_patterns", None)
+    kwargs.pop("train_llm_adapter", None)
     return _lyk.create_network_from_weights(
         multiplier,
         file,
