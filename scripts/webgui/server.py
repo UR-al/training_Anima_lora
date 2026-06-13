@@ -1303,9 +1303,31 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) -> None:
-    server = HTTPServer((host, port), Handler)
+    # The requested port may already be taken — most commonly because 7860 is
+    # ALSO gradio's default (sd-webui / forge-neo), or a prior GUI instance is
+    # still running. Rather than crash with WinError 10013 / address-in-use (the
+    # window just vanishes), scan upward for the first free port and use it.
+    server = None
+    last_err: OSError | None = None
+    for p in range(port, port + 20):
+        try:
+            server = HTTPServer((host, p), Handler)
+            break
+        except OSError as exc:
+            last_err = exc
+    if server is None:
+        raise SystemExit(
+            f"web GUI: no free port in {port}-{port + 19} ({last_err}). "
+            f"Pass --port <n> to pick one explicitly."
+        )
+    bound = server.server_address[1]
     shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
-    url = f"http://{shown}:{port}"
+    url = f"http://{shown}:{bound}"
+    if bound != port:
+        print(
+            f"\n  port {port} is busy (gradio/forge-neo or another app uses it) "
+            f"— using {bound} instead"
+        )
     print(f"\n  Anima LoRA web GUI: {url}\n  (Ctrl-C to stop)\n")
     # Pre-warm the option cache (imports the optimizer zoo) off the request path
     # so the first page load doesn't wait on it.

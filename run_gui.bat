@@ -7,3 +7,6 @@ if exist ".venv\Scripts\python.exe" (
 ) else (
   uv run python tasks.py webgui %*
 )
+REM Keep the window open if it exited with an error, so the message is readable
+REM (a normal Ctrl-C stop exits 0 and closes cleanly).
+if errorlevel 1 pause
