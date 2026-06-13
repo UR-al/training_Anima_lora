@@ -370,6 +370,9 @@
       <div><label>Monitor port</label><input id="monitor_port" type="number" value="8766"></div>
       <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
     </div>
+    <div class="row">
+      <div><label>Monitor / log every N steps <span class="hint">metric + monitor-chart + cmd progress cadence (--log_every_n_steps · blank = 1)</span></label><input id="log_every_n_steps" type="number" min="1" placeholder="1"></div>
+    </div>
     <div class="btns">
       <button class="ghost" onclick="preview()">Preview command</button>
       <button class="primary" onclick="start()">▶ Start now</button>
@@ -390,10 +393,6 @@
           <div id="prep_bar" style="height:100%;width:0%;background:var(--acc);transition:width .3s ease"></div>
         </div>
         <pre id="prep_log" style="display:none;max-height:170px;overflow:auto;margin-top:8px;font-size:11px"></pre>
-      </div>
-      <div id="monitor_embed" style="display:none;margin-top:10px">
-        <iframe id="mon_frame" title="training monitor" src="about:blank"
-                style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#0b0b0b"></iframe>
       </div>
     </div>
   </div>
@@ -462,7 +461,7 @@ const $ = id => document.getElementById(id);
 const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epochs','dataset_config','output_name','seed',
   'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
-  'monitor_port','extra_flags',
+  'monitor_port','log_every_n_steps','extra_flags',
   'output_dir','resume','sample_prompts',
   'dit_path','te_path','vae_path',
   'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
@@ -839,9 +838,7 @@ function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub
 // ---- run / queue / configs ----
 async function preview(){ const r=await post('/api/launch',form({dry_run:true})); showCmd(r.command||('error: '+(r.error||'?'))); }
 async function start(){ const r=await post('/api/launch',form()); if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
-  // fresh run → forget the previous embed so the monitor iframe re-arms
-  _monEmbedded=false; $('mon_frame').src='about:blank'; $('monitor_embed').style.display='none';
-  $('prep_log').textContent=''; $('prep_log').style.display='none';
+  $('prep_log').textContent=''; $('prep_log').style.display='none';  // fresh run → clear stale log tail
   let msg=r.daemon?('submitted to daemon — job '+(r.job_id||'?')):'started';
   if(r.preprocess) msg+=' (auto-preprocess → train chain)';
   showCmd(msg+'\n$ '+r.command+(r.note?('\n('+r.note+')'):''));
@@ -865,35 +862,21 @@ async function saveConfig(){ await post('/api/config/save',{name:($('job_name').
 async function loadConfig(){ const n=$('saved_configs').value; if(!n) return; const r=await(await fetch('/api/config/load?name='+encodeURIComponent(n))).json(); if(r.ok) setForm(r.form); }
 async function delConfig(){ const n=$('saved_configs').value; if(!n) return; await post('/api/config/delete',{name:n}); refreshConfigs(); }
 
-// Embed the live monitor only once it's actually reachable. The monitor HTTP
-// server binds a few seconds into the run (after model load, at run_start), so
-// pointing the iframe at it the instant the job goes "running" would load a
-// dead page with no retry. A no-cors probe resolves (opaquely) when the server
-// answers and rejects on connection-refused, so we keep probing each poll until
-// it's up, then set the src exactly once.
-let _monEmbedded=false;
-async function tryEmbedMonitor(url){
-  if(_monEmbedded||!url) return;
-  try{ await fetch(url,{mode:'no-cors',cache:'no-store'}); }catch(e){ return; }  // not up yet
-  $('mon_frame').src=url; _monEmbedded=true; $('monitor_embed').style.display='block';
-}
-// Render the daemon phase model: a preprocess progress bar that auto-hands-off
-// to the embedded training monitor the moment training starts.
+// Render the daemon phase model: a preprocess progress bar → a plain "training…"
+// status. The monitor is NOT embedded — view it via the "Open monitor ↗" link.
 function renderPhase(s){
   const ko=(_lang==='ko'), panel=$('progress_panel'), ph=s.phase;
+  const trainingText=()=>{ panel.style.display='block'; $('prep_progress').style.display='none';
+    $('phase_title').textContent=ko?'🟢 학습 중…  (모니터: 위 “Open monitor ↗”)':'🟢 Training…  (monitor: “Open monitor ↗” above)';
+    $('phase_pct').textContent=''; };
   if(!ph){  // no daemon phase info (direct Popen / daemon down)
-    if(s.running && s.monitor_url){  // direct run with monitor → embed it too
-      panel.style.display='block'; $('prep_progress').style.display='none';
-      tryEmbedMonitor(s.monitor_url);
-      $('phase_title').textContent=_monEmbedded?(ko?'학습 중 — 실시간 모니터':'Training — live monitor'):(ko?'학습 중 — 모니터 연결 중…':'Training — connecting to monitor…');
-      $('phase_pct').textContent='';
-    } else if(!_monEmbedded){ panel.style.display='none'; }
+    if(s.running) trainingText(); else panel.style.display='none';
     return;
   }
   panel.style.display='block';
   const pp=s.preprocess||{};
   if(ph==='preprocess'){
-    $('monitor_embed').style.display='none'; $('prep_progress').style.display='block';
+    $('prep_progress').style.display='block';
     const lab=pp.phase_label||'', pct=pp.percent, bar=$('prep_bar');
     $('phase_title').textContent=(ko?'전처리 중…':'Preprocessing…')+(lab?(' — '+lab):'');
     if(pct!=null){ bar.style.width=pct+'%'; bar.style.opacity='1'; $('phase_pct').textContent=pct+'%'+((pp.done!=null&&pp.total!=null)?` (${pp.done}/${pp.total})`:''); }
@@ -907,15 +890,8 @@ function renderPhase(s){
     $('phase_title').textContent=ko?'전처리 완료 — 학습 대기 중…':'Preprocess done — training queued…'; $('phase_pct').textContent='';
     return;
   }
-  if(ph==='training'){
-    $('prep_progress').style.display='none';
-    if(s.monitor_url){ tryEmbedMonitor(s.monitor_url);
-      $('phase_title').textContent=_monEmbedded?(ko?'학습 중 — 실시간 모니터':'Training — live monitor'):(ko?'학습 중 — 모니터 연결 중…':'Training — connecting to monitor…');
-    } else { $('phase_title').textContent=ko?'학습 중':'Training…'; }
-    $('phase_pct').textContent='';
-    return;
-  }
-  if(ph==='done'){ $('phase_title').textContent=ko?'완료 ✓':'Finished ✓'; $('phase_pct').textContent=''; if(!_monEmbedded) $('prep_progress').style.display='none'; return; }
+  if(ph==='training'){ trainingText(); return; }
+  if(ph==='done'){ panel.style.display='block'; $('prep_progress').style.display='none'; $('phase_title').textContent=ko?'✓ 학습 끝!':'✓ Training done!'; $('phase_pct').textContent=''; return; }
   if(ph==='error'){ $('prep_progress').style.display='block';
     $('phase_title').textContent=ko?'오류 ✗ — 아래 로그 / 실행 중인 cmd 창 확인':'Error ✗ — see log below / the cmd window';
     $('phase_pct').textContent='';

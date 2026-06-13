@@ -160,6 +160,7 @@ _CURATED_ARGS = {
     "monitor_host",
     "monitor_port",
     "monitor_open_browser",
+    "log_every_n_steps",  # curated in the Monitor & run panel
     # Model paths — curated in the GENERAL "Model files" controls (dit/te/vae);
     # excluded so they don't also appear as toggleable auto-args.
     "pretrained_model_name_or_path",
@@ -681,6 +682,8 @@ def _method_preset_extra(form: dict):
     add("--resume", "resume")
     add("--sample_prompts", "sample_prompts")
     add("--seed", "seed")
+    # Metric/monitor/cmd-progress cadence: log every N optimizer steps.
+    add("--log_every_n_steps", "log_every_n_steps")
 
     # Model paths (DiT / text-encoder / VAE). Blank = config-chain default
     # (models/…). Set them to point at forge-neo / ComfyUI model files so the
@@ -1208,37 +1211,39 @@ def _report_and_tail(job, n: int = 40):
 
 
 def _report_progress(job):
-    """Print a throttled training-progress line to the webgui console.
+    """Mirror the live tqdm progress bar to the webgui console.
 
     The daemon runs train.py DETACHED — its stdout goes to the per-job stdout.log,
-    not this terminal — so the cmd window running the GUI otherwise shows no
-    progress at all. Mirror the latest progress.jsonl ``step`` event here, throttled
-    to ~5s + deduped by step so the 2s status poll doesn't spam.
+    not this terminal — so the cmd window running the GUI otherwise shows nothing.
+    Tail that file for the latest tqdm line (``steps: …N/total… , 2.38s/it,
+    avr_loss=…``) and print it verbatim, throttled ~3s + deduped, so the cmd shows
+    the same climbing gauge a normal trainer would.
     """
-    latest = job.get("latest") or {}
-    if latest.get("ev") != "step":
+    path = job.get("stdout_path")
+    if not path:
         return
-    step = latest.get("global_step")
-    if step is None:
+    try:
+        data = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
         return
+    # tqdm rewrites its bar in place with \r; scan from the end for the latest
+    # progress line (carries it/s or s/it + an N/total fraction).
+    line = None
+    for seg in reversed(data.replace("\r", "\n").split("\n")):
+        seg = seg.strip()
+        if seg and ("it/s" in seg or "s/it" in seg) and "/" in seg:
+            line = seg
+            break
+    if not line:
+        return
+    st = _STATE.setdefault("_prog", {"t": 0.0, "line": None})
+    now = time.time()
+    if line == st.get("line") or (now - st.get("t", 0.0)) < 3.0:
+        return
+    st["t"], st["line"] = now, line
     import sys as _sys
 
-    st = _STATE.setdefault("_prog", {"t": 0.0, "step": None})
-    now = time.time()
-    if step == st["step"] or (now - st["t"]) < 5.0:
-        return
-    st["t"], st["step"] = now, step
-    loss = None
-    for k in ("loss/average", "loss_average", "loss/current", "loss_current", "loss"):
-        if latest.get(k) is not None:
-            loss = latest[k]
-            break
-    parts = [f"step {step}"]
-    if latest.get("epoch") is not None:
-        parts.append(f"epoch {latest['epoch']}")
-    if isinstance(loss, (int, float)):
-        parts.append(f"loss {float(loss):.4f}")
-    _sys.stdout.write("[webgui] training: " + "  ".join(parts) + "\n")
+    _sys.stdout.write(line + "\n")
     _sys.stdout.flush()
 
 
