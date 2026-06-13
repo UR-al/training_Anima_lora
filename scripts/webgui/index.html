@@ -108,16 +108,48 @@
     <h2>Adapter / LoRA type</h2>
     <label>network_module</label><select id="network_module" onchange="updateAlgo()"></select>
     <div class="row">
-      <div><label>LyCORIS algo</label><select id="algo"></select></div>
+      <div><label>LyCORIS algo</label><select id="algo" onchange="updateAlgo()"></select></div>
       <div><label>LyCORIS preset (target)</label><select id="lycoris_preset"></select></div>
     </div>
     <div class="row">
       <div><label>Network dim (rank)</label><input id="network_dim" type="number" placeholder="32"></div>
       <div><label>Network alpha</label><input id="network_alpha" placeholder="1"></div>
     </div>
-    <label>network_args <span class="hint">space-separated, e.g. factor=4 full_matrix=True</span></label>
-    <textarea id="network_args" placeholder="factor=4 train_norm=False"></textarea>
-    <p class="hint">Anima DiT: use <code>networks.lycoris_anima</code> + an <code>anima-*</code> preset to wrap the transformer blocks (the stock presets target diffusers names the Anima DiT doesn't use).</p>
+
+    <div id="lycoris_args">
+      <h3>LyCORIS args <span style="text-transform:none;color:var(--mut)">— shown per algo</span></h3>
+      <div class="row3">
+        <div><label>rank_dropout</label><input id="na_rank_dropout" placeholder="0"></div>
+        <div><label>module_dropout</label><input id="na_module_dropout" placeholder="0"></div>
+        <div></div>
+      </div>
+      <div class="row3">
+        <div class="chk"><input id="na_use_scalar" type="checkbox"><label>use_scalar</label></div>
+        <div class="chk"><input id="na_train_norm" type="checkbox"><label>train_norm</label></div>
+        <div class="chk"><input id="na_bypass_mode" type="checkbox"><label>bypass_mode</label></div>
+      </div>
+      <div class="row3">
+        <div class="chk"><input id="na_dora_wd" type="checkbox"><label>dora_wd (DoRA)</label></div>
+        <div class="chk"><input id="na_rs_lora" type="checkbox"><label>rs_lora</label></div>
+        <div></div>
+      </div>
+      <div id="na_grp_lokr">
+        <div class="row3">
+          <div><label>factor <span class="hint">lokr</span></label><input id="na_factor" value="4"></div>
+          <div class="chk"><input id="na_full_matrix" type="checkbox" checked><label>full_matrix</label></div>
+          <div class="chk"><input id="na_decompose_both" type="checkbox"><label>decompose_both</label></div>
+        </div>
+        <div class="chk"><input id="na_unbalanced_factorization" type="checkbox"><label>unbalanced_factorization</label></div>
+      </div>
+      <div id="na_grp_dylora"><label>block_size <span class="hint">dylora</span></label><input id="na_block_size" placeholder="4"></div>
+      <div id="na_grp_oft" class="row">
+        <div><label>constraint <span class="hint">oft</span></label><input id="na_constraint" placeholder="0"></div>
+        <div class="chk"><input id="na_rescaled" type="checkbox"><label>rescaled</label></div>
+      </div>
+      <label>Extra network_args <span class="hint">space-separated escape hatch (e.g. wd_on_output=True)</span></label>
+      <textarea id="network_args_extra" placeholder=""></textarea>
+    </div>
+    <p class="hint">Anima DiT: use <code>networks.lycoris_anima</code> + an <code>anima-*</code> preset to wrap the transformer blocks (the stock presets target diffusers names the Anima DiT doesn't use). <code>conv_*</code>/<code>use_tucker</code> are hidden — Anima has no conv layers.</p>
   </div>
 
   <div class="panel full">
@@ -285,7 +317,7 @@
 const $ = id => document.getElementById(id);
 // text/select/number fields collected by .value
 const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epochs','dataset_config','output_name','seed',
-  'network_module','algo','lycoris_preset','network_args',
+  'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
   'monitor_port','extra_flags',
   'dit_path','te_path','vae_path',
@@ -301,6 +333,7 @@ function showCmd(t){ const p=$('cmd'); p.style.display='block'; p.textContent=t;
 function form(extra){
   const f={}; FIELDS.forEach(k=>{ const el=$(k); if(el) f[k]=el.value; });
   CHECKS.forEach(k=>{ const el=$(k); if(el) f[k]=el.checked; });
+  f.network_args=collectNetArgs();  // structured LyCORIS controls + extra → the network_args string the server folds algo/preset into
   f.target_res=[...document.querySelectorAll('.tier:checked')].map(c=>c.value);
   const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en||!en.checked) return;
     if(a.is_bool){ adv.push({flag:a.flag,is_bool:true,value:true}); }
@@ -312,12 +345,43 @@ function setForm(f){ if(!f) return;
   if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
   (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
     const en=$('adv_'+a.dest); if(en) en.checked=true; const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
+  // parse a loaded network_args string back into the structured controls (known
+  // keys) + the extra textarea (everything else), so save/load round-trips.
+  if(typeof f.network_args==='string'){
+    const known=new Set([].concat(NA_GENERAL,NA_BY_ALGO.lokr,NA_BY_ALGO.dylora,NA_BY_ALGO['diag-oft']).map(x=>x[0]));
+    const leftover=[];
+    f.network_args.split(/\s+/).filter(Boolean).forEach(tok=>{ const i=tok.indexOf('='); if(i<0){leftover.push(tok);return;}
+      const k=tok.slice(0,i),v=tok.slice(i+1),el=$('na_'+k);
+      if(el&&known.has(k)){ if(el.type==='checkbox') el.checked=/^(true|1|yes|on)$/i.test(v); else el.value=v; }
+      else leftover.push(tok); });
+    if($('network_args_extra')) $('network_args_extra').value=leftover.join(' ');
+  }
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale();
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
   w.disabled=no; w.style.opacity=no?.45:1; if(no){ w.value=''; w.placeholder='n/a for this scheduler'; } else if(w.placeholder==='n/a for this scheduler') w.placeholder='0 for custom sched'; }
-function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris'); ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; }); }
+// LyCORIS network_args, split into per-algo groups ('n'=number, 'b'=bool checkbox)
+const NA_GENERAL=[['rank_dropout','n'],['module_dropout','n'],['use_scalar','b'],['train_norm','b'],['bypass_mode','b'],['dora_wd','b'],['rs_lora','b']];
+const NA_BY_ALGO={lokr:[['factor','n'],['full_matrix','b'],['decompose_both','b'],['unbalanced_factorization','b']],dylora:[['block_size','n']],'diag-oft':[['constraint','n'],['rescaled','b']],boft:[['constraint','n'],['rescaled','b']]};
+function naSpecs(){ return NA_GENERAL.concat(NA_BY_ALGO[($('algo').value||'').toLowerCase()]||[]); }
+function collectNetArgs(){ // build the network_args string from the structured controls (lycoris only) + extra
+  const out=[];
+  if(($('network_module').value||'').includes('lycoris')){
+    naSpecs().forEach(([name,t])=>{ const el=$('na_'+name); if(!el) return;
+      if(t==='b'){ if(el.checked) out.push(name+'=True'); }
+      else { const v=(el.value||'').trim(); if(v!=='') out.push(name+'='+v); } });
+  }
+  const extra=($('network_args_extra').value||'').trim(); if(extra) out.push(extra);
+  return out.join(' ');
+}
+function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris');
+  ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; });
+  $('lycoris_args').style.display=lyco?'block':'none';
+  const algo=($('algo').value||'').toLowerCase();
+  const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?(id==='na_grp_oft'?'flex':'block'):'none'; };
+  show('na_grp_lokr', algo==='lokr'); show('na_grp_dylora', algo==='dylora'); show('na_grp_oft', algo==='diag-oft'||algo==='boft');
+}
 function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block'; }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
