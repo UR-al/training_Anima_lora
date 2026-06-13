@@ -737,6 +737,13 @@ def _method_preset_extra(form: dict):
             continue
         if item.get("is_bool"):
             if item.get("value"):
+                # Self-heal stale negated flags from configs saved/imported before
+                # the --no- inversion fix: a BooleanOptionalAction's affirmative is
+                # the flag minus its auto-generated "--no-" prefix (hyphen, so a
+                # real "--no_half_vae" with an underscore is left untouched). An
+                # enabled toggle must emit --use_text_cache, never --no-use_text_cache.
+                if flag.startswith("--no-"):
+                    flag = "--" + flag[len("--no-") :]
                 extra.append(flag)
         else:
             val = item.get("value")
