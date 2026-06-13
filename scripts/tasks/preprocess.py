@@ -444,23 +444,37 @@ def cmd_preprocess_multiscale(extra):
     shuffle = os.environ.get("CAPTION_SHUFFLE_VARIANTS", "4")
     tagdrop = os.environ.get("CAPTION_TAG_DROPOUT_RATE", "0.1")
     do_mask = os.environ.get("MULTISCALE_MASK", "").strip() not in ("", "0", "false", "no")
-    # Skip-upscale (anima equivalent of kohya skip_image_resolution): a tier only
-    # takes source images big enough for it — downscale-only, never upscale a small
-    # image into a higher tier. Threshold for tier T = the next-lower tier's area
-    # (so 1536 skips <1024², 1024 skips <512², 512 takes all) — matching a kohya
-    # config's skip_image_resolution=[1024,1024]/[512,512]/(none). Set
-    # MULTISCALE_NO_SKIP=1 to force every image into every tier (allow upscaling).
+    # Skip (anima equivalent of kohya skip_image_resolution): a tier only takes
+    # source images at least this big — so small images aren't upscaled into a high
+    # tier. Per-tier skip RESOLUTION (edge px) comes from MULTISCALE_SKIP
+    # ("512:0,1024:512,1536:512" → tier:skip_edge); min_pixels = skip_edge². When a
+    # tier isn't listed: MULTISCALE_NO_SKIP=1 → 0 (allow upscaling), else the
+    # auto default = the next-lower tier's edge (1536→1024, 1024→512, 512→0).
     no_skip = os.environ.get("MULTISCALE_NO_SKIP", "").strip() not in ("", "0", "false", "no")
+    skip_map: dict[int, int] = {}
+    for part in os.environ.get("MULTISCALE_SKIP", "").split(","):
+        if ":" in part:
+            tk, sk = part.split(":", 1)
+            try:
+                skip_map[int(tk)] = int(sk)
+            except ValueError:
+                pass
     tiers_int = sorted(int(t) for t in tiers)
 
     for idx, ti in enumerate(tiers_int):
         t = str(ti)
         rdst = f"{resized_base}/{t}"
         cdir = f"{cache_base}/{t}"
-        min_px = "0" if (no_skip or idx == 0) else str(tiers_int[idx - 1] ** 2)
+        if ti in skip_map:
+            skip_edge = skip_map[ti]
+        elif no_skip or idx == 0:
+            skip_edge = 0
+        else:
+            skip_edge = tiers_int[idx - 1]
+        min_px = str(skip_edge * skip_edge)
         print(
             f"\n=== multi-scale tier {t} → {rdst} / {cdir}"
-            f"{'' if min_px == '0' else f' (skip source < {min_px}px ≈ {tiers_int[idx - 1]}²)'} ==="
+            f"{'' if skip_edge == 0 else f' (skip source < {skip_edge}px edge)'} ==="
         )
         run(
             [

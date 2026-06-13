@@ -882,10 +882,14 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     if multiscale:
         target = "preprocess-multiscale"
         env["MULTISCALE_TIERS"] = ",".join(str(t) for t in tiers)
-        # "Skip upscaling" on (default) = downscale-only (a tier only takes images
-        # big enough for it). Unchecked = force every image into every tier.
+        # "Skip upscaling" on (default) = downscale-only. Unchecked = force every
+        # image into every tier. When on, per-tier skip resolutions (ms_skip,
+        # "tier:edge,…") let the user override the auto threshold (e.g. 1536 tier
+        # skip only <512 instead of <1024).
         if form.get("ms_skip_upscale") is False:
             env["MULTISCALE_NO_SKIP"] = "1"
+        elif str(form.get("ms_skip") or "").strip():
+            env["MULTISCALE_SKIP"] = str(form["ms_skip"]).strip()
         if masking:
             env["MULTISCALE_MASK"] = "1"
             _add_mask_env()

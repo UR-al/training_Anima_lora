@@ -220,7 +220,8 @@
       <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow.</p>
       <div id="tiers" class="tiers"></div>
       <div class="chk"><input id="multiscale" type="checkbox" onchange="updateMultiscale()"><label><b>Multi-scale</b> — train every image at <b>all</b> selected tiers at once (kohya-style, e.g. 512+1024+1536). Off = each image goes to its single best-fit tier.</label></div>
-      <div class="chk" id="ms_skip_row" style="display:none"><input id="ms_skip_upscale" type="checkbox" checked><label>Skip upscaling — a tier only takes images big enough for it (downscale-only; the anima equivalent of kohya <code>skip_image_resolution</code>). Uncheck to force every image into every tier.</label></div>
+      <div class="chk" id="ms_skip_row" style="display:none"><input id="ms_skip_upscale" type="checkbox" checked onchange="updateMultiscale()"><label>Skip upscaling — a tier only takes images big enough for it (anima equivalent of kohya <code>skip_image_resolution</code>). Uncheck to force every image into every tier.</label></div>
+      <div id="ms_skip_inputs" style="display:none;margin-top:6px"></div>
       <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier (or only tiers it's large enough for, if "Skip upscaling" is on), one <code>[[datasets]]</code> block per tier. Needs ≥2 tiers checked.</p>
       <div class="row" style="margin-top:10px">
         <div><label>Caption shuffle variants <span class="hint">0 = off</span></label><input id="caption_shuffle_variants" type="number" value="4"></div>
@@ -380,6 +381,8 @@ function form(extra){
   CHECKS.forEach(k=>{ const el=$(k); if(el) f[k]=el.checked; });
   f.network_args=collectNetArgs();  // structured LyCORIS controls + extra → the network_args string the server folds algo/preset into
   f.target_res=[...document.querySelectorAll('.tier:checked')].map(c=>c.value);
+  const sk=[...document.querySelectorAll('#ms_skip_inputs .skipin')].map(i=>i.dataset.t+':'+(i.value||'0'));
+  if(sk.length) f.ms_skip=sk.join(',');  // per-tier skip 'tier:edge,...' for multi-scale
   const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en||!en.checked) return;
     if(a.is_bool){ adv.push({flag:a.flag,is_bool:true,value:true}); }
     else { const v=$('advv_'+a.dest); adv.push({flag:a.flag,is_bool:false,nargs:a.nargs,value:v?v.value:''}); } });
@@ -434,6 +437,17 @@ function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').styl
   const sr=$('ms_skip_row'); if(sr) sr.style.display=on?'flex':'none';
   const n=document.querySelectorAll('.tier:checked').length;
   if(on&&n<2) $('ms_note').innerHTML='⚠ Multi-scale needs <b>≥2 tiers</b> checked — currently '+n+'. Check more tiers above.';
+  renderSkipInputs();
+}
+function renderSkipInputs(){ const box=$('ms_skip_inputs'); if(!box) return;
+  const show=$('multiscale').checked && $('ms_skip_upscale') && $('ms_skip_upscale').checked;
+  if(!show){ box.style.display='none'; box.innerHTML=''; return; }
+  const tiers=[...document.querySelectorAll('.tier:checked')].map(c=>+c.value).sort((a,b)=>a-b);
+  const cur={}; box.querySelectorAll('.skipin').forEach(i=>cur[i.dataset.t]=i.value);  // preserve edits
+  box.style.display='block';
+  box.innerHTML='<label>Skip below (edge px) per tier — exclude source images smaller than this from that tier (0 = include all / allow upscale)</label>'+
+    tiers.map((t,i)=>{ const def=i===0?0:tiers[i-1]; const v=(cur[t]!=null?cur[t]:def);
+      return `<div class="chk"><label style="flex:0 0 90px;margin:0">tier ${t}</label><input class="skipin" data-t="${t}" type="number" value="${v}" style="width:130px"><span class="hint">skip &lt; ${v||0}px edge</span></div>`; }).join('');
 }
 
 // ---- optimizer/scheduler help drawer ----
