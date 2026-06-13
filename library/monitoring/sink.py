@@ -70,9 +70,10 @@ class MonitorSink:
         self._total_steps: Optional[int] = None
         self._update = None  # bound train_monitor.update_monitor once started
         self._started = False
-        # it/s tracking (wall-clock between successive step logs)
+        # it/s tracking (wall-clock between successive step logs) + EMA
         self._spd_last_t: Optional[float] = None
         self._spd_last_step: Optional[int] = None
+        self._spd_ema: Optional[float] = None
 
     def _ensure_started(self) -> None:
         if self._started:
@@ -167,16 +168,23 @@ class MonitorSink:
                 loss = logs.get("loss/current")
             # it/s from wall-clock between successive step logs (the dashboard's
             # "Speed" + ETA read this; without it the field stays pinned at 0.0).
-            # dstep handles log_every_n_steps>1; first call seeds, so speed lands
-            # from the 2nd log onward.
-            speed = None
+            # dstep handles log_every_n_steps>1. EMA-smoothed (like tqdm's rate)
+            # so it tracks the cmd bar, and a >60s gap (a sampling / validation /
+            # checkpoint pause, not a real step) is skipped so the rate doesn't
+            # crash to ~0 during a sample.
             now = time.time()
             lt, ls = self._spd_last_t, self._spd_last_step
             if lt is not None and ls is not None:
                 dt, ds = now - lt, global_step - ls
-                if dt > 0 and ds > 0:
-                    speed = ds / dt
+                if dt > 0 and ds > 0 and dt < 60.0:
+                    inst = ds / dt
+                    self._spd_ema = (
+                        inst
+                        if self._spd_ema is None
+                        else 0.75 * self._spd_ema + 0.25 * inst
+                    )
             self._spd_last_t, self._spd_last_step = now, global_step
+            speed = self._spd_ema
             self._update(
                 loss=loss,
                 lr=_first_lr(logs),

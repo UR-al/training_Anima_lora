@@ -1302,9 +1302,24 @@ def _extract_tqdm_line(stdout_path):
         data = Path(stdout_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    for seg in reversed(data.replace("\r", "\n").split("\n")):
-        seg = seg.strip()
-        if seg and ("it/s" in seg or "s/it" in seg) and "/" in seg:
+    lines = [s.strip() for s in data.replace("\r", "\n").split("\n")]
+    # The TRAINING bar carries `avr_loss`; the sampling / validation / decode bars
+    # ("Sampling: …", "Decoding: …") don't. Prefer the training bar so a sample
+    # pass doesn't hijack the cmd gauge (and its in-place countdown isn't mistaken
+    # for the run going backwards).
+    for seg in reversed(lines):
+        if "avr_loss" in seg and ("it/s" in seg or "s/it" in seg):
+            return seg
+    # Fallback: any progress bar that ISN'T a sampling/decoding/validation one.
+    for seg in reversed(lines):
+        if (
+            seg
+            and ("it/s" in seg or "s/it" in seg)
+            and "/" in seg
+            and "Sampling" not in seg
+            and "Decoding" not in seg
+            and "Validat" not in seg
+        ):
             return seg
     return None
 
