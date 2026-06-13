@@ -559,11 +559,16 @@ class JobManager:
         # STATUS_CONTROL_C_EXIT (0xC000013A). pythonw.exe never allocates a
         # console; the tqdm progress the GUI tails from stdout.log still lands
         # because spawn_detached redirects the child's stdout/stderr to that
-        # file (a real handle, not an inherited console). No --progress_jsonl
-        # injection — these emit tqdm to stdout and the monitor finalizes them
-        # on exit code (no run_end event).
+        # file (a real handle, not an inherited console). We DO point
+        # ANIMA_PROGRESS_JSONL at this job's progress.jsonl so the preprocess
+        # pipeline streams structured {ev:"preprocess",phase,done,total} lines
+        # for the GUI's progress bar (library/preprocess/_progress.py) — but it
+        # never writes a run_end event, so the monitor still finalizes command
+        # jobs purely on exit code.
         if job.kind == "command":
             env.update(job.extra_env or {})
+            if job.progress_path:
+                env.setdefault("ANIMA_PROGRESS_JSONL", job.progress_path)
             return [venv_python(windowless=True), *job.argv], env
 
         # Imported lazily so loading the daemon package never drags in the task

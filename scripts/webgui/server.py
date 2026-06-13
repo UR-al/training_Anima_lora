@@ -1119,10 +1119,119 @@ def launch(form: dict) -> dict:
     }
 
 
+def _pct(done, total):
+    """done/total → an int 0–100, or None when either is missing/zero."""
+    try:
+        if total and float(total) > 0:
+            return max(0, min(100, round(float(done) * 100.0 / float(total))))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _log_tail(stdout_path, n: int = 12):
+    """Last ``n`` human-readable lines of a job's ``stdout.log``.
+
+    tqdm rewrites its bar in place with carriage returns, so a raw read yields
+    one giant CR-laden line; split on ``\\r`` too and keep the final segment of
+    each so the tail reads like the live console. Best-effort → ``[]`` on error.
+    """
+    if not stdout_path:
+        return []
+    try:
+        data = Path(stdout_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for raw in data.splitlines():
+        seg = raw.split("\r")[-1].rstrip()  # last CR segment = current bar state
+        if seg:
+            out.append(seg)
+    return out[-n:]
+
+
+def _train_phase(cl, train_id, out, job=None):
+    """Fill ``out`` from a daemon train job's state (running → embed monitor)."""
+    try:
+        tj = job if job is not None else (cl.get(train_id) or {})
+    except Exception:  # noqa: BLE001 — daemon best-effort
+        tj = {}
+    st = tj.get("state")
+    out["training"] = {"job_id": train_id, "state": st}
+    if st == "running":
+        out["phase"] = "training"
+        out["training_started"] = True
+    elif st == "queued":
+        out["phase"] = "train_queued"
+    elif st == "done":
+        out["phase"] = "done"
+    elif st in ("error", "stopped"):
+        out["phase"] = "error"
+    else:
+        out["phase"] = "training"  # unknown, but a train job exists
+    return out
+
+
+def _daemon_phase(tracked_job_id):
+    """Resolve the live phase of a daemon run (preprocess → chained train).
+
+    ``tracked_job_id`` is whatever ``launch()`` recorded in ``_STATE`` — the
+    preprocess command job when auto-preprocess is on, else the train job
+    itself. Returns the phase model the frontend renders: a preprocess progress
+    bar that auto-hands-off to the embedded monitor the moment training starts.
+    Best-effort: daemon down / unknown job → an inert ``{phase: None}`` so the
+    legacy poll fields still drive the UI.
+    """
+    out = {
+        "phase": None,
+        "preprocess": None,
+        "training": None,
+        "training_started": False,
+    }
+    try:
+        from scripts.daemon import client as _dc
+
+        cl = _dc.DaemonClient()
+        if cl.health() is None:
+            return out
+        job = cl.get(tracked_job_id) or {}
+    except Exception:  # noqa: BLE001 — daemon is optional infra here
+        return out
+    if not job or job.get("error"):
+        return out
+    if job.get("kind") == "command":
+        state = job.get("state")
+        latest = job.get("latest") or {}
+        out["preprocess"] = {
+            "state": state,
+            "phase_label": latest.get("phase"),
+            "done": latest.get("done"),
+            "total": latest.get("total"),
+            "percent": _pct(latest.get("done"), latest.get("total")),
+            "log_tail": _log_tail(job.get("stdout_path"))
+            if state in ("queued", "running")
+            else [],
+        }
+        if state in ("queued", "running"):
+            out["phase"] = "preprocess"
+            return out
+        if state in ("error", "stopped"):
+            out["phase"] = "error"
+            return out
+        # preprocess done → follow the chained training job, if one was spawned
+        chained = job.get("chained_job_id")
+        if chained:
+            return _train_phase(cl, chained, out)
+        out["phase"] = "done"
+        return out
+    # the tracked job is itself a train job (no preprocess step)
+    return _train_phase(cl, tracked_job_id, out, job=job)
+
+
 def status() -> dict:
     proc = _STATE.get("proc")
     running = proc is not None and proc.poll() is None
-    return {
+    out = {
         "running": running,
         "pid": proc.pid if proc else None,
         "returncode": (proc.poll() if proc else None) if not running else None,
@@ -1134,6 +1243,16 @@ def status() -> dict:
         "daemon_job": _STATE.get("daemon_job"),
         "daemon_base": _STATE.get("daemon_base"),
     }
+    # Enrich with the daemon phase model (preprocess bar → training hand-off)
+    # whenever a daemon job is tracked. Guarded so a daemon hiccup can never
+    # break the status poll the whole UI depends on.
+    djob = _STATE.get("daemon_job")
+    if djob:
+        try:
+            out.update(_daemon_phase(djob))
+        except Exception:  # noqa: BLE001
+            pass
+    return out
 
 
 def stop() -> dict:

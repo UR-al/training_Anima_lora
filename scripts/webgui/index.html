@@ -374,6 +374,24 @@
     </div>
     <pre id="cmd" style="display:none"></pre>
     <div class="status" style="margin-top:12px"><span class="dot" id="dot"></span><span id="stat">idle</span></div>
+
+    <!-- live preprocess progress → auto-embeds the training monitor on train start -->
+    <div id="progress_panel" style="display:none;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <b id="phase_title">Preprocessing…</b>
+        <span class="hint" id="phase_pct" style="margin-left:auto;margin-top:0"></span>
+      </div>
+      <div id="prep_progress" style="display:none">
+        <div style="height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;overflow:hidden">
+          <div id="prep_bar" style="height:100%;width:0%;background:var(--acc);transition:width .3s ease"></div>
+        </div>
+        <pre id="prep_log" style="display:none;max-height:170px;overflow:auto;margin-top:8px;font-size:11px"></pre>
+      </div>
+      <div id="monitor_embed" style="display:none;margin-top:10px">
+        <iframe id="mon_frame" title="training monitor" src="about:blank"
+                style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#0b0b0b"></iframe>
+      </div>
+    </div>
   </div>
 
   <div class="panel">
@@ -774,6 +792,9 @@ function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub
 // ---- run / queue / configs ----
 async function preview(){ const r=await post('/api/launch',form({dry_run:true})); showCmd(r.command||('error: '+(r.error||'?'))); }
 async function start(){ const r=await post('/api/launch',form()); if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
+  // fresh run → forget the previous embed so the monitor iframe re-arms
+  _monEmbedded=false; $('mon_frame').src='about:blank'; $('monitor_embed').style.display='none';
+  $('prep_log').textContent=''; $('prep_log').style.display='none';
   let msg=r.daemon?('submitted to daemon — job '+(r.job_id||'?')):'started';
   if(r.preprocess) msg+=' (auto-preprocess → train chain)';
   showCmd(msg+'\n$ '+r.command+(r.note?('\n('+r.note+')'):''));
@@ -794,14 +815,75 @@ async function saveConfig(){ await post('/api/config/save',{name:($('job_name').
 async function loadConfig(){ const n=$('saved_configs').value; if(!n) return; const r=await(await fetch('/api/config/load?name='+encodeURIComponent(n))).json(); if(r.ok) setForm(r.form); }
 async function delConfig(){ const n=$('saved_configs').value; if(!n) return; await post('/api/config/delete',{name:n}); refreshConfigs(); }
 
+// Embed the live monitor only once it's actually reachable. The monitor HTTP
+// server binds a few seconds into the run (after model load, at run_start), so
+// pointing the iframe at it the instant the job goes "running" would load a
+// dead page with no retry. A no-cors probe resolves (opaquely) when the server
+// answers and rejects on connection-refused, so we keep probing each poll until
+// it's up, then set the src exactly once.
+let _monEmbedded=false;
+async function tryEmbedMonitor(url){
+  if(_monEmbedded||!url) return;
+  try{ await fetch(url,{mode:'no-cors',cache:'no-store'}); }catch(e){ return; }  // not up yet
+  $('mon_frame').src=url; _monEmbedded=true; $('monitor_embed').style.display='block';
+}
+// Render the daemon phase model: a preprocess progress bar that auto-hands-off
+// to the embedded training monitor the moment training starts.
+function renderPhase(s){
+  const ko=(_lang==='ko'), panel=$('progress_panel'), ph=s.phase;
+  if(!ph){  // no daemon phase info (direct Popen / daemon down)
+    if(s.running && s.monitor_url){  // direct run with monitor → embed it too
+      panel.style.display='block'; $('prep_progress').style.display='none';
+      tryEmbedMonitor(s.monitor_url);
+      $('phase_title').textContent=_monEmbedded?(ko?'학습 중 — 실시간 모니터':'Training — live monitor'):(ko?'학습 중 — 모니터 연결 중…':'Training — connecting to monitor…');
+      $('phase_pct').textContent='';
+    } else if(!_monEmbedded){ panel.style.display='none'; }
+    return;
+  }
+  panel.style.display='block';
+  const pp=s.preprocess||{};
+  if(ph==='preprocess'){
+    $('monitor_embed').style.display='none'; $('prep_progress').style.display='block';
+    const lab=pp.phase_label||'', pct=pp.percent, bar=$('prep_bar');
+    $('phase_title').textContent=(ko?'전처리 중…':'Preprocessing…')+(lab?(' — '+lab):'');
+    if(pct!=null){ bar.style.width=pct+'%'; bar.style.opacity='1'; $('phase_pct').textContent=pct+'%'+((pp.done!=null&&pp.total!=null)?` (${pp.done}/${pp.total})`:''); }
+    else { bar.style.width='100%'; bar.style.opacity='.4'; $('phase_pct').textContent=ko?'준비 중…':'starting…'; }
+    const log=pp.log_tail||[]; const pre=$('prep_log');
+    if(log.length){ pre.style.display='block'; pre.textContent=log.join('\n'); pre.scrollTop=pre.scrollHeight; }
+    return;
+  }
+  if(ph==='train_queued'){
+    $('prep_progress').style.display='block'; $('prep_bar').style.width='100%'; $('prep_bar').style.opacity='1';
+    $('phase_title').textContent=ko?'전처리 완료 — 학습 대기 중…':'Preprocess done — training queued…'; $('phase_pct').textContent='';
+    return;
+  }
+  if(ph==='training'){
+    $('prep_progress').style.display='none';
+    if(s.monitor_url){ tryEmbedMonitor(s.monitor_url);
+      $('phase_title').textContent=_monEmbedded?(ko?'학습 중 — 실시간 모니터':'Training — live monitor'):(ko?'학습 중 — 모니터 연결 중…':'Training — connecting to monitor…');
+    } else { $('phase_title').textContent=ko?'학습 중':'Training…'; }
+    $('phase_pct').textContent='';
+    return;
+  }
+  if(ph==='done'){ $('phase_title').textContent=ko?'완료 ✓':'Finished ✓'; $('phase_pct').textContent=''; if(!_monEmbedded) $('prep_progress').style.display='none'; return; }
+  if(ph==='error'){ $('prep_progress').style.display='block'; $('phase_title').textContent=ko?'오류 ✗ — 로그 확인':'Error ✗ — check logs'; $('phase_pct').textContent=''; return; }
+}
+
 async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   $('dot').className='dot'+((s.running||s.daemon_job)?' run':'');
-  if(s.running){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=`training (pid ${s.pid}) — ${m}m ${x}s`; }
+  const ko=(_lang==='ko'), ph=s.phase;
+  if(ph==='preprocess'){ const pp=s.preprocess||{}; $('stat').textContent=(ko?'전처리 중':'preprocessing')+(pp.phase_label?(' — '+pp.phase_label):'')+(pp.percent!=null?` ${pp.percent}%`:''); }
+  else if(ph==='train_queued'){ $('stat').textContent=ko?'학습 대기 중':'training queued'; }
+  else if(ph==='training'){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=(ko?'학습 중':'training')+(s.running?` (pid ${s.pid}) — ${m}m ${x}s`:''); }
+  else if(ph==='done'||s.returncode===0){ $('stat').textContent=ko?'완료 ✓':'finished ✓'; }
+  else if(ph==='error'){ $('stat').textContent=ko?'오류 ✗':'error ✗'; }
+  else if(s.running){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=`training (pid ${s.pid}) — ${m}m ${x}s`; }
   else if(s.daemon_job){ $('stat').textContent='submitted to daemon — job '+s.daemon_job; }
-  else if(s.returncode===0){ $('stat').textContent='finished ✓'; }
   else if(s.returncode!=null){ $('stat').textContent='exited (code '+s.returncode+')'; }
   else $('stat').textContent='idle';
-  if(s.monitor_url){ const a=$('monlink'); a.href=s.monitor_url; a.style.display='inline'; } }catch(e){} }
+  if(s.monitor_url){ const a=$('monlink'); a.href=s.monitor_url; a.style.display='inline'; }
+  renderPhase(s);
+ }catch(e){} }
 
 (async function init(){
   const o=await(await fetch('/api/options')).json();
