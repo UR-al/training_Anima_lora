@@ -1207,6 +1207,41 @@ def _report_and_tail(job, n: int = 40):
     return tail
 
 
+def _report_progress(job):
+    """Print a throttled training-progress line to the webgui console.
+
+    The daemon runs train.py DETACHED — its stdout goes to the per-job stdout.log,
+    not this terminal — so the cmd window running the GUI otherwise shows no
+    progress at all. Mirror the latest progress.jsonl ``step`` event here, throttled
+    to ~5s + deduped by step so the 2s status poll doesn't spam.
+    """
+    latest = job.get("latest") or {}
+    if latest.get("ev") != "step":
+        return
+    step = latest.get("global_step")
+    if step is None:
+        return
+    import sys as _sys
+
+    st = _STATE.setdefault("_prog", {"t": 0.0, "step": None})
+    now = time.time()
+    if step == st["step"] or (now - st["t"]) < 5.0:
+        return
+    st["t"], st["step"] = now, step
+    loss = None
+    for k in ("loss/average", "loss_average", "loss/current", "loss_current", "loss"):
+        if latest.get(k) is not None:
+            loss = latest[k]
+            break
+    parts = [f"step {step}"]
+    if latest.get("epoch") is not None:
+        parts.append(f"epoch {latest['epoch']}")
+    if isinstance(loss, (int, float)):
+        parts.append(f"loss {float(loss):.4f}")
+    _sys.stdout.write("[webgui] training: " + "  ".join(parts) + "\n")
+    _sys.stdout.flush()
+
+
 def _train_phase(cl, train_id, out, job=None):
     """Fill ``out`` from a daemon train job's state (running → embed monitor)."""
     try:
@@ -1218,6 +1253,7 @@ def _train_phase(cl, train_id, out, job=None):
     if st == "running":
         out["phase"] = "training"
         out["training_started"] = True
+        _report_progress(tj)  # mirror progress to the GUI's cmd window
     elif st == "queued":
         out["phase"] = "train_queued"
     elif st == "done":

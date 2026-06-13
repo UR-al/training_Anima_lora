@@ -15,6 +15,7 @@ training (mirrors the donor's invariant).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,9 @@ class MonitorSink:
         self._total_steps: Optional[int] = None
         self._update = None  # bound train_monitor.update_monitor once started
         self._started = False
+        # it/s tracking (wall-clock between successive step logs)
+        self._spd_last_t: Optional[float] = None
+        self._spd_last_step: Optional[int] = None
 
     def _ensure_started(self) -> None:
         if self._started:
@@ -161,12 +165,25 @@ class MonitorSink:
             loss = logs.get("loss/average")
             if loss is None:
                 loss = logs.get("loss/current")
+            # it/s from wall-clock between successive step logs (the dashboard's
+            # "Speed" + ETA read this; without it the field stays pinned at 0.0).
+            # dstep handles log_every_n_steps>1; first call seeds, so speed lands
+            # from the 2nd log onward.
+            speed = None
+            now = time.time()
+            lt, ls = self._spd_last_t, self._spd_last_step
+            if lt is not None and ls is not None:
+                dt, ds = now - lt, global_step - ls
+                if dt > 0 and ds > 0:
+                    speed = ds / dt
+            self._spd_last_t, self._spd_last_step = now, global_step
             self._update(
                 loss=loss,
                 lr=_first_lr(logs),
                 epoch=epoch,
                 step=global_step,
                 total_steps=self._total_steps,
+                speed=speed,
             )
         except Exception as exc:
             logger.debug("monitor step emit failed: %s", exc)
