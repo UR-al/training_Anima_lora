@@ -46,6 +46,10 @@
   .dot.run{background:var(--ok);box-shadow:0 0 8px var(--ok)}
   a{color:var(--acc)}
   .hint{font-size:11px;color:var(--mut);margin:4px 0 0}
+  /* force-disabled because a conflicting option (e.g. a cache) is active */
+  .conflict-off{opacity:.5}
+  .conflict-off input,.conflict-off select{pointer-events:none}
+  .conflict-msg{color:var(--warn);font-size:11px;margin:4px 0 0;display:block;flex-basis:100%;width:100%}
   /* path field + browse button */
   .pathrow{display:flex;gap:6px}
   .pathrow input{flex:1}
@@ -517,6 +521,7 @@ function setLang(l){ _lang=l; try{localStorage.setItem('anima_lang',l);}catch(e)
     el.textContent=(l==='ko'&&KO[en])?KO[en]:_orig.get(el);
   });
   applyTooltipLang(); applyArgHelpLang();
+  if(typeof applyConflicts==='function') applyConflicts();  // conflict messages follow the language
   // re-render the help drawers so the optimizer/scheduler arg descriptions follow the language
   if($('optimizer_type')) optHelp('optimizer_type');
   if($('lr_scheduler_type')) optHelp('lr_scheduler_type');
@@ -574,6 +579,7 @@ function setForm(f){ if(!f) return;
     if($('network_args_extra')) $('network_args_extra').value=leftover.join(' ');
   }
   updateWarmup(); updateAlgo(); updateRepa(); updatePrep(); updateMask(); updateMultiscale();
+  applyConflicts();  // re-evaluate cache conflicts against the just-loaded toggles
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
@@ -764,6 +770,43 @@ function filterArgs(q){ q=(q||'').toLowerCase();
     if([...d.querySelectorAll('.argrow')].some(r=>r.dataset.d.includes(q))) d.open=true; });
 }
 
+// ---- conflict rules: force-disable + gray options incompatible with active ones ----
+// VAE/TE caching is the default training path; these augmentations can't act on
+// pre-cached latents/embeddings (is_latent_cacheable / is_text_encoder_output_cacheable),
+// so each is force-disabled (value neutralized + reason shown) while its cache is on.
+const CACHE_LABEL={use_vae_cache:{ko:'VAE 캐시(use_vae_cache)',en:'VAE cache (use_vae_cache)'},
+                   use_text_cache:{ko:'텍스트 캐시(use_text_cache)',en:'text cache (use_text_cache)'}};
+const CONFLICT_RULES=[
+  {sel:'.s_random_crop', causes:['use_vae_cache'], force:'uncheck', extra:'.s_rc_pad'},
+  {sel:'.s_caption_dropout_rate', causes:['use_text_cache'], force:'zero'},
+];
+function cacheOn(dest){ const c=$('adv_'+dest); return c?!!c.checked:false; }
+function conflictMsg(causes){ const ko=(_lang==='ko');
+  const names=causes.map(c=>(CACHE_LABEL[c]?CACHE_LABEL[c][ko?'ko':'en']:c)).join(', ');
+  return ko?(names+' 옵션으로 인해 강제로 비활성화되었습니다'):(names+' — force-disabled by this option'); }
+function setConflict(el, off, msg, force){
+  if(!el) return; const wrap=el.closest('.chk')||el.parentElement; if(!wrap) return;
+  el.disabled=off; wrap.classList.toggle('conflict-off', off);
+  if(off){
+    if(el.type==='checkbox'){ if(force==='uncheck') el.checked=false; }
+    else if(force==='zero'){ if(el.dataset._cf==null) el.dataset._cf=el.value; el.value='0'; }
+    let b=wrap.querySelector('.conflict-msg'); if(!b){ b=document.createElement('div'); b.className='conflict-msg'; wrap.appendChild(b); }
+    b.textContent='⚠ '+msg; b.style.display='block';
+  } else {
+    if(force==='zero'&&el.dataset._cf!=null){ el.value=el.dataset._cf; delete el.dataset._cf; }
+    const b=wrap.querySelector('.conflict-msg'); if(b) b.style.display='none';
+  }
+}
+function applyConflicts(){
+  CONFLICT_RULES.forEach(r=>{
+    const active=r.causes.filter(cacheOn); const off=active.length>0; const msg=conflictMsg(active);
+    document.querySelectorAll('#subsets '+r.sel).forEach(el=>{
+      setConflict(el, off, msg, r.force);
+      if(r.extra){ const sub=el.closest('.subset'); const ex=sub&&sub.querySelector(r.extra); if(ex) ex.disabled=off; }
+    });
+  });
+}
+
 // ---- manual dataset builder ----
 function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.className='subset';
   div.innerHTML=`<button class="x" onclick="this.parentElement.remove()">✕</button>
@@ -789,6 +832,7 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
     </div>
     <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive (walk subfolders)</label></div>`;
   $('subsets').appendChild(div);
+  applyConflicts();  // a fresh subset row inherits the active cache conflicts
 }
 function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub_'+Math.random().toString(36).slice(2); inp.id=tmp; pickFolder(tmp); }
 
@@ -906,8 +950,14 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   const sn=$('sam_note');
   if(o.sam3_available) sn.textContent='SAM3 weights present at the default location.'; else sn.innerHTML='⚠ No SAM3 weights at the default <code>models/sam3/</code> — set the SAM3 checkpoint path above, or run <code>hf auth login</code> then <code>make download-sam3</code> (gated repo). MIT works without SAM3.';
   if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
-  renderArgs(o.arg_groups); addSubset();
+  renderArgs(o.arg_groups);
+  // use_vae_cache / use_text_cache are BooleanOptionalAction default-TRUE: reflect
+  // that (check them) so caching shows as on and its conflicts engage by default;
+  // re-evaluate conflicts whenever either toggles.
+  ['use_vae_cache','use_text_cache'].forEach(d=>{ const c=$('adv_'+d); if(c){ c.checked=true; c.addEventListener('change', applyConflicts); } });
+  addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
+  applyConflicts();
   optHelp('optimizer_type'); optHelp('lr_scheduler_type');
   let _lang='en'; try{ _lang=localStorage.getItem('anima_lang')||'en'; }catch(e){} setLang(_lang);
   setInterval(poll,2000); poll();

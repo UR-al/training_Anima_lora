@@ -18,6 +18,7 @@ output/
 *.whl
 image_dataset
 post_image_dataset/
+cache/
 ip-adapter-dataset/
 easycontrol-dataset/
 masks/
