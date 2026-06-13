@@ -869,7 +869,12 @@ function renderPhase(s){
     return;
   }
   if(ph==='done'){ $('phase_title').textContent=ko?'완료 ✓':'Finished ✓'; $('phase_pct').textContent=''; if(!_monEmbedded) $('prep_progress').style.display='none'; return; }
-  if(ph==='error'){ $('prep_progress').style.display='block'; $('phase_title').textContent=ko?'오류 ✗ — 로그 확인':'Error ✗ — check logs'; $('phase_pct').textContent=''; return; }
+  if(ph==='error'){ $('prep_progress').style.display='block';
+    $('phase_title').textContent=ko?'오류 ✗ — 아래 로그 / 실행 중인 cmd 창 확인':'Error ✗ — see log below / the cmd window';
+    $('phase_pct').textContent='';
+    const log=s.error_log||[]; const pre=$('prep_log');
+    if(log.length){ pre.style.display='block'; pre.textContent=log.join('\n'); pre.scrollTop=pre.scrollHeight; }
+    return; }
 }
 
 async function poll(){ try{ const s=await(await fetch('/api/status')).json();

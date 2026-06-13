@@ -1178,6 +1178,35 @@ def _log_tail(stdout_path, n: int = 12):
     return out[-n:]
 
 
+def _report_and_tail(job, n: int = 40):
+    """Tail a failed daemon job's ``stdout.log`` AND print it once to the webgui's
+    own console (stderr), so the terminal running the GUI shows WHY a job died.
+
+    Daemon jobs run windowless (pythonw, no console), so their only record is the
+    per-job log file — the GUI process is the one with a terminal. Deduped per
+    (job_id, state) so the 2-second status poll doesn't spam the same traceback.
+    Returns the tail (also surfaced to the browser as ``error_log``).
+    """
+    import sys as _sys
+
+    tail = _log_tail(job.get("stdout_path"), n=n)
+    jid = job.get("id") or job.get("job_id")
+    state = job.get("state")
+    seen = _STATE.setdefault("_reported_errs", set())
+    key = (jid, state)
+    if jid and key not in seen:
+        seen.add(key)
+        err = job.get("error")
+        body = "\n".join(tail) or "(no stdout captured)"
+        _sys.stderr.write(
+            f"\n{'=' * 72}\n[webgui] daemon job {jid} {str(state).upper()}"
+            f"{(' — ' + err) if err else ''}\n  log: {job.get('stdout_path')}\n"
+            f"  --- last {len(tail)} log line(s) ---\n{body}\n{'=' * 72}\n"
+        )
+        _sys.stderr.flush()
+    return tail
+
+
 def _train_phase(cl, train_id, out, job=None):
     """Fill ``out`` from a daemon train job's state (running → embed monitor)."""
     try:
@@ -1195,6 +1224,7 @@ def _train_phase(cl, train_id, out, job=None):
         out["phase"] = "done"
     elif st in ("error", "stopped"):
         out["phase"] = "error"
+        out["error_log"] = _report_and_tail(tj)
     else:
         out["phase"] = "training"  # unknown, but a train job exists
     return out
@@ -1225,7 +1255,10 @@ def _daemon_phase(tracked_job_id):
         job = cl.get(tracked_job_id) or {}
     except Exception:  # noqa: BLE001 — daemon is optional infra here
         return out
-    if not job or job.get("error"):
+    # Bail only on the daemon's 404 shape ({"error":"no such job"} — no state).
+    # A REAL job that FAILED also carries an `error` field, and we very much want
+    # to surface THAT (don't conflate "job not found" with "job errored").
+    if not job or not job.get("state"):
         return out
     if job.get("kind") == "command":
         state = job.get("state")
@@ -1245,6 +1278,7 @@ def _daemon_phase(tracked_job_id):
             return out
         if state in ("error", "stopped"):
             out["phase"] = "error"
+            out["error_log"] = _report_and_tail(job)
             return out
         # preprocess done → follow the chained training job, if one was spawned
         chained = job.get("chained_job_id")
