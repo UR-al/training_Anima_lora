@@ -1290,26 +1290,31 @@ def _snap_tier(res) -> int | None:
 
 
 # kohya / LoRA_Easy keys with NO anima equivalent — dropped on import (anima uses
-# constant-token buckets + preprocess-time caption shuffle, not these).
+# constant-token buckets + preprocess-time caption shuffle, not these). Anima-VALID
+# args (no_half_vae / prior_loss_weight / min_snr_gamma / reg_data_dir / …) are NOT
+# here — the comprehensive pass-through in import_config forwards them as auto-args.
 _IMPORT_DROP = {
+    "train_mode",  # LoRA_Easy meta key
     "enable_bucket",
     "min_bucket_reso",
     "max_bucket_reso",
     "bucket_reso_steps",
     "bucket_no_upscale",
     "multires_training",
-    "skip_image_resolution",
-    "shuffle_caption",
-    "caption_tag_dropout_rate",
+    "skip_image_resolution",  # → "skip upscaling" auto / per-tier ms_skip
+    "shuffle_caption",  # → preprocess caption_shuffle_variants
+    "caption_tag_dropout_rate",  # → preprocess tag-drop (train-time crashes the TE cache)
     "sdxl",
     "v2",
     "v_parameterization",
     "clip_skip",
-    "xformers",
-    "no_half_vae",
-    "min_snr_gamma",
-    "prior_loss_weight",
-    "reg_data_dir",
+    "xformers",  # → attn_mode
+    "split_attn",  # not an anima knob
+    "edm2_loss_weighting",
+    "save_toml",
+    "save_toml_location",
+    "cache_latents",  # anima caches by default (use_vae_cache)
+    "cache_latents_to_disk",
     "name",
 }
 
@@ -1400,6 +1405,9 @@ def import_config(path: str) -> dict:
     _put("learning_rate", "learning_rate", "lr", "unet_lr")
     _put("max_train_epochs", "max_train_epochs")
     _put("output_name", "output_name")
+    _put("output_dir", "output_dir")
+    _put("resume", "resume")
+    _put("sample_prompts", "sample_prompts")
     _put("seed", "seed")
 
     # network module / algo / preset / extra net args
@@ -1410,9 +1418,25 @@ def import_config(path: str) -> dict:
         for item in na:
             if isinstance(item, str) and "=" in item:
                 k, v = item.split("=", 1)
+                # list-valued kwargs (e.g. exclude_patterns=['a', 'b']) must lose
+                # internal spaces — network_args are space-split downstream, so a
+                # space after the comma would shatter the list into broken tokens.
+                if v.lstrip().startswith("[") and " " in v:
+                    v = v.replace(", ", ",").replace(" ,", ",")
                 na_dict[k] = v
     if nm:
-        form["network_module"] = nm if "lycoris" in nm else "networks.lora_anima"
+        if "lycoris" in nm:
+            # Stock lycoris.kohya crashes on Anima's [None] TE slot — always route
+            # to the Anima-safe bridge.
+            form["network_module"] = "networks.lycoris_anima"
+            if nm != "networks.lycoris_anima":
+                notes.append(
+                    f"network_module {nm!r} → networks.lycoris_anima (Anima LyCORIS bridge)."
+                )
+        elif nm.startswith("networks."):
+            form["network_module"] = nm
+        else:
+            form["network_module"] = "networks.lora_anima"
     if "algo" in na_dict:
         form["algo"] = str(na_dict.pop("algo"))
         # LoRA_Easy/kohya lycoris configs often omit network_module — if an algo
@@ -1510,6 +1534,37 @@ def import_config(path: str) -> dict:
     ):
         if src in flat:
             _adv(flag, flat[src])
+
+    # Comprehensive pass-through: every other flat key that is a REAL anima
+    # argparse arg (curated keys are excluded from list_arg_groups; special-mapped
+    # timestep keys handled above) rides adv[] verbatim — so the whole training
+    # config imports, not just the curated few. Bools emit the flag only when
+    # truthy; list values are space-joined.
+    _special_src = {
+        "min_timestep", "max_timestep", "timestep_sample_method", "timestep_sampling",
+        "sigmoid_scale", "sigmoid_bias", "discrete_flow_shift", "weighting_scheme",
+        "logit_mean", "logit_std", "max_token_length",
+    }
+    _seen_dests = {a["flag"].lstrip("-") for a in adv}
+    _valid = {a["dest"]: a for g in list_arg_groups() for a in g["args"]}
+    for k, v in flat.items():
+        if k in _IMPORT_DROP or k in _special_src or k in _seen_dests:
+            continue
+        meta = _valid.get(k)
+        if meta is None:  # not an anima arg (or curated → handled above)
+            continue
+        if meta["is_bool"]:
+            if v is True or str(v).strip().lower() in ("true", "1", "yes"):
+                adv.append({"flag": meta["flag"], "is_bool": True, "value": True})
+        elif v not in (None, "", []):
+            val = (
+                " ".join(str(x) for x in v)
+                if isinstance(v, (list, tuple))
+                else str(v)
+            )
+            adv.append(
+                {"flag": meta["flag"], "is_bool": False, "value": val, "nargs": meta.get("nargs")}
+            )
     if adv:
         form["adv"] = adv
 
