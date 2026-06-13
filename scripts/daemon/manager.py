@@ -550,6 +550,11 @@ class JobManager:
 
         env = os.environ.copy()
         env.setdefault("PYTHONUNBUFFERED", "1")
+        # Reduce CUDA fragmentation OOMs (the "reserved but unallocated" kind that
+        # bites high-res / tight-VRAM runs). Set on the child env so torch picks it
+        # up at CUDA init; setdefault so a user-set value still wins. Inherited by
+        # both train and preprocess GPU subprocesses.
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
         # Command jobs (preprocess / mask) are a plain task invocation. Launch
         # under pythonw.exe (windowless): a uv-venv python.exe is a trampoline
