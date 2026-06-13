@@ -514,13 +514,16 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         "--t_min",
         type=float,
         default=None,
-        help="Restrict training sigma range: minimum sigma (0.0~1.0).",
+        help="Restrict training sigma range: minimum sigma, a flow-matching value "
+        "in 0.0~1.0 (NOT kohya/SD min_timestep — there is no 0~1000 discrete "
+        "timestep here). Default 0.0.",
     )
     parser.add_argument(
         "--t_max",
         type=float,
         default=None,
-        help="Restrict training sigma range: maximum sigma (0.0~1.0). Default 1.0.",
+        help="Restrict training sigma range: maximum sigma, a flow-matching value "
+        "in 0.0~1.0 (NOT kohya/SD max_timestep — NOT 0~1000). Default 1.0.",
     )
     parser.add_argument(
         "--loss_type",
