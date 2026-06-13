@@ -116,6 +116,13 @@ class BaseDataset(torch.utils.data.Dataset):
         self.inversion_dir: Optional[str] = None
         self.inversion_num_runs: int = 3
 
+        # REPA v2 PE-Spatial feature loading. Set via `dataset.load_repa_pe = True`
+        # (+ `repa_pe_encoder`) after construction (train.py, when use_repa is on);
+        # off disables. Loads the cached {stem}_anima_{encoder}.safetensors patch
+        # tokens and surfaces them as batch["repa_pe_features"] for REPAMethodAdapter.
+        self.load_repa_pe: bool = False
+        self.repa_pe_encoder: str = "pe_spatial"
+
         # BYG unpaired-editing per-image text conditionings. Set via
         # `dataset.byg_text_dir = ...` after construction; None disables. Loads
         # <stem>_byg.safetensors holding the 4 role embeddings + masks (built by
@@ -1265,6 +1272,52 @@ class BaseDataset(torch.utils.data.Dataset):
             runs.append(t.float())
         return torch.stack(runs, dim=0)  # [N_runs, S, D]
 
+    def _repa_pe_sidecar_candidates(self, info: "ImageInfo") -> List[str]:
+        """Candidate paths for the ``{stem}_anima_{encoder}.safetensors`` PE
+        sidecar, in resolution order: (1) next to the TE cache (the common case
+        — TE + PE caches share ``subset.cache_dir``), (2) the subset latent-cache
+        dir replicating the writer's nesting rule, (3) next to the image (legacy
+        no-cache_dir layout). Ported from anima_lora upstream."""
+        stem = os.path.splitext(os.path.basename(info.absolute_path))[0]
+        name = f"{stem}_anima_{self.repa_pe_encoder}.safetensors"
+        candidates: List[str] = []
+        if getattr(info, "text_encoder_outputs_npz", None):
+            candidates.append(
+                os.path.join(os.path.dirname(info.text_encoder_outputs_npz), name)
+            )
+        subset = self.image_to_subset.get(info.image_key)
+        cache_dir = getattr(subset, "cache_dir", None) if subset is not None else None
+        if cache_dir:
+            from library.io.cache import resolve_cache_path
+
+            candidates.append(
+                resolve_cache_path(
+                    info.absolute_path,
+                    f"_anima_{self.repa_pe_encoder}.safetensors",
+                    cache_dir=cache_dir,
+                    image_dir=getattr(subset, "image_dir", None),
+                )
+            )
+        candidates.append(os.path.join(os.path.dirname(info.absolute_path), name))
+        return list(dict.fromkeys(candidates))
+
+    def _try_load_repa_pe(self, info: "ImageInfo") -> Optional[torch.Tensor]:
+        """Load cached ``{stem}_anima_{encoder}.safetensors`` patch tokens for
+        REPA. Returns ``[T, d_enc]`` (CLS still at index 0; the adapter drops
+        it), or None when loading is off / the sidecar is missing (the adapter
+        then skips the REPA term for that batch)."""
+        if not self.load_repa_pe:
+            return None
+        for p in self._repa_pe_sidecar_candidates(info):
+            if not os.path.exists(p):
+                continue
+            from safetensors.torch import load_file
+
+            sd = load_file(p)
+            feats = sd.get("image_features")
+            return feats.float() if feats is not None else None
+        return None
+
     def restrict_to_byg_tuples(self) -> tuple[int, int]:
         """Drop images lacking a BYG edit-tuple sidecar, then rebuild buckets.
 
@@ -1355,6 +1408,8 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs_list = []
         custom_attributes = []
         inversion_runs_list: List[Optional[torch.Tensor]] = []
+        # REPA v2 per-image PE-Spatial features ([T, d_enc] or None), all-or-nothing.
+        repa_pe_list: List[Optional[torch.Tensor]] = []
         # Soft-tokens contrastive negatives: per-image (k, S, D) stack of cached
         # negative text embeddings, or None when no sampler is attached.
         neg_crossattn_list: List[Optional[torch.Tensor]] = []
@@ -1540,6 +1595,11 @@ class BaseDataset(torch.utils.data.Dataset):
             else:
                 inversion_runs_list.append(None)
 
+            if self.load_repa_pe:
+                repa_pe_list.append(self._try_load_repa_pe(image_info))
+            else:
+                repa_pe_list.append(None)
+
             # Soft-tokens contrastive negatives: draw k unrelated stems and load
             # their cached text embeddings. Deterministic per target on the
             # rare chance this dataset is used for validation; random in
@@ -1723,6 +1783,18 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             example["inversion_runs"] = None
             example["inversion_mask"] = None
+
+        # REPA v2 PE-Spatial features. All-or-nothing (no mask): the adapter wants
+        # a clean [B, T, d_enc] or None. If any sample in the bucket lacks its
+        # sidecar, or token counts differ (rare aspect-rounding within a bucket),
+        # set None so the REPA term is skipped this batch rather than crashing.
+        if self.load_repa_pe and repa_pe_list and all(t is not None for t in repa_pe_list):
+            if len({tuple(t.shape) for t in repa_pe_list}) == 1:
+                example["repa_pe_features"] = torch.stack(repa_pe_list, dim=0)
+            else:
+                example["repa_pe_features"] = None
+        else:
+            example["repa_pe_features"] = None
 
         # Soft-tokens contrastive negatives: (B, k, S, D) cached text embeddings.
         # All cached crossattn_emb share the padded sequence length, so a plain
