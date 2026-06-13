@@ -247,6 +247,7 @@ class BaseSubset:
         recursive: bool = False,
         path_pattern: Optional[str] = None,
         repeat_by_folder_name: bool = False,
+        random_crop_padding_percent: float = 0.05,
     ) -> None:
         self.image_dir = image_dir
         self.alpha_mask = alpha_mask if alpha_mask is not None else False
@@ -268,6 +269,10 @@ class BaseSubset:
         self.flip_aug = flip_aug
         self.face_crop_aug_range = face_crop_aug_range
         self.random_crop = random_crop
+        # Preprocess-only knob (extra cover-resize margin before the random crop,
+        # baked into the resized PNG). Stored so the blueprint generator's
+        # DreamBoothSubset(**asdict(params)) accepts it and base.py can read it.
+        self.random_crop_padding_percent = random_crop_padding_percent
         self.caption_dropout_rate = caption_dropout_rate
         self.caption_dropout_every_n_epochs = caption_dropout_every_n_epochs
         self.caption_tag_dropout_rate = caption_tag_dropout_rate
@@ -329,6 +334,7 @@ class DreamBoothSubset(BaseSubset):
         recursive: bool = False,
         path_pattern: Optional[str] = None,
         repeat_by_folder_name: bool = False,
+        random_crop_padding_percent: float = 0.05,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified"
 
@@ -361,6 +367,7 @@ class DreamBoothSubset(BaseSubset):
             recursive=recursive,
             path_pattern=path_pattern,
             repeat_by_folder_name=repeat_by_folder_name,
+            random_crop_padding_percent=random_crop_padding_percent,
         )
 
         self.is_reg = is_reg
