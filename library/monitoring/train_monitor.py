@@ -603,7 +603,7 @@ class MonitorHandler(SimpleHTTPRequestHandler):
         pass  # 静默日志
 
 
-def start_monitor_server(port=8765, host="127.0.0.1", output_dir=None, open_browser=True):
+def start_monitor_server(port=8766, host="127.0.0.1", output_dir=None, open_browser=True):
     """启动监控服务器"""
     output_dir = Path(output_dir) if output_dir else Path("./output")
     
@@ -631,7 +631,7 @@ if __name__ == "__main__":
     # 测试模式
     import random
     
-    server = start_monitor_server(port=8765)
+    server = start_monitor_server(port=8766)
     
     print("测试模式：模拟训练数据...")
     for i in range(1000):

@@ -53,7 +53,7 @@ class MonitorSink:
         inner,
         *,
         host: str = "127.0.0.1",
-        port: int = 8765,
+        port: int = 8766,
         output_dir: Optional[str] = None,
         open_browser: bool = False,
         config: Optional[dict] = None,

@@ -284,7 +284,12 @@ def list_arg_groups() -> list:
         dest = a.dest
         if dest in _CURATED_ARGS or not a.option_strings:
             continue
-        flag = max(a.option_strings, key=len)  # the long --form
+        # Prefer the affirmative long form. BooleanOptionalAction registers BOTH
+        # --x and --no-x; --no-x is longer, so a naive max(key=len) would make the
+        # toggle emit --no-x — INVERTING it (checking "use_vae_cache" would emit
+        # --no-use_vae_cache, DISABLING the cache). Pick the non---no- long form.
+        _affirm = [o for o in a.option_strings if not o.startswith("--no-")]
+        flag = max(_affirm or a.option_strings, key=len)
         is_bool = _arg_type(a) == "bool"
         item = {
             "dest": dest,
@@ -759,7 +764,7 @@ def build_command(form: dict) -> list[str]:
 def _monitor_url(form: dict):
     if not form.get("monitor"):
         return None
-    port = str(form.get("monitor_port") or "8765")
+    port = str(form.get("monitor_port") or "8766")
     host = str(form.get("monitor_host") or "127.0.0.1")
     shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
     return f"http://{shown}:{port}"

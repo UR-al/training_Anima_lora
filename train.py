@@ -2454,7 +2454,7 @@ class AnimaTrainer:
                 self.progress_sink = MonitorSink(
                     inner_sink,
                     host=getattr(args, "monitor_host", "127.0.0.1"),
-                    port=getattr(args, "monitor_port", 8765),
+                    port=getattr(args, "monitor_port", 8766),
                     output_dir=getattr(args, "output_dir", None),
                     open_browser=getattr(args, "monitor_open_browser", False),
                     resume=bool(getattr(args, "resume", None))
