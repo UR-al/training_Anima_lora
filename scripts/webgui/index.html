@@ -555,7 +555,10 @@ function setForm(f){ if(!f) return;
   Object.keys(f).forEach(k=>{ const el=$(k); if(el){ if(el.type==='checkbox') el.checked=!!f[k]; else if(k!=='target_res'&&k!=='adv') el.value=(f[k]==null?'':f[k]); } });
   if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
   if(Array.isArray(f.subsets)){ $('subsets').innerHTML=''; f.subsets.forEach(s=>addSubset(s)); }
-  (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
+  (f.adv||[]).forEach(it=>{ const args=window._args||[];
+    // Match by dest (stable) first, then flag — so a saved toggle still restores
+    // even if its flag spelling drifted (e.g. the --no-X → --X cache-toggle fix).
+    const a=args.find(x=>x.dest===it.dest)||args.find(x=>x.flag===it.flag); if(!a) return;
     const en=$('adv_'+a.dest); if(en) en.checked=(it.on!==false);  // missing on (import/old saves) ⇒ enabled
     const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
   // parse a loaded network_args string back into the structured controls (known
@@ -782,7 +785,7 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
     </div>
     <div class="row3">
       <div><label>batch_size <span class="hint">blank = dataset default</span></label><input class="s_batch" type="number" value="${esc(s.batch_size||'')}"></div>
-      <div style="grid-column:span 2"><label>tiers <span class="hint">multi-scale: which tiers this subset trains at — e.g. <code>512</code> or <code>512,1024</code> · blank = all. Give one tier per subset for per-resolution batch/repeat (kohya per-block).</span></label><input class="s_tiers" value="${esc((s.tiers||[]).join(','))}" placeholder="all"></div>
+      <div style="grid-column:span 2"><label>tiers <span class="hint">multi-scale: which tiers this subset trains at — e.g. <code>512</code> or <code>512,1024</code> · blank = all. Give one tier per subset for per-resolution batch/repeat (kohya per-block).</span></label><input class="s_tiers" value="${esc(Array.isArray(s.tiers)?s.tiers.join(','):(s.tiers||''))}" placeholder="all"></div>
     </div>
     <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive (walk subfolders)</label></div>`;
   $('subsets').appendChild(div);
