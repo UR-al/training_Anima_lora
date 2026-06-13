@@ -846,7 +846,10 @@ async function start(){ const r=await post('/api/launch',form()); if(!r.ok){ sho
   if(r.preprocess) msg+=' (auto-preprocess → train chain)';
   showCmd(msg+'\n$ '+r.command+(r.note?('\n('+r.note+')'):''));
   if(r.monitor_url){ const a=$('monlink'); a.href=r.monitor_url; a.style.display='inline'; a.textContent='Open monitor ('+r.monitor_url+') ↗'; } poll(); }
-async function stopRun(){ const r=await post('/api/stop',{}); if(!r.ok) showCmd('✗ '+(r.error||'')); }
+async function stopRun(){ const r=await post('/api/stop',{});
+  if(!r.ok){ showCmd('✗ '+(r.error||'stop failed')); return; }
+  const jobs=(r.jobs||[]).map(j=>j.job+':'+(j.state||'?')).join(', ');
+  showCmd((_lang==='ko'?'■ 정지 요청됨 (데몬 잡 종료)':'■ stop requested (daemon jobs killed)')+(jobs?(' — '+jobs):'')); poll(); }
 function refreshQueue(){ fetch('/api/queue/list').then(r=>r.json()).then(d=>{ const el=$('queue-list'),q=d.queue||[]; window._q=q;
   if(!q.length){ el.innerHTML='<div class="qempty">queue empty — name a job and "Add to queue".</div>'; return; }
   el.innerHTML=q.map((it,i)=>{ const f=it.form||{}; const sub=[f.optimizer_type,f.network_module,f.algo,f.preset].filter(Boolean).join(' · ');
@@ -919,6 +922,7 @@ function renderPhase(s){
     const log=s.error_log||[]; const pre=$('prep_log');
     if(log.length){ pre.style.display='block'; pre.textContent=log.join('\n'); pre.scrollTop=pre.scrollHeight; }
     return; }
+  if(ph==='stopped'){ $('phase_title').textContent=ko?'정지됨 ■':'Stopped ■'; $('phase_pct').textContent=''; return; }
 }
 
 async function poll(){ try{ const s=await(await fetch('/api/status')).json();
@@ -929,6 +933,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   else if(ph==='training'){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=(ko?'학습 중':'training')+(s.running?` (pid ${s.pid}) — ${m}m ${x}s`:''); }
   else if(ph==='done'||s.returncode===0){ $('stat').textContent=ko?'완료 ✓':'finished ✓'; }
   else if(ph==='error'){ $('stat').textContent=ko?'오류 ✗':'error ✗'; }
+  else if(ph==='stopped'){ $('stat').textContent=ko?'정지됨 ■':'stopped ■'; }
   else if(s.running){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=`training (pid ${s.pid}) — ${m}m ${x}s`; }
   else if(s.daemon_job){ $('stat').textContent='submitted to daemon — job '+s.daemon_job; }
   else if(s.returncode!=null){ $('stat').textContent='exited (code '+s.returncode+')'; }

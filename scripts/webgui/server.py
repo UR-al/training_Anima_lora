@@ -1222,7 +1222,9 @@ def _train_phase(cl, train_id, out, job=None):
         out["phase"] = "train_queued"
     elif st == "done":
         out["phase"] = "done"
-    elif st in ("error", "stopped"):
+    elif st == "stopped":
+        out["phase"] = "stopped"
+    elif st == "error":
         out["phase"] = "error"
         out["error_log"] = _report_and_tail(tj)
     else:
@@ -1276,7 +1278,10 @@ def _daemon_phase(tracked_job_id):
         if state in ("queued", "running"):
             out["phase"] = "preprocess"
             return out
-        if state in ("error", "stopped"):
+        if state == "stopped":
+            out["phase"] = "stopped"
+            return out
+        if state == "error":
             out["phase"] = "error"
             out["error_log"] = _report_and_tail(job)
             return out
@@ -1318,14 +1323,49 @@ def status() -> dict:
 
 
 def stop() -> dict:
+    # Direct-Popen path (daemon disabled): terminate the spawned process.
     proc = _STATE.get("proc")
-    if proc is None or proc.poll() is not None:
-        return {"ok": False, "error": "no run in progress"}
-    try:
-        proc.terminate()
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-    return {"ok": True}
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "stopped": "direct"}
+
+    # Daemon path (the default): the job runs DETACHED in the daemon, so
+    # _STATE['proc'] is None — terminating it does nothing. Tell the daemon to
+    # stop the run instead. We stop the tracked job, its chained follow-on, AND
+    # the currently active job, so a running preprocess/train is killed (tree +
+    # GPU freed) and a still-queued follow-on can't sneak through. (Stopping a
+    # preprocess before it finishes also blocks the chain: the manager only
+    # enqueues the train job when the command job reaches `done`.)
+    djob = _STATE.get("daemon_job")
+    if djob:
+        try:
+            from scripts.daemon import client as _dc
+
+            cl = _dc.DaemonClient()
+            if cl.health() is None:
+                return {"ok": False, "error": "training daemon not reachable"}
+            ids = [djob]
+            job = cl.get(djob) or {}
+            if job.get("chained_job_id"):
+                ids.append(job["chained_job_id"])
+            active = (cl.health() or {}).get("active_job")
+            if active:
+                ids.append(active)
+            stopped = []
+            for jid in dict.fromkeys(i for i in ids if i):
+                try:
+                    r = cl.stop(jid) or {}
+                    stopped.append({"job": jid, "state": r.get("state")})
+                except Exception:  # noqa: BLE001 — already terminal / gone
+                    pass
+            return {"ok": True, "stopped": "daemon", "jobs": stopped}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"daemon stop failed: {exc}"}
+
+    return {"ok": False, "error": "no run in progress"}
 
 
 # --------------------------------------------------------------------------- #
