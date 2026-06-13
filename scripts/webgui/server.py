@@ -82,13 +82,21 @@ def list_schedulers() -> list[str]:
     ]
 
 
+_OPTIONS_CACHE = None
+
+
 def options() -> dict:
-    return {
-        "methods": list_methods(),
-        "presets": list_presets(),
-        "optimizers": list_optimizers(),
-        "schedulers": list_schedulers(),
-    }
+    """Cached option registries. The first call imports the ~89-optimizer zoo
+    (slow); cache it so page reloads are instant. Pre-warmed in serve()."""
+    global _OPTIONS_CACHE
+    if _OPTIONS_CACHE is None:
+        _OPTIONS_CACHE = {
+            "methods": list_methods(),
+            "presets": list_presets(),
+            "optimizers": list_optimizers(),
+            "schedulers": list_schedulers(),
+        }
+    return _OPTIONS_CACHE
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +289,9 @@ def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) 
     shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
     url = f"http://{shown}:{port}"
     print(f"\n  Anima LoRA web GUI: {url}\n  (Ctrl-C to stop)\n")
+    # Pre-warm the option cache (imports the optimizer zoo) off the request path
+    # so the first page load doesn't wait on it.
+    threading.Thread(target=options, daemon=True).start()
     if open_browser:
         threading.Thread(target=lambda: (time.sleep(0.6), webbrowser.open(url)), daemon=True).start()
     try:

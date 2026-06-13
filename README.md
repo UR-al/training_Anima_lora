@@ -1,18 +1,32 @@
 # Anima LoRA — merged trainer
 
-A fast **Anima** LoRA trainer that merges three projects into one:
+A fast **Anima** LoRA trainer with a browser control panel, a ~89-optimizer zoo, custom LR schedulers, and a live training dashboard — three projects merged into one.
 
-- **[anima_lora](https://github.com/sorryhyun/anima_lora)** — the base: `torch.compile`-accelerated LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader).
-- **LoRA_Easy_Training_Scripts** — a broad optimizer/scheduler suite (~89 optimizers + custom LR schedulers), vendored as `LoraEasyCustomOptimizer/`.
-- **AnimaLoraToolkit** — a live, dependency-free web monitor (loss/LR/sample dashboard), vendored under `library/monitoring/`.
+## What it is
 
-## Highlights
+| From | What | Vendored as |
+|---|---|---|
+| **[anima_lora](https://github.com/sorryhyun/anima_lora)** (Apache-2.0) | the fast base: `torch.compile` LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader) | the repo itself |
+| **LoRA_Easy_Training_Scripts** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `LoraEasyCustomOptimizer/` |
+| **AnimaLoraToolkit** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
 
-- **Fast training** — native `torch.compile` path (~1.3 s/it at rank 32, 1 MP on a 16 GB card).
-- **~89 optimizers by name** — `--optimizer_type CAME` (or `ADOPT`, `Prodigy`, `ProdigyPlusScheduleFree`, `FMARSCrop`, `OCGOpt`, …, or any `pkg.module.Class`). kohya built-ins (`AdamW` fused, `AdamW8bit`, `DAdapt*`, `Adafactor`, `*ScheduleFree`) still work. Meta-optimizers wrap a base via `--optimizer_args base_optimizer_type='CAME'`. Missing optional deps are skipped, never fatal.
-- **Custom LR schedulers** — `--lr_scheduler_type <dotted path>` (e.g. CAWR / RAWR) with `--lr_scheduler_args`.
-- **Live web monitor** — `--monitor` serves a Chart.js loss/LR/sample dashboard; resumes the curve on `--resume`.
-- **Web control panel** — `run_gui.bat` (or `python tasks.py webgui`): configure → launch → monitor in the browser, no Qt.
+## Web control panel — `run_gui.bat`
+
+Run `run_gui.bat` (or `python tasks.py webgui`) to open a browser control panel — **no Qt, pure stdlib**:
+
+- Pick **method / preset / optimizer (~89) / scheduler** from dropdowns; set rank, LR, epochs, dataset, seed, optimizer/scheduler args.
+- **Preview the command**, then **Start** / **Stop**.
+- **Runs through the training daemon by default**, so training survives closing the page (and queues + captures logs).
+- One-click link to the **live monitor** (loss/LR/sample dashboard, resumes the curve on `--resume`).
+
+## CLI
+
+```powershell
+python tasks.py lora --optimizer_type CAME --monitor     REM train with a named optimizer + dashboard
+python tasks.py lora --method lora --preset low_vram --dataset_config my.toml --network_dim 32
+```
+
+`--optimizer_type <name>` takes a friendly name (`CAME`, `ADOPT`, `Prodigy`, `ProdigyPlusScheduleFree`, …) or any `pkg.module.Class`. `--lr_scheduler_type <dotted path>` for custom schedulers. `--monitor` for the dashboard. See `CLAUDE.md` for the full reference.
 
 ## Requirements
 
@@ -20,36 +34,26 @@ A fast **Anima** LoRA trainer that merges three projects into one:
 |---|---|---|
 | GPU | RTX 3060 (8 GB) | 16 GB+ |
 | System RAM | 16 GB | 32 GB+ |
-| Disk | 60 GB | 200 GB+ (caches + outputs) |
-| Stack | Windows 11 / Ubuntu 22.04+, NVIDIA driver ≥595 | CUDA 13.2 toolkit (for `torch.compile`/Triton) |
+| Disk | 60 GB | 200 GB+ |
 
-Python 3.13 + PyTorch 2.12 (cu132) are installed for you by the installer.
+Python 3.13 + PyTorch 2.12 (cu132) are installed for you. `torch.compile` needs the CUDA 13.2 toolkit (nvcc).
 
 ## Install (Windows)
-
-Clone, then double-click one of:
-
-- **`install.bat`** — via **uv** (recommended; exact locked deps).
-- **`install_pip.bat`** — via **pip** (needs Python 3.13 on PATH).
 
 ```powershell
 git clone https://github.com/UR-al/training_Anima_lora
 cd training_Anima_lora
-install.bat
+install.bat        REM via uv (recommended).  install_pip.bat = pip alternative (needs Python 3.13)
 ```
 
-Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` (gitignored — not shipped in this repo).
-
-## Use
-
-```powershell
-run_gui.bat                                            REM web control panel in the browser
-python tasks.py lora --optimizer_type CAME --monitor   REM CLI: train + live dashboard
-update.bat                                             REM git pull + re-sync deps
-```
-
-`python tasks.py lora --method <m> --preset <p> [--dataset_config x.toml] [overrides]` is the core entry; `make help` / the `COMMANDS` table in `tasks.py` lists every target. See `CLAUDE.md` for the architecture and the full merged-capabilities reference.
+Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` — they are **not** shipped in this repo (gitignored). `update.bat` later pulls + re-syncs.
 
 ## License & attribution
 
-This is a derivative of the three projects above; see `LICENSE`, `LICENSE-APACHE`, and `NOTICE`. The vendored `LoraEasyCustomOptimizer/` optimizers and `library/monitoring/` dashboard retain their upstream authorship.
+This is a **derivative work** of the three projects above:
+
+- **anima_lora** — Apache-2.0 (the base engine).
+- **LoRA_Easy_Training_Scripts** — its optimizer/scheduler package is vendored under `LoraEasyCustomOptimizer/` (retains upstream authorship; see that tree's headers).
+- **AnimaLoraToolkit** — its web monitor is vendored under `library/monitoring/`. **AnimaLoraToolkit is GPL-3.0** (it derives from ComfyUI's GPL-3.0 model code). The monitor files (`train_monitor.py`, `monitor_smooth.html`) carry no separate license, so they are covered by that GPL-3.0.
+
+⚠️ **Because a GPL-3.0 component is included, this combined work is effectively GPL-3.0.** If you need a more permissive license, replace `library/monitoring/` with an independently-written monitor. See `LICENSE`, `LICENSE-APACHE`, and `NOTICE`. Model weights (Anima / Qwen / VAE) have their own terms — check each model card.

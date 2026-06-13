@@ -63,7 +63,7 @@
     <label>Learning rate</label><input id="learning_rate" placeholder="e.g. 1e-4 (blank = method default)">
     <label>Optimizer args <span class="hint">space-separated key=value</span></label>
     <textarea id="optimizer_args" placeholder="base_optimizer_type='CAME' weight_decay=0.01"></textarea>
-    <label>LR scheduler</label><select id="lr_scheduler_type"></select>
+    <label>LR scheduler</label><select id="lr_scheduler_type" onchange="updateWarmup()"></select>
     <div class="row">
       <div><label>Scheduler args</label><input id="lr_scheduler_args" placeholder="gamma=0.9 first_cycle_max_steps=200"></div>
       <div><label>LR warmup steps</label><input id="lr_warmup_steps" placeholder="0 for custom sched"></div>
@@ -127,12 +127,24 @@ async function poll(){
     if(s.monitor_url){ const a=$('monlink'); a.href=s.monitor_url; a.style.display='inline'; }
   }catch(e){}
 }
+function updateWarmup(){
+  const sched = $('lr_scheduler_type').value || '';
+  const w = $('lr_warmup_steps');
+  // 'constant' and dotted-path custom schedulers (CAWR/RAWR do their own warmup
+  // via scheduler args) reject a trainer-level warmup — disable + clear it.
+  const noWarmup = (sched === 'constant') || sched.includes('.');
+  w.disabled = noWarmup;
+  w.style.opacity = noWarmup ? 0.45 : 1;
+  if(noWarmup){ w.value=''; w.placeholder='n/a for this scheduler'; }
+  else if(w.placeholder==='n/a for this scheduler'){ w.placeholder='0 for custom sched'; }
+}
 (async function init(){
   const o = await (await fetch('/api/options')).json();
   fill($('method'), o.methods, 'lora');
   fill($('preset'), o.presets, 'default');
   fill($('optimizer_type'), o.optimizers, 'AdamW');
   fill($('lr_scheduler_type'), o.schedulers, 'cosine');
+  updateWarmup();
   setInterval(poll, 2000); poll();
 })();
 </script>
