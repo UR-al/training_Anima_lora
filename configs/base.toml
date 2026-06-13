@@ -59,7 +59,10 @@ compile_dynamic_seq = true
 # saved-for-backward set). 0.85 ≈ old peak at identical step time. Auto-skipped
 # (logged) when gradient_checkpointing=true — incompatible and redundant there.
 activation_memory_budget = 0.99
-log_every_n_steps=2
+# Metric/tracker/monitor cadence: 1 = every optimizer step (matches the CLI
+# default + the GUI "Monitor / log every N steps" field). Raise it to halve the
+# per-step metric-collection overhead at the cost of a coarser monitor curve.
+log_every_n_steps = 1
 dataloader_pin_memory = true
 persistent_data_loader_workers= true
 use_cmmd = false
