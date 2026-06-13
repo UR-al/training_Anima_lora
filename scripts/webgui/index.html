@@ -523,9 +523,14 @@ function form(extra){
   const sk=[...document.querySelectorAll('#ms_skip_inputs .skipin')].map(i=>i.dataset.t+':'+(i.value||'0'));
   if(sk.length) f.ms_skip=sk.join(',');  // per-tier skip 'tier:edge,...' for multi-scale
   f.subsets=collectSubsets();  // the dataset definition (image_dir [+cache_dir] + per-subset settings)
-  const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en||!en.checked) return;
-    if(a.is_bool){ adv.push({flag:a.flag,is_bool:true,value:true}); }
-    else { const v=$('advv_'+a.dest); adv.push({flag:a.flag,is_bool:false,nargs:a.nargs,value:v?v.value:''}); } });
+  // Capture EVERY auto-arg's full state (toggle + value), not just checked ones —
+  // so save/load round-trips a typed-but-unchecked value too. `on` = the toggle;
+  // launch only emits entries where on is truthy (see server _method_preset_extra).
+  const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en) return;
+    const on=!!en.checked;
+    if(a.is_bool){ if(on) adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:true,value:true}); }
+    else { const v=$('advv_'+a.dest); const val=v?v.value:'';
+      if(on||val!=='') adv.push({flag:a.flag,dest:a.dest,is_bool:false,nargs:a.nargs,on,value:val}); } });
   f.adv=adv; return Object.assign(f,extra||{});
 }
 function setForm(f){ if(!f) return;
@@ -533,7 +538,8 @@ function setForm(f){ if(!f) return;
   if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
   if(Array.isArray(f.subsets)){ $('subsets').innerHTML=''; f.subsets.forEach(s=>addSubset(s)); }
   (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
-    const en=$('adv_'+a.dest); if(en) en.checked=true; const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
+    const en=$('adv_'+a.dest); if(en) en.checked=(it.on!==false);  // missing on (import/old saves) ⇒ enabled
+    const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
   // parse a loaded network_args string back into the structured controls (known
   // keys) + the extra textarea (everything else), so save/load round-trips.
   if(typeof f.network_args==='string'){

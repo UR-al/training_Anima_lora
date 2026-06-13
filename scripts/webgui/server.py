@@ -725,6 +725,11 @@ def _method_preset_extra(form: dict):
         flag = item.get("flag")
         if not flag:
             continue
+        # `on` is the toggle: the GUI now saves typed-but-unchecked auto-args too
+        # (for round-trip), so skip any explicitly toggled OFF. Missing `on`
+        # (imported configs / older saves) defaults to enabled.
+        if item.get("on", True) is False:
+            continue
         if item.get("is_bool"):
             if item.get("value"):
                 extra.append(flag)
