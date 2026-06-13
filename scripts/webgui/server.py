@@ -649,6 +649,14 @@ def _method_preset_extra(form: dict):
     add("--output_name", "output_name")
     add("--seed", "seed")
 
+    # Model paths (DiT / text-encoder / VAE). Blank = config-chain default
+    # (models/…). Set them to point at forge-neo / ComfyUI model files so the
+    # repo needs no local weights — the same paths ride the auto-preprocess
+    # CONFIG_FILE snapshot too (see _prepare_auto_preprocess).
+    add("--pretrained_model_name_or_path", "dit_path")
+    add("--qwen3", "te_path")
+    add("--vae", "vae_path")
+
     sched = (form.get("lr_scheduler_type") or "").strip()
     # Built-in schedulers go through --lr_scheduler; dotted-path customs through
     # --lr_scheduler_type (the resolver branch). Heuristic: a "." => custom.
@@ -803,6 +811,16 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         "lora_cache_dir": cache,
         "mask_dir": masks,
     }
+    # Model-path overrides ride the snapshot so preprocess (VAE/TE caching) uses
+    # the same DiT/TE/VAE the training job will — e.g. forge-neo / ComfyUI files.
+    for snap_key, form_key in (
+        ("pretrained_model_name_or_path", "dit_path"),
+        ("qwen3", "te_path"),
+        ("vae", "vae_path"),
+    ):
+        v = (form.get(form_key) or "").strip()
+        if v:
+            snap[snap_key] = v
     tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
     if tiers:
         snap["target_res"] = tiers
@@ -1136,16 +1154,23 @@ def build_dataset_toml(data: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Server-side folder browser (the GUI "Browse…" picker — local tool, real FS)
 # --------------------------------------------------------------------------- #
-def browse(path: str | None) -> dict:
-    """List immediate subdirectories of ``path`` for the GUI folder picker.
+def browse(path: str | None, exts: str | None = None) -> dict:
+    """List subdirectories (and optionally files) of ``path`` for the GUI picker.
 
-    A browser can't open a native folder dialog with a real on-disk path, so the
-    local server lists the filesystem itself and the client navigates. Empty path
-    → Windows drive letters (or ``/`` on POSIX). Returns the resolved dir, its
-    parent, and each subfolder as ``{name, path}`` so the client navigates by path.
+    A browser can't open a native file/folder dialog with a real on-disk path, so
+    the local server lists the filesystem itself and the client navigates. Empty
+    path → Windows drive letters (or ``/`` on POSIX). Returns the resolved dir, its
+    parent, each subfolder as ``{name, path}`` in ``dirs``, and — when ``exts`` is
+    given (comma-separated, e.g. ``"safetensors,toml"``) — matching files in
+    ``files`` so file pickers (model weights, dataset .toml) can select directly.
     """
     import string
 
+    ext_set = (
+        {e.strip().lstrip(".").lower() for e in exts.split(",") if e.strip()}
+        if exts
+        else None
+    )
     p = (path or "").strip()
     if not p:
         if os.name == "nt":
@@ -1157,6 +1182,7 @@ def browse(path: str | None) -> dict:
                 "path": "",
                 "parent": None,
                 "dirs": [{"name": d, "path": d} for d in drives],
+                "files": [],
             }
         p = "/"
     try:
@@ -1164,16 +1190,35 @@ def browse(path: str | None) -> dict:
         if not base.is_dir():
             base = base.parent if base.parent.is_dir() else Path.home()
         base = base.resolve()
+        entries = list(os.scandir(base))
         subs = sorted(
-            (e for e in os.scandir(base) if e.is_dir() and not e.name.startswith(".")),
+            (e for e in entries if e.is_dir() and not e.name.startswith(".")),
             key=lambda e: e.name.lower(),
         )
         dirs = [{"name": e.name, "path": str(Path(base, e.name))} for e in subs]
+        files = []
+        if ext_set is not None:
+            fs = sorted(
+                (
+                    e
+                    for e in entries
+                    if e.is_file()
+                    and Path(e.name).suffix.lstrip(".").lower() in ext_set
+                ),
+                key=lambda e: e.name.lower(),
+            )
+            files = [{"name": e.name, "path": str(Path(base, e.name))} for e in fs]
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc), "path": p, "dirs": []}
+        return {"ok": False, "error": str(exc), "path": p, "dirs": [], "files": []}
     same = str(base.parent) == str(base)
     parent = ("" if os.name == "nt" else None) if same else str(base.parent)
-    return {"ok": True, "path": str(base), "parent": parent, "dirs": dirs}
+    return {
+        "ok": True,
+        "path": str(base),
+        "parent": parent,
+        "dirs": dirs,
+        "files": files,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1213,7 +1258,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(optimizer_arg_help((qs.get("name") or [""])[0]))
         elif path == "/api/browse":
             qs = parse_qs(urlparse(self.path).query or "")
-            self._json(browse((qs.get("path") or [""])[0]))
+            self._json(
+                browse((qs.get("path") or [""])[0], (qs.get("exts") or [None])[0])
+            )
         else:
             self._json({"error": "not found"}, 404)
 

@@ -215,7 +215,9 @@ def cmd_preprocess_vae(extra):
             "--cache_dir",
             _path("lora_cache_dir", "post_image_dataset/lora"),
             "--vae",
-            "models/vae/qwen_image_vae.safetensors",
+            # CONFIG_FILE-aware (the web GUI's model-path override / forge-neo /
+            # ComfyUI VAE) — falls back to the bundled default.
+            _path("vae", "models/vae/qwen_image_vae.safetensors"),
             "--batch_size",
             "4",
             "--chunk_size",
@@ -245,9 +247,13 @@ def cmd_preprocess_te(extra):
             "--cache_dir",
             _path("lora_cache_dir", "post_image_dataset/lora"),
             "--qwen3",
-            "models/text_encoders/qwen_3_06b_base.safetensors",
+            # CONFIG_FILE-aware (GUI model-path override / forge-neo / ComfyUI).
+            _path("qwen3", "models/text_encoders/qwen_3_06b_base.safetensors"),
             "--dit",
-            "models/diffusion_models/anima-base-v1.0.safetensors",
+            _path(
+                "pretrained_model_name_or_path",
+                "models/diffusion_models/anima-base-v1.0.safetensors",
+            ),
             "--caption_shuffle_variants",
             shuffle_variants,
             "--caption_tag_dropout_rate",

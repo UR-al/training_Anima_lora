@@ -121,6 +121,17 @@
   </div>
 
   <div class="panel full">
+    <h2>Model files — DiT / text encoder / VAE</h2>
+    <p class="hint">Point at your model files (e.g. <b>forge-neo</b> / <b>ComfyUI</b>) so the repo needs no local <code>models/</code>. Blank = the bundled default (<code>models/…</code>). Used for both training and auto-preprocess caching.</p>
+    <label>DiT / base model <span class="hint">.safetensors</span></label>
+    <div class="pathrow"><input id="dit_path" placeholder="models/diffusion_models/anima-base-v1.0.safetensors"><button class="pickbtn" title="Browse files" onclick="pickFile('dit_path','safetensors,ckpt,pt,sft')">📁</button></div>
+    <div class="row">
+      <div><label>Text encoder (qwen3)</label><div class="pathrow"><input id="te_path" placeholder="models/text_encoders/qwen_3_06b_base.safetensors"><button class="pickbtn" onclick="pickFile('te_path','safetensors,pt,sft')">📁</button></div></div>
+      <div><label>VAE</label><div class="pathrow"><input id="vae_path" placeholder="models/vae/qwen_image_vae.safetensors"><button class="pickbtn" onclick="pickFile('vae_path','safetensors,pt,sft')">📁</button></div></div>
+    </div>
+  </div>
+
+  <div class="panel full">
     <h2>Optimizer / scheduler</h2>
     <div class="optwrap">
       <div class="optfields">
@@ -203,7 +214,7 @@
     </div>
 
     <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-set in auto mode · built/typed in manual mode</span></label>
-    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode"><button class="pickbtn" title="Browse files" onclick="pickFolder('dataset_config',true)">📁</button></div>
+    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml')">📁</button></div>
   </div>
 
   <div class="panel full">
@@ -272,6 +283,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'network_module','algo','lycoris_preset','network_args',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
   'monitor_port','extra_flags',
+  'dit_path','te_path','vae_path',
   'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
   'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate'];
 // checkbox fields collected by .checked
@@ -321,17 +333,24 @@ function optHelp(srcId){ const n=$(srcId).value||''; const body=$('help_body'); 
 }
 
 // ---- folder / file picker modal ----
-let _pick={input:null,cur:'',parent:null,fileMode:false};
-function pickFolder(inputId,fileMode){ _pick.input=inputId; _pick.fileMode=!!fileMode;
-  $('fselect').textContent=fileMode?'Select this folder (then type file)':'Select this folder';
-  $('fmodal').style.display='flex'; const start=($(inputId).value||'').trim(); navFolder(start); }
+let _pick={input:null,cur:'',parent:null,fileMode:false,exts:''};
+function je(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }  // safe inline-onclick string
+function pickFolder(inputId,fileMode){ _openPicker(inputId,!!fileMode,''); }
+function pickFile(inputId,exts){ _openPicker(inputId,true,exts||''); }
+function _openPicker(inputId,fileMode,exts){ _pick.input=inputId; _pick.fileMode=fileMode; _pick.exts=exts;
+  $('fselect').style.display=fileMode&&exts?'none':'inline-block';
+  $('fselect').textContent='Select this folder';
+  $('fmodal').style.display='flex'; navFolder(($(inputId).value||'').trim()); }
 function closePicker(){ $('fmodal').style.display='none'; }
-function navFolder(path){ fetch('/api/browse?path='+encodeURIComponent(path||'')).then(r=>r.json()).then(d=>{
+function navFolder(path){ const q='/api/browse?path='+encodeURIComponent(path||'')+(_pick.exts?'&exts='+encodeURIComponent(_pick.exts):'');
+  fetch(q).then(r=>r.json()).then(d=>{
   _pick.cur=d.path||''; _pick.parent=d.parent; $('fpath').textContent=d.path||'(drives)'; $('fpathin').value=d.path||'';
-  const list=$('flist'); const dirs=d.dirs||[];
-  if(!dirs.length){ list.innerHTML='<div class="fempty">(no subfolders)</div>'; return; }
-  list.innerHTML=dirs.map(x=>`<div class="frow" onclick="navFolder('${esc(x.path).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"><span class="ic">📁</span>${esc(x.name)}</div>`).join(''); }); }
+  const list=$('flist'); const dirs=d.dirs||[],files=d.files||[];
+  let h=dirs.map(x=>`<div class="frow" onclick="navFolder('${je(x.path)}')"><span class="ic">📁</span>${esc(x.name)}</div>`).join('');
+  h+=files.map(x=>`<div class="frow" onclick="chooseFile('${je(x.path)}')"><span class="ic">📄</span>${esc(x.name)}</div>`).join('');
+  list.innerHTML=h||'<div class="fempty">(empty)</div>'; }); }
 function navUp(){ if(_pick.parent!=null) navFolder(_pick.parent); }
+function chooseFile(p){ if(_pick.input) $(_pick.input).value=p; closePicker(); }
 function choosePicker(){ if(_pick.input&&_pick.cur) $(_pick.input).value=_pick.cur; closePicker(); }
 
 // ---- all-args render ----
