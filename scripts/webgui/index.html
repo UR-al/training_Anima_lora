@@ -48,7 +48,10 @@
   .drawerhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
   .drawerhead .dt{font-weight:600;font-size:12px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .drawerhead button{padding:3px 9px;font-size:11px;background:#101116;border:1px solid var(--line);color:var(--mut)}
-  #help_body{max-height:340px;overflow:auto}
+  .hsec{margin-bottom:10px}
+  .hsec+.hsec{border-top:1px solid var(--line);padding-top:8px}
+  .hsec-t{font-weight:600;font-size:12px;color:var(--txt);margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #opt_help_body,#sch_help_body{max-height:230px;overflow:auto}
   .hrow{padding:6px 0;border-bottom:1px solid var(--line)}
   .hrow:last-child{border-bottom:0}
   .hrow code{background:#101116;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:#c9cdd6;font-size:12px}
@@ -181,8 +184,9 @@
         <button class="ghost" id="drawer_show" onclick="toggleDrawer()">ℹ Show arg help</button>
       </div>
       <div class="optdrawer" id="optdrawer">
-        <div class="drawerhead"><span class="dt" id="drawer_title">Arg help</span><button onclick="toggleDrawer()">⟨ hide</button></div>
-        <div id="help_body"><p class="hnote">Pick an optimizer or scheduler — its accepted args + descriptions show here.</p></div>
+        <div class="drawerhead"><span class="dt">Arg help</span><button onclick="toggleDrawer()">⟨ hide</button></div>
+        <div class="hsec"><div class="hsec-t" id="opt_help_title">Optimizer</div><div id="opt_help_body"><p class="hnote">Pick an optimizer.</p></div></div>
+        <div class="hsec"><div class="hsec-t" id="sch_help_title">Scheduler</div><div id="sch_help_body"><p class="hnote">Pick a scheduler.</p></div></div>
       </div>
     </div>
   </div>
@@ -392,7 +396,9 @@ function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').styl
 // ---- optimizer/scheduler help drawer ----
 let _drawerOpen=true;
 function toggleDrawer(){ _drawerOpen=!_drawerOpen; $('optdrawer').classList.toggle('collapsed',!_drawerOpen); $('drawer_show').style.display=_drawerOpen?'none':'inline-block'; }
-function optHelp(srcId){ const n=$(srcId).value||''; const body=$('help_body'); $('drawer_title').textContent=n||'Arg help';
+function optHelp(srcId){ const isOpt=srcId==='optimizer_type';
+  const n=$(srcId).value||''; const body=$(isOpt?'opt_help_body':'sch_help_body');
+  $(isOpt?'opt_help_title':'sch_help_title').textContent=(isOpt?'Optimizer':'Scheduler')+(n?': '+n:'');
   if(!n||n.includes(' ')){ body.innerHTML='<p class="hnote">No introspectable args.</p>'; return; }
   if(!_drawerOpen) toggleDrawer();
   fetch('/api/optimizer_args?name='+encodeURIComponent(n)).then(r=>r.json()).then(d=>{
@@ -527,7 +533,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
   renderArgs(o.arg_groups); addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
-  optHelp('optimizer_type');
+  optHelp('optimizer_type'); optHelp('lr_scheduler_type');
   setInterval(poll,2000); poll();
 })();
 </script>
