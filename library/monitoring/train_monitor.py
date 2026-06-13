@@ -3,11 +3,10 @@
 实时显示 loss 曲线和采样图片
 """
 import json
-import os
 import threading
 import time
 from pathlib import Path
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import webbrowser
 from urllib.parse import urlparse, parse_qs
 
@@ -609,8 +608,15 @@ def start_monitor_server(port=8766, host="127.0.0.1", output_dir=None, open_brow
     
     def handler(*args, **kwargs):
         return MonitorHandler(*args, output_dir=output_dir, **kwargs)
-    
-    server = HTTPServer((host, port), handler)
+
+    # ThreadingHTTPServer (not plain HTTPServer): the dashboard holds a keep-alive
+    # connection and polls /api/state every 1s + fetches /samples/*. A single-
+    # threaded server blocks on one connection at a time, so a lingering keep-alive
+    # (or a slow sample read) stalls every poll → the dashboard shows
+    # "Disconnected/OFFLINE" and a stale (lagging) step while training runs fine.
+    # daemon_threads so handler threads never block process exit.
+    server = ThreadingHTTPServer((host, port), handler)
+    server.daemon_threads = True
     
     def run():
         shown_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
