@@ -845,6 +845,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
             env["MIT_TEXT_THRESHOLD"] = str(form["mit_text_threshold"])
         if str(form.get("mit_dilate") or "").strip():
             env["MIT_DILATE"] = str(form["mit_dilate"])
+        # SAM3 is a gated HF repo — let the user point at an existing checkpoint
+        # instead of forcing `make download-sam3` (which needs `hf auth login`).
+        if form.get("mask_sam") and str(form.get("sam3_path") or "").strip():
+            env["SAM3_CHECKPOINT"] = str(form["sam3_path"]).strip()
     return {
         "argv": ["tasks.py", target],
         "extra_env": env,

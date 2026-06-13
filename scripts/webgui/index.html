@@ -196,6 +196,8 @@
           <div><label>MIT text threshold</label><input id="mit_text_threshold" placeholder="0.8"></div>
           <div><label>MIT dilate (px)</label><input id="mit_dilate" placeholder="5"></div>
         </div>
+        <label>SAM3 checkpoint <span class="hint">gated HF repo — point at your sam3 file directly (or run <code>make download-sam3</code> after <code>hf auth login</code>)</span></label>
+        <div class="pathrow"><input id="sam3_path" placeholder="models/sam3/sam3.pt"><button class="pickbtn" title="Browse files" onclick="pickFile('sam3_path','pt,safetensors,sft')">📁</button></div>
         <p class="hint" id="sam_note"></p>
       </div>
     </div>
@@ -285,7 +287,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'monitor_port','extra_flags',
   'dit_path','te_path','vae_path',
   'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
-  'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate'];
+  'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
 const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','drop_lowres','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
@@ -450,7 +452,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   $('tiers').innerHTML=(o.target_res_tiers||[]).map(t=>`<label class="tier-lab"><input type="checkbox" class="tier" value="${t}" ${defTiers.includes(String(t))?'checked':''}>${t}</label>`).join('');
   // SAM3 availability note
   const sn=$('sam_note');
-  if(o.sam3_available) sn.textContent='SAM3 weights present.'; else sn.innerHTML='⚠ SAM3 weights not downloaded (gated) — run <code>hf auth login</code> then <code>make download-sam3</code>. MIT works now.';
+  if(o.sam3_available) sn.textContent='SAM3 weights present at the default location.'; else sn.innerHTML='⚠ No SAM3 weights at the default <code>models/sam3/</code> — set the SAM3 checkpoint path above, or run <code>hf auth login</code> then <code>make download-sam3</code> (gated repo). MIT works without SAM3.';
   if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
   renderArgs(o.arg_groups); addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); refreshConfigs(); refreshQueue();

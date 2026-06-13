@@ -34,6 +34,16 @@ SAM_CONFIG = ROOT / "configs" / "sam_mask.yaml"
 _UNSET = object()
 
 
+def _sam3_checkpoint() -> str:
+    """SAM3 checkpoint path. SAM3 is a GATED HF repo (facebook/sam3) — rather than
+    force `make download-sam3` (needs `hf auth login`), the web GUI can point this
+    at an existing checkpoint via the SAM3_CHECKPOINT env / `sam3_checkpoint`
+    config key. Falls back to the bundled default location."""
+    return os.environ.get("SAM3_CHECKPOINT") or _path(
+        "sam3_checkpoint", "models/sam3/sam3.pt"
+    )
+
+
 def _resized_dir() -> Path:
     """The resized-image dir to mask (CONFIG_FILE-aware; falls back to default)."""
     return ROOT / _path("resized_image_dir", "post_image_dataset/resized")
@@ -109,7 +119,7 @@ def _run_sam(
             "--mask-dir",
             str(out_dir),
             "--checkpoint",
-            "models/sam3/sam3.pt",
+            _sam3_checkpoint(),
             "--batch-size",
             "4",
             "--recursive",
