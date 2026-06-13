@@ -109,6 +109,11 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
         # reduction (mean gates per pool, not argmax-histogram) and different
         # entropy normalization (per-pool log(K_pool)). Same lifecycle.
         self._chimera_router_stats_cache: Optional[Dict[str, object]] = None
+        # State-dict prefixes of training-only submodules (e.g. the REPA
+        # projection head, absolute mode). save_weights strips them so attaching
+        # an aux head is inference-safe by default — register the prefix wherever
+        # the submodule is attached (networks/lora_anima/factory.py for repa_head).
+        self._training_only_prefixes: set = set()
 
         # Local aliases read by the closure body.
         module_class = cfg.module_class
@@ -1877,6 +1882,23 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
                         f"content_router_lr_scale of unet_lr={base_lr})"
                     )
 
+        # REPA v2 projection-head param group (absolute mode only; relational
+        # has no head). LR = repa_lr_scale × unet_lr. Training-only — stripped
+        # from saved adapters by save_weights (re-inits on a warm start).
+        if getattr(self, "repa_head", None) is not None:
+            rh_params = list(self.repa_head.parameters())
+            if rh_params:
+                repa_scale = float(getattr(self, "_repa_lr_scale", 1.0))
+                base_lr = unet_lr if unet_lr is not None else default_lr
+                if base_lr and base_lr != 0:
+                    rh_lr = float(base_lr) * repa_scale
+                    all_params.append({"params": rh_params, "lr": rh_lr})
+                    lr_descriptions.append("repa head")
+                    logger.info(
+                        f"REPA head param group: lr={rh_lr:.2e} "
+                        f"({repa_scale}x repa_lr_scale of unet_lr={base_lr})"
+                    )
+
         return all_params, lr_descriptions
 
     def enable_gradient_checkpointing(self):
@@ -1997,6 +2019,12 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
             metadata["ss_chimera_centered_gate"] = "true"
 
         state_dict = self.state_dict()
+        # Training-only submodules (e.g. the REPA projection head — a warm start
+        # re-inits it; see library/training/repa.py) never belong in the inference
+        # artifact. Attach-side code registers its prefix in _training_only_prefixes.
+        for prefix in getattr(self, "_training_only_prefixes", ()):
+            for key in [k for k in state_dict if k.startswith(prefix)]:
+                del state_dict[key]
         lora_save.save_network_weights(
             state_dict,
             file=file,

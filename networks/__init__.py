@@ -179,6 +179,18 @@ NETWORK_KWARGS: frozenset[str] = frozenset(
         "content_router_init_std",
         # Centered-gate λ init for BOTH chimera pools (always-on).
         "chimera_lambda_init",
+        # REPA v2 auxiliary alignment loss (docs/experimental/repa.md). Off by
+        # default; rides any LoRA-family variant. The factory stashes the config
+        # on the network for REPAMethodAdapter + losses._repa_loss (no NetworkSpec).
+        "use_repa",
+        "repa_mode",  # "relational" (Gram, no head) | "absolute" (patchwise + head)
+        "repa_weight",
+        "repa_layer",
+        "repa_encoder",  # vision-encoder registry name (default pe_spatial)
+        "repa_lr_scale",  # head LR multiplier (absolute mode)
+        "repa_anneal_steps",  # hard cutoff: (0,1] = fraction of run, >1 = opt steps
+        "repa_spatial_norm",  # iREPA target-side spatial standardization (relational)
+        "repa_grad_heatmap",  # lever-3 diagnostic: probe every N micro-steps (0=off)
     }
 )
 

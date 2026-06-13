@@ -405,6 +405,24 @@ def _soft_tokens_contrastive_loss(ctx: LossContext) -> torch.Tensor:
     return weight * con_loss.float()
 
 
+def _repa_loss(ctx: LossContext) -> torch.Tensor:
+    """REPA v2 alignment scalar (stage-2 broadcast). The REPAMethodAdapter
+    stashes the unweighted alignment loss on ``ctx.aux['repa']`` from the
+    primary forward; here we just weight it by the network's ``_repa_weight``
+    (stamped by the factory when ``use_repa=true``). Inert (zero) on validation,
+    when the weight is 0, or when the term was skipped this step (aux missing —
+    e.g. PE features absent / past the anneal cutoff)."""
+    if not ctx.is_train:
+        return ctx.model_pred.new_zeros(())
+    weight = float(getattr(ctx.network, "_repa_weight", 0.0) or 0.0)
+    if weight <= 0.0:
+        return ctx.model_pred.new_zeros(())
+    repa = ctx.aux.get("repa")
+    if repa is None:
+        return ctx.model_pred.new_zeros(())
+    return weight * repa.float()
+
+
 def _fera_fecl_bands(
     z: torch.Tensor, num_bands: int, fei_sigma_low_div: float
 ) -> list[torch.Tensor]:
@@ -532,6 +550,7 @@ LOSS_REGISTRY: dict[str, LossFn] = {
     "multiscale": _multiscale_loss,
     "fera_fecl": _fera_fecl_loss,
     "soft_tokens_contrastive": _soft_tokens_contrastive_loss,
+    "repa": _repa_loss,
 }
 
 
@@ -545,6 +564,7 @@ _STAGE_SCALAR_BROADCAST = (
     "functional",
     "fera_fecl",
     "soft_tokens_contrastive",
+    "repa",
 )
 _STAGE_SCALAR_POST = ("multiscale",)
 # _STAGE_SCALAR_POST is consulted by LossComposer.compose via the hard-coded
@@ -678,5 +698,10 @@ def build_loss_composer(args: argparse.Namespace, network: object) -> LossCompos
     # SoftTokensMethodAdapter supplies the InfoNCE scalar via aux.
     if float(getattr(network, "_contrastive_target_weight", 0.0) or 0.0) > 0.0:
         active.append("soft_tokens_contrastive")
+
+    # REPA v2: active iff the factory stamped a positive weight (use_repa=true).
+    # The REPAMethodAdapter supplies the alignment scalar via aux['repa'].
+    if float(getattr(network, "_repa_weight", 0.0) or 0.0) > 0.0:
+        active.append("repa")
 
     return LossComposer(active_losses=active)

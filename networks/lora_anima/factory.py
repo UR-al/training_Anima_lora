@@ -136,6 +136,40 @@ def create_network(
     if spec.post_init is not None:
         spec.post_init(network, kwargs)
 
+    # REPA v2 auxiliary alignment loss. Off unless use_repa is set. Stash the
+    # config on the network so REPAMethodAdapter + losses._repa_loss read it off
+    # the network (the config rides --network_args, no new args plumbing). The
+    # `else` branch keeps _repa_weight defined so resolve_adapters' gate is safe.
+    # Build the projection head only for absolute mode (relational/Gram has none).
+    from networks.lora_anima.config import _as_bool
+
+    if _as_bool(kwargs.get("use_repa")):
+        network._repa_mode = str(kwargs.get("repa_mode", "relational")).lower()
+        network._repa_weight = float(kwargs.get("repa_weight", 0.05) or 0.0)
+        network._repa_layer = int(kwargs.get("repa_layer", 8))
+        network._repa_encoder = str(kwargs.get("repa_encoder", "pe_spatial"))
+        network._repa_lr_scale = float(kwargs.get("repa_lr_scale", 1.0) or 1.0)
+        network._repa_anneal_steps = float(kwargs.get("repa_anneal_steps", 0.0) or 0.0)
+        network._repa_spatial_norm = _as_bool(kwargs.get("repa_spatial_norm"))
+        network._repa_grad_heatmap = float(kwargs.get("repa_grad_heatmap", 0) or 0)
+        if network._repa_mode == "absolute":
+            from library.training.repa import REPAHead
+            from library.vision.encoders import get_encoder_info
+
+            enc_dim = get_encoder_info(network._repa_encoder).d_enc
+            dit_dim = int(unet.model_channels)
+            network.repa_head = REPAHead(dit_dim, dit_dim, enc_dim)
+            # Training-only: save_weights strips registered prefixes (re-inits on warm start).
+            network._training_only_prefixes.add("repa_head.")
+        logger.info(
+            f"REPA[{network._repa_mode}]: weight={network._repa_weight}, "
+            f"layer={network._repa_layer}, encoder={network._repa_encoder}, "
+            f"anneal_steps={network._repa_anneal_steps:g}, "
+            f"spatial_norm={network._repa_spatial_norm}"
+        )
+    else:
+        network._repa_weight = 0.0
+
     if cfg.use_timestep_mask:
         logger.info(
             f"Timestep-dependent rank masking: min_rank={cfg.min_rank}, alpha={cfg.alpha_rank_scale}"
