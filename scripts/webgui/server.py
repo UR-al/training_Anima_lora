@@ -153,6 +153,7 @@ _CURATED_ARGS = {
     "output_name",
     "output_dir",
     "resume",
+    "sample_prompts",
     "seed",
     "monitor",
     "monitor_host",
@@ -652,6 +653,7 @@ def _method_preset_extra(form: dict):
     add("--output_name", "output_name")
     add("--output_dir", "output_dir")
     add("--resume", "resume")
+    add("--sample_prompts", "sample_prompts")
     add("--seed", "seed")
 
     # Model paths (DiT / text-encoder / VAE). Blank = config-chain default
@@ -1605,6 +1607,34 @@ def browse(path: str | None, exts: str | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Sample-prompt editor — write/read the --sample_prompts .txt (one prompt per
+# line, anima `<prompt> --w --h --s --l --g --fs --d --n …` token format).
+# --------------------------------------------------------------------------- #
+SAMPLE_PROMPT_DIR = STORE_DIR / "sample_prompts"
+
+
+def save_sample_prompts(name: str, text: str) -> dict:
+    """Write the editor's serialized lines to a .txt and return its path so the
+    form's ``sample_prompts`` field can point at it."""
+    SAMPLE_PROMPT_DIR.mkdir(parents=True, exist_ok=True)
+    path = SAMPLE_PROMPT_DIR / (_safe_name(name or "sample") + ".txt")
+    path.write_text((text or "").strip() + "\n", encoding="utf-8")
+    return {"ok": True, "path": str(path)}
+
+
+def load_sample_prompts(path: str) -> dict:
+    """Return the raw text of an existing sample-prompts .txt for the editor
+    (the client parses the ``--tokens``)."""
+    p = Path((path or "").strip().strip('"'))
+    if not p.is_file():
+        return {"ok": False, "error": f"not a file: {p}"}
+    try:
+        return {"ok": True, "text": p.read_text(encoding="utf-8")}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
 class Handler(BaseHTTPRequestHandler):
@@ -1644,6 +1674,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(
                 browse((qs.get("path") or [""])[0], (qs.get("exts") or [None])[0])
             )
+        elif path == "/api/sample_prompts/load":
+            qs = parse_qs(urlparse(self.path).query or "")
+            self._json(load_sample_prompts((qs.get("path") or [""])[0]))
         else:
             self._json({"error": "not found"}, 404)
 
@@ -1676,6 +1709,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(build_dataset_toml(body))
         elif path == "/api/config/import":
             self._json(import_config(body.get("path", "")))
+        elif path == "/api/sample_prompts/save":
+            self._json(save_sample_prompts(body.get("name", ""), body.get("text", "")))
         else:
             self._json({"error": "not found"}, 404)
 

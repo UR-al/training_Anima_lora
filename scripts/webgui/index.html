@@ -105,6 +105,15 @@
   .frow{padding:7px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
   .frow:hover{background:#101116}.frow .ic{color:var(--mut)}
   .fempty{padding:14px;color:var(--mut);font-size:12px}
+  /* sample-prompt editor */
+  .sp_item{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--panel2)}
+  .sp_top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .sp_row{display:flex;gap:12px;align-items:flex-start}
+  .sp_left{flex:1;min-width:0}
+  .sp_left textarea{min-height:60px}
+  .sp_right{flex:0 0 220px;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .sp_f label{margin:0 0 2px}
+  .sp_f input{padding:5px 7px;font-size:12px}
 </style>
 </head>
 <body>
@@ -317,7 +326,9 @@
   <details class="section">
     <summary>Sample args</summary>
     <div class="sbody">
-      <p class="secnote">Per-prompt resolution / seed / negative / steps / CFG are tokens inside the <code>sample_prompts</code> file (<code>--w --h --d --n --s --l</code>), not flags here. Samplers: <code>euler</code> / <code>er_sde</code>.</p>
+      <p class="secnote">Per-prompt resolution / seed / negative / steps / CFG / guidance / shift are tokens inside the <code>sample_prompts</code> file. Use the editor below — or set the path manually. Samplers: <code>euler</code> / <code>er_sde</code> (per-prompt <code>--ss</code> in Extra, or the global sample_sampler arg).</p>
+      <label>Sample prompts file (sample_prompts)</label>
+      <div class="pathrow"><input id="sample_prompts" placeholder="(none — no sampling)"><button class="pickbtn" title="Browse .txt" onclick="pickFile('sample_prompts','txt',v=>$('sample_prompts').value=v)">📁</button><button class="ghost" style="flex:0 0 auto" onclick="openSampleEditor()">✎ Edit prompts</button></div>
       <div id="args_SAMPLE"></div>
     </div>
   </details>
@@ -399,6 +410,26 @@
   </div>
 </div>
 
+<!-- sample-prompt editor modal -->
+<div id="sp_modal" class="modal" style="display:none">
+  <div class="modalbox" style="width:min(960px,95vw);max-height:90vh">
+    <div class="modalhead"><span class="mtitle">Sample prompts</span><button class="x" onclick="spClose()">✕</button></div>
+    <p class="hint">Blank fields use the model default and are <b>not</b> written to the prompt line. Prompt newlines are saved as spaces. Tokens: <code>--w --h --s --d --l(CFG) --g(Guidance) --fs(Shift) --n(neg)</code>; put anything else (e.g. <code>--ss er_sde</code>) in Extra.</p>
+    <div class="flist" id="sp_list" style="padding:8px"></div>
+    <div class="btns" style="justify-content:space-between;margin-top:10px">
+      <div style="display:flex;gap:8px">
+        <button class="ghost" onclick="spAdd()">+ Add prompt</button>
+        <button class="ghost" onclick="spSelectAll()">Select all</button>
+        <button class="ghost" onclick="spDelete()">Delete selected</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="primary" onclick="spSave()">OK</button>
+        <button class="ghost" onclick="spClose()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 // text/select/number fields collected by .value
@@ -406,7 +437,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
   'monitor_port','extra_flags',
-  'output_dir','resume',
+  'output_dir','resume','sample_prompts',
   'dit_path','te_path','vae_path',
   'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
@@ -423,6 +454,11 @@ const KO={
   "Save args":"저장 설정","Bucket args":"버킷 / 전처리","Subset args":"서브셋 설정",
   "Noise offset args":"노이즈 오프셋","Sample args":"샘플 설정","Train Anima args":"Anima 학습 설정",
   "Extra args":"추가 인자","Model files — DiT / text encoder / VAE":"모델 파일 — DiT / 텍스트 인코더 / VAE",
+  // sample-prompt editor
+  "Sample prompts":"샘플 프롬프트","Prompt":"프롬프트","Negative":"네거티브","Steps":"스텝","Seed":"시드",
+  "Guidance":"가이던스","Extra":"추가 옵션","select":"선택","+ Add prompt":"+ 프롬프트 추가",
+  "Select all":"전체 선택","Delete selected":"선택 삭제","OK":"확인","Cancel":"취소",
+  "✎ Edit prompts":"✎ 프롬프트 편집","Sample prompts file (sample_prompts)":"샘플 프롬프트 파일 (sample_prompts)",
   "Model / method":"모델 / 방법","Adapter / LoRA type":"어댑터 / LoRA 종류",
   "Optimizer / scheduler":"옵티마이저 / 스케줄러","Dataset & preprocessing":"데이터셋 & 전처리",
   "Monitor & run":"모니터 & 실행","Queue & saved configs":"큐 & 저장된 설정",
@@ -602,6 +638,60 @@ function navFolder(path){ const q='/api/browse?path='+encodeURIComponent(path||'
 function navUp(){ if(_pick.parent!=null) navFolder(_pick.parent); }
 function chooseFile(p){ if(_pick.input&&$(_pick.input)) $(_pick.input).value=p; const cb=_pick.then; closePicker(); if(cb) cb(p); }
 function choosePicker(){ if(_pick.input&&$(_pick.input)&&_pick.cur) $(_pick.input).value=_pick.cur; closePicker(); }
+
+// ---- sample-prompt editor (writes the --sample_prompts .txt) ----
+function spAdd(o){ o=o||{}; const d=document.createElement('div'); d.className='sp_item';
+  d.innerHTML=`<div class="sp_top"><input type="checkbox" class="sp_sel"><label style="margin:0">select</label><button class="x" style="margin-left:auto;position:static" onclick="this.closest('.sp_item').remove()">✕</button></div>
+    <div class="sp_row">
+      <div class="sp_left">
+        <label>Prompt</label><textarea class="sp_prompt" placeholder="prompt text…">${esc(o.prompt||'')}</textarea>
+        <label>Negative</label><textarea class="sp_neg" placeholder="(none)">${esc(o.neg||'')}</textarea>
+      </div>
+      <div class="sp_right">
+        <div class="sp_f"><label>W</label><input class="sp_w" placeholder="512" value="${esc(o.w||'')}"></div>
+        <div class="sp_f"><label>H</label><input class="sp_h" placeholder="512" value="${esc(o.h||'')}"></div>
+        <div class="sp_f"><label>Steps</label><input class="sp_s" placeholder="30" value="${esc(o.s||'')}"></div>
+        <div class="sp_f"><label>Seed</label><input class="sp_d" placeholder="auto" value="${esc(o.d||'')}"></div>
+        <div class="sp_f"><label>CFG</label><input class="sp_l" placeholder="7.5" value="${esc(o.l||'')}"></div>
+        <div class="sp_f"><label>Guidance</label><input class="sp_g" placeholder="1.0" value="${esc(o.g||'')}"></div>
+        <div class="sp_f"><label>Shift</label><input class="sp_fs" placeholder="3.0" value="${esc(o.fs||'')}"></div>
+        <div class="sp_f"><label>Extra</label><input class="sp_extra" placeholder="--ss er_sde" value="${esc(o.extra||'')}"></div>
+      </div>
+    </div>`;
+  $('sp_list').appendChild(d); spLang();
+}
+function spClose(){ $('sp_modal').style.display='none'; }
+function spSelectAll(){ const all=[...document.querySelectorAll('#sp_list .sp_sel')]; const on=!all.every(c=>c.checked); all.forEach(c=>c.checked=on); }
+function spDelete(){ [...document.querySelectorAll('#sp_list .sp_item')].forEach(it=>{ if(it.querySelector('.sp_sel').checked) it.remove(); }); }
+function spCollect(){ return [...document.querySelectorAll('#sp_list .sp_item')].map(it=>{ const v=c=>{const e=it.querySelector(c);return e?e.value.trim():'';};
+  return {prompt:v('.sp_prompt'),neg:v('.sp_neg'),w:v('.sp_w'),h:v('.sp_h'),s:v('.sp_s'),d:v('.sp_d'),l:v('.sp_l'),g:v('.sp_g'),fs:v('.sp_fs'),extra:v('.sp_extra')}; }); }
+function spSerialize(items){ return items.map(o=>{
+  let line=(o.prompt||'').replace(/\s+/g,' ').trim(); if(!line) return '';
+  const tok=(f,x)=>{ if(x!=='') line+=' --'+f+' '+x; };  // blank → use default (not written)
+  tok('w',o.w); tok('h',o.h); tok('s',o.s); tok('d',o.d); tok('l',o.l); tok('g',o.g); tok('fs',o.fs);
+  if(o.neg) line+=' --n '+o.neg.replace(/\s+/g,' ').trim();
+  if(o.extra) line+=' '+o.extra.trim();
+  return line; }).filter(Boolean).join('\n'); }
+function spParseLine(line){ const parts=line.split(' --'); const o={prompt:(parts[0]||'').trim()};
+  const map={w:'w',h:'h',s:'s',d:'d',l:'l',g:'g',fs:'fs',n:'neg'}; const extra=[];
+  for(let i=1;i<parts.length;i++){ const seg=parts[i]; const sp=seg.indexOf(' ');
+    const key=(sp<0?seg:seg.slice(0,sp)).toLowerCase(); const val=sp<0?'':seg.slice(sp+1).trim();
+    if(map[key]!==undefined) o[map[key]]=val; else extra.push('--'+seg.trim()); }
+  if(extra.length) o.extra=extra.join(' '); return o; }
+function spLang(){ if(_lang!=='ko') return; document.querySelectorAll('#sp_modal label,#sp_modal button,#sp_modal .mtitle').forEach(el=>{
+  if(el.children.length) return; const en=(el.textContent||'').trim(); if(KO[en]) el.textContent=KO[en]; }); }
+async function openSampleEditor(){ $('sp_list').innerHTML='';
+  const path=($('sample_prompts').value||'').trim();
+  if(path){ try{ const r=await(await fetch('/api/sample_prompts/load?path='+encodeURIComponent(path))).json();
+    if(r.ok&&r.text) r.text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&l[0]!=='#').forEach(l=>spAdd(spParseLine(l))); }catch(e){} }
+  if(!$('sp_list').children.length) spAdd();
+  $('sp_modal').style.display='flex'; spLang();
+}
+async function spSave(){ const text=spSerialize(spCollect());
+  const name=(($('output_name')&&$('output_name').value)||'sample').trim()||'sample';
+  const r=await post('/api/sample_prompts/save',{name,text});
+  if(r&&r.ok){ $('sample_prompts').value=r.path; spClose(); showCmd('sample prompts saved → '+r.path); }
+  else showCmd('✗ save sample prompts: '+((r&&r.error)||'?')); }
 
 // ---- config importer (anima dataset .toml + LoRA_Easy/kohya configs → form) ----
 async function importConfigFile(path){ path=(path||'').trim(); if(!path) return;
