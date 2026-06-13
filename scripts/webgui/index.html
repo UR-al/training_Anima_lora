@@ -236,7 +236,11 @@
     <summary>Save args</summary>
     <div class="sbody">
       <label>Output name</label><input id="output_name" placeholder="my_lora">
-      <div class="secargs"><p class="secargs-h">More save args — output_dir · save_precision · save_model_as · save_every/last_n_epochs/steps · save_state · resume · config_snapshot</p><div id="args_SAVE"></div></div>
+      <label>Output folder (output_dir) <span class="hint">blank = the repo default (output/ckpt/)</span></label>
+      <div class="pathrow"><input id="output_dir" placeholder="output/ckpt"><button class="pickbtn" title="Browse folder" onclick="pickFolder('output_dir')">📁</button></div>
+      <label>Resume from state (resume) <span class="hint">a saved training-state folder to continue from · blank = fresh run</span></label>
+      <div class="pathrow"><input id="resume" placeholder="(none — fresh run)"><button class="pickbtn" title="Browse folder" onclick="pickFolder('resume')">📁</button></div>
+      <div class="secargs"><p class="secargs-h">More save args — save_precision · save_model_as · save_every/last_n_epochs/steps · save_state · config_snapshot</p><div id="args_SAVE"></div></div>
     </div>
   </details>
 
@@ -402,6 +406,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
   'monitor_port','extra_flags',
+  'output_dir','resume',
   'dit_path','te_path','vae_path',
   'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked

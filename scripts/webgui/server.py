@@ -151,6 +151,8 @@ _CURATED_ARGS = {
     "dataset_config",
     "max_train_epochs",
     "output_name",
+    "output_dir",
+    "resume",
     "seed",
     "monitor",
     "monitor_host",
@@ -648,6 +650,8 @@ def _method_preset_extra(form: dict):
     add("--max_train_epochs", "max_train_epochs")
     add("--network_dim", "network_dim")
     add("--output_name", "output_name")
+    add("--output_dir", "output_dir")
+    add("--resume", "resume")
     add("--seed", "seed")
 
     # Model paths (DiT / text-encoder / VAE). Blank = config-chain default
