@@ -25,8 +25,8 @@ pip install --extra-index-url https://download.pytorch.org/whl/cu132 --pre "torc
 if errorlevel 1 ( echo torch install failed. & pause & exit /b 1 )
 
 echo.
-echo Installing the project + remaining dependencies ...
-pip install -e . --extra-index-url https://download.pytorch.org/whl/cu132 --pre
+echo Installing libraries from requirements.txt ...
+pip install -r requirements.txt
 if errorlevel 1 (
   echo.
   echo pip install hit an error. The uv path ^(install_uv.bat^) is the validated one;
@@ -34,6 +34,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+
+echo.
+echo Installing the editable anima_lora package ^(deps already satisfied^) ...
+pip install -e . --no-deps
+if errorlevel 1 ( echo editable install failed. & pause & exit /b 1 )
 
 echo.
 echo [OK] Installed (pip). Start the GUI with  run_gui.bat

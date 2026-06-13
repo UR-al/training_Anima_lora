@@ -60,7 +60,9 @@ cd training_Anima_lora
 install_uv.bat     REM via uv (recommended).  install_pip.bat = pip alternative (needs Python 3.13)
 ```
 
-Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` — they are **not** shipped in this repo (gitignored). `update.bat` later pulls + re-syncs.
+For a manual / CI pip install, `requirements.txt` mirrors the dependencies (cu132 torch index + `--pre` are baked in): `pip install -r requirements.txt && pip install -e . --no-deps`. (`pyproject.toml` + `uv.lock` remain the uv source of truth — keep `requirements.txt` in sync when adding a library.)
+
+Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` — they are **not** shipped in this repo (gitignored), or point the GUI's **Model files** panel at existing forge-neo / ComfyUI files. `update.bat` later pulls + re-syncs.
 
 ## License & attribution
 
