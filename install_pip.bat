@@ -1,6 +1,6 @@
 @echo off
 REM ===================================================================
-REM  Anima LoRA - install via pip (alternative; uv via install.bat is
+REM  Anima LoRA - install via pip (alternative; uv via install_uv.bat is
 REM  the validated path with exact pins). Needs Python 3.13 on PATH.
 REM ===================================================================
 setlocal
@@ -29,7 +29,7 @@ echo Installing the project + remaining dependencies ...
 pip install -e . --extra-index-url https://download.pytorch.org/whl/cu132 --pre
 if errorlevel 1 (
   echo.
-  echo pip install hit an error. The uv path ^(install.bat^) is the validated one;
+  echo pip install hit an error. The uv path ^(install_uv.bat^) is the validated one;
   echo consider using it. flash-attn / triton-windows can be the sticking points.
   pause
   exit /b 1

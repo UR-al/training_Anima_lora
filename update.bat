@@ -21,7 +21,7 @@ if errorlevel 1 (
   if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -m pip install -e . --extra-index-url https://download.pytorch.org/whl/cu132 --pre
   ) else (
-    echo no uv and no .venv - run install.bat or install_pip.bat first.
+    echo no uv and no .venv - run install_uv.bat or install_pip.bat first.
   )
 ) else (
   uv sync

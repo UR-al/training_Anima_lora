@@ -57,7 +57,7 @@ Python 3.13 + PyTorch 2.12 (cu132) are installed for you. `torch.compile` needs 
 ```powershell
 git clone https://github.com/UR-al/training_Anima_lora
 cd training_Anima_lora
-install.bat        REM via uv (recommended).  install_pip.bat = pip alternative (needs Python 3.13)
+install_uv.bat     REM via uv (recommended).  install_pip.bat = pip alternative (needs Python 3.13)
 ```
 
 Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` — they are **not** shipped in this repo (gitignored). `update.bat` later pulls + re-syncs.
