@@ -1080,7 +1080,14 @@ def launch(form: dict) -> dict:
         try:
             from scripts.daemon import client as _dc
 
-            cl = _dc.ensure_daemon()
+            # Pin the daemon to THIS checkout. Without expected_root the GUI would
+            # attach to whatever daemon answers the shared ~/.anima pidfile —
+            # including one from a different/older anima_lora checkout, which then
+            # runs our job with ITS code (e.g. "Unknown command: preprocess-manifest")
+            # and it dies instantly. expected_root makes the client shut down an
+            # idle foreign-root daemon and spawn one rooted here (it raises instead
+            # if that daemon still has live jobs, rather than stealing them).
+            cl = _dc.ensure_daemon(expected_root=str(ROOT))
             if prep:
                 # preprocess command-job → auto-chains the train job on success
                 # (manager._finalize). One Start click; both phases survive close.
