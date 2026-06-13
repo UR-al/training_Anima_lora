@@ -593,7 +593,7 @@
         <div class="stat-cell">
             <div class="stat-label">Speed</div>
             <div class="stat-value" id="speed">0.00</div>
-            <div class="stat-sub">it/s</div>
+            <div class="stat-sub" id="speed-unit">it/s</div>
         </div>
     </div>
 
@@ -877,7 +877,16 @@
                 // Stats
                 document.getElementById('epoch').textContent = data.epoch || 0;
                 document.getElementById('step').textContent = data.step || 0;
-                document.getElementById('speed').textContent = (data.speed || 0).toFixed(2);
+                // tqdm-style: show s/it when slower than 1 it/s, else it/s.
+                const _sp = data.speed || 0;
+                const _su = document.getElementById('speed-unit');
+                if (_sp > 0 && _sp < 1) {
+                    document.getElementById('speed').textContent = (1 / _sp).toFixed(2);
+                    if (_su) _su.textContent = 's/it';
+                } else {
+                    document.getElementById('speed').textContent = _sp.toFixed(2);
+                    if (_su) _su.textContent = 'it/s';
+                }
                 if (data.total_steps) document.getElementById('total-steps').textContent = data.total_steps;
 
                 // Charts
