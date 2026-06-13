@@ -28,6 +28,20 @@ python tasks.py lora --method lora --preset low_vram --dataset_config my.toml --
 
 `--optimizer_type <name>` takes a friendly name (`CAME`, `ADOPT`, `Prodigy`, `ProdigyPlusScheduleFree`, …) or any `pkg.module.Class`. `--lr_scheduler_type <dotted path>` for custom schedulers. `--monitor` for the dashboard. See `CLAUDE.md` for the full reference.
 
+## LoKr / LoHa & the full LyCORIS zoo
+
+The whole **LyCORIS** family (LoKr, LoHa, DyLoRA, GLoRA, (IA)³, Diag-OFT, BOFT, Full) trains on the Anima DiT **with the `torch.compile` speed core intact**. In the GUI just set **Adapter → `networks.lycoris_anima`** and pick an **algo** + **preset** (`anima-attn-mlp` = attention+MLP, 197 modules; `anima-full` = +adaln/embeds, 314). From the CLI:
+
+```powershell
+REM LoKr (factor decomposition; no grad-checkpointing needed)
+python tasks.py lora --method lycoris --network_args algo=lokr preset=configs/lycoris_presets/anima_attn_mlp.toml factor=4 full_matrix=True
+
+REM LoHa (materializes full ΔW per module — add --gradient_checkpointing + a small rank on <=16 GB)
+python tasks.py lora --method lycoris --network_dim 16 --network_alpha 8 --gradient_checkpointing --network_args algo=loha preset=configs/lycoris_presets/anima_attn_mlp.toml
+```
+
+`networks.lycoris_anima` bridges stock `lycoris-lora` to the Anima DiT (the upstream presets target diffusers class names the Anima blocks don't use). See `configs/lycoris_presets/` and `configs/methods/lycoris.toml`.
+
 ## Requirements
 
 | | Minimum | Recommended |

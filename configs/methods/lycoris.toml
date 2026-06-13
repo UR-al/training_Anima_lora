@@ -1,0 +1,50 @@
+# LyCORIS method — LoKr / LoHa / DyLoRA / GLoRA / Full / Diag-OFT / BOFT / IA3 on the
+# Anima DiT, via the networks.lycoris_anima bridge (keeps the torch.compile speed core).
+#
+# Clean by design: NONE of the lora.toml Anima-network flags (ortho / timestep_mask /
+# router / cache_llm_adapter_outputs) are set here — those drive the native
+# networks.lora_anima adapter and are meaningless to LyCORIS. The per-step network
+# conditioning in train.py is hasattr-guarded, so a LyCORIS net rides the generic
+# kohya path untouched.
+#
+# The GUI auto-selects this method whenever a lycoris network_module is chosen and
+# fills in algo / preset / dim / alpha. For CLI use:
+#
+#   LoKr (default below): factor decomposition, no grad-checkpointing needed.
+#     python tasks.py lora --method lycoris --network_args \
+#         algo=lokr preset=configs/lycoris_presets/anima_attn_mlp.toml factor=4 full_matrix=True
+#
+#   LoHa: low-rank Hadamard. Materializes the full ΔW per module, so on <=16 GB
+#     add --gradient_checkpointing and use a small dim.
+#     python tasks.py lora --method lycoris --network_dim 16 --network_alpha 8 \
+#         --gradient_checkpointing --network_args \
+#         algo=loha preset=configs/lycoris_presets/anima_attn_mlp.toml
+
+network_module = "networks.lycoris_anima"
+
+# dim=100000 + factor=N is the LoKr idiom ("as large as the factorization allows").
+# LoHa/other algos: override with a real rank (8–32) on the CLI / in the GUI.
+network_dim = 100000
+network_alpha = 1
+network_train_unet_only = true
+
+# LyCORIS targets the Anima blocks via this preset file (197 modules: attention +
+# MLP, no adaln). Swap to anima_full.toml for the broad 314-module target.
+network_args = [
+  "algo=lokr",
+  "preset=configs/lycoris_presets/anima_attn_mlp.toml",
+  "factor=4",
+  "full_matrix=True",
+  "enable_conv=False",
+]
+
+# Maskless-friendly default (no SAM3 masks required). Users with cached masks can
+# re-enable masked_loss via the GUI "all arguments" toggle or --masked_loss.
+masked_loss = false
+
+optimizer_type = "AdamW"
+learning_rate = 1e-4
+max_train_epochs = 10
+save_every_n_epochs = 1
+
+output_name = "anima_lycoris"

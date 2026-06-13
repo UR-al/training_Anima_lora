@@ -83,9 +83,12 @@ def list_schedulers() -> list[str]:
 
 
 def list_network_modules() -> list[str]:
-    """Adapter backends. lycoris.kohya unlocks ALL LyCORIS LoRA types; the rest
-    are anima_lora's native adapters / methods."""
-    mods = ["lycoris.kohya", "networks.lora_anima"]
+    """Adapter backends. networks.lycoris_anima is the Anima-safe LyCORIS bridge
+    (unlocks ALL LyCORIS LoRA types — LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT/IA3 —
+    with the torch.compile speed core intact; sanitizes Anima's cached-TE slot that
+    stock lycoris.kohya crashes on). networks.lora_anima is the native adapter family.
+    lycoris.kohya is the raw upstream entry (advanced / non-Anima models)."""
+    mods = ["networks.lycoris_anima", "networks.lora_anima", "lycoris.kohya"]
     d = ROOT / "networks" / "methods"
     if d.is_dir():
         for p in sorted(d.glob("*.py")):
@@ -187,10 +190,23 @@ def list_arg_groups() -> list:
             for r in order if r in buckets]
 
 
+# Anima-specific LyCORIS presets ship as TOML files (stock built-in presets list
+# standard diffusers class names that match almost nothing in the Anima DiT).
+# The GUI shows the friendly name; the command builder rewrites it to the path.
+_ANIMA_LYCORIS_PRESETS = {
+    "anima-attn-mlp": "configs/lycoris_presets/anima_attn_mlp.toml",
+    "anima-full": "configs/lycoris_presets/anima_full.toml",
+}
+
+
 def list_lycoris_presets() -> list[str]:
-    """LyCORIS target presets (network_args preset=...). attn-mlp / unet-transformer-only
-    target the transformer blocks — the ones that matter for the Anima DiT."""
-    return ["full", "full-lin", "attn-mlp", "attn-only",
+    """LyCORIS target presets (network_args preset=...).
+
+    The ``anima-*`` entries are the ones that actually wrap the Anima DiT
+    (anima-attn-mlp → 197 modules, attention+MLP; anima-full → 314, +adaln/embeds).
+    The stock built-ins target standard diffusers class names and are kept only
+    for non-Anima base models."""
+    return [*_ANIMA_LYCORIS_PRESETS, "full", "full-lin", "attn-mlp", "attn-only",
             "unet-transformer-only", "unet-convblock-only"]
 
 
@@ -313,6 +329,13 @@ def _method_preset_extra(form: dict):
     Popen path, and the daemon-submit path."""
     method = (form.get("method") or "lora").strip()
     preset = (form.get("preset") or "default").strip()
+    # A LyCORIS network can't ride the `lora` method (it carries native-adapter
+    # flags — ortho/timestep_mask/llm-adapter caching — meant for networks.lora_anima).
+    # When the user picks a lycoris backend but left the method at the `lora`
+    # default, route to the clean `lycoris` method so the run "just works".
+    if "lycoris" in (form.get("network_module") or "") and method == "lora":
+        if (ROOT / "configs" / "methods" / "lycoris.toml").is_file():
+            method = "lycoris"
     extra: list[str] = []
 
     def add(flag: str, key: str) -> None:
@@ -363,9 +386,11 @@ def _method_preset_extra(form: dict):
     if na:
         extra += ["--network_alpha", na]
     nargs = (form.get("network_args") or "").split()
-    if nm.startswith("lycoris"):
+    if "lycoris" in nm:  # lycoris.kohya OR networks.lycoris_anima (the Anima bridge)
         lp = (form.get("lycoris_preset") or "").strip()
         if lp:
+            # Friendly Anima preset names → shipped TOML paths; pass others verbatim.
+            lp = _ANIMA_LYCORIS_PRESETS.get(lp, lp)
             nargs = [f"preset={lp}"] + nargs
         algo = (form.get("algo") or "").strip()
         if algo:

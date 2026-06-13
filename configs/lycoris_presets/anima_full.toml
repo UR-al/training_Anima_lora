@@ -1,0 +1,16 @@
+# LyCORIS preset for the Anima DiT — full transformer (broad target).
+#
+# Pass to training via:  network_args = ["preset=configs/lycoris_presets/anima_full.toml"]
+#
+# Targets the Anima block container classes, so LyCORIS recurses into EVERY
+# Linear inside them: attention projections, MLP linears AND the adaln
+# modulation layers — plus the patch/timestep embedders and final layer.
+# Wraps 314 modules (vs 196 for anima_attn_mlp, which skips adaln). This mirrors
+# LoRA_Easy's shipped `backend/sd_scripts/target.toml`. Use when you want the
+# modulation path adapted too (heavier, more expressive); otherwise prefer
+# anima_attn_mlp.
+
+enable_conv = false
+unet_target_module = ["Block", "PatchEmbed", "TimestepEmbedding", "FinalLayer"]
+text_encoder_target_module = []
+text_encoder_target_name = []

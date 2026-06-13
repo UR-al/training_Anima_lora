@@ -190,7 +190,7 @@ function setForm(f){ if(!f) return;
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
   w.disabled=no; w.style.opacity=no?.45:1; if(no){ w.value=''; w.placeholder='n/a for this scheduler'; } else if(w.placeholder==='n/a for this scheduler') w.placeholder='0 for custom sched'; }
-function updateAlgo(){ const lyco=($('network_module').value||'').startsWith('lycoris'); ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; }); }
+function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris'); ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; }); }
 function optHelp(srcId,outId){ const n=$(srcId).value||''; const out=$(outId);
   if(!n||n.includes(' ')){ out.innerHTML=''; return; }
   fetch('/api/optimizer_args?name='+encodeURIComponent(n)).then(r=>r.json()).then(d=>{
@@ -285,7 +285,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   fill($('method'),o.methods,'lora'); fill($('preset'),o.presets,'default');
   fill($('optimizer_type'),o.optimizers,'AdamW'); fill($('lr_scheduler_type'),o.schedulers,'cosine');
   fill($('network_module'),o.network_modules,'networks.lora_anima'); fill($('algo'),o.lycoris_algos,'lokr');
-  fill($('lycoris_preset'),o.lycoris_presets,'attn-mlp');
+  fill($('lycoris_preset'),o.lycoris_presets,'anima-attn-mlp');
   renderArgs(o.arg_groups); addSubset();
   updateWarmup(); updateAlgo(); refreshConfigs(); refreshQueue();
   optHelp('optimizer_type','opt_help');

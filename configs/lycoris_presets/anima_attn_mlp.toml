@@ -1,0 +1,23 @@
+# LyCORIS preset for the Anima DiT — attention + MLP only (no adaln, no llm_adapter).
+#
+# Pass to training via:  network_args = ["preset=configs/lycoris_presets/anima_attn_mlp.toml"]
+#
+# WHY THIS FILE EXISTS: stock LyCORIS ships presets that target standard
+# diffusers class names (Transformer2DModel, …). The Anima DiT uses its own
+# block classes (`Attention`, `GPT2FeedForward`, `Block`, `FinalLayer`), so the
+# built-in presets wrap almost nothing (only the FinalLayer → 3 modules). This
+# preset targets the Anima classes directly via `unet_target_module`, the key
+# the kohya wrapper (LycorisNetworkKohya.apply_preset) actually reads — NOT the
+# SDK-only `target_module` key.
+#
+# Targeting `Attention` + `GPT2FeedForward` wraps every self/cross-attention
+# projection (qkv/q/kv/output_proj) and both MLP linears in all 28 transformer
+# blocks → 196 modules. adaln_modulation and the LLM-adapter (`*_te_layers_*`)
+# stay frozen, matching the proven LoRA_Easy `config_anima.toml` setup
+# (preset=unet-transformer-only + exclude adaln/te_layers).
+
+enable_conv = false
+unet_target_module = ["Attention", "GPT2FeedForward"]
+unet_target_name = ["final_layer.linear"]
+text_encoder_target_module = []
+text_encoder_target_name = []
