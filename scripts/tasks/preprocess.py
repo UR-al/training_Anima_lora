@@ -616,6 +616,22 @@ def cmd_preprocess_manifest(extra):
         if e.get("mask"):
             cmd_mask([], resized_dir=e["resized"], mask_dir=e["mask"])
 
+    # Reaching here = every entry cached without error (run() raises on failure).
+    # Drop the completion marker the web GUI checks (PREPROCESS_MARKER) so a later
+    # launch with the same signature (PREPROCESS_SIG) can skip the redundant
+    # preprocess and train directly.
+    marker = os.environ.get("PREPROCESS_MARKER")
+    sig = os.environ.get("PREPROCESS_SIG")
+    if marker and sig:
+        try:
+            d = os.path.dirname(marker)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(marker, "w", encoding="utf-8") as fh:
+                json.dump({"sig": sig, "entries": len(entries)}, fh)
+        except OSError:
+            pass
+
 
 def cmd_preprocess_config(extra):
     """Preprocess the exact directories named in a ``--dataset_config`` TOML.

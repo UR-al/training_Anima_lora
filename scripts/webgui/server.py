@@ -878,6 +878,57 @@ def _build_precached_config(form: dict) -> str | None:
     return str(path)
 
 
+def _dataset_fingerprint(entries) -> str:
+    """A fast signature of an auto-preprocess run: the manifest entries (all
+    settings — tiers, min_pixels, random_crop, cache/resized dirs) PLUS a
+    stat-only fingerprint of every source image (relpath, size, mtime). No image
+    decode — just os.walk + os.stat — so it's cheap to recompute each launch.
+    Changing a setting OR adding/removing/editing an image flips the hash.
+    """
+    import hashlib
+    import json as _json
+
+    exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif")
+    parts = [_json.dumps(entries, sort_keys=True, default=str)]
+    for src in sorted({e.get("src") for e in entries if e.get("src")}):
+        files = []
+        try:
+            for root, _dirs, names in os.walk(src):
+                for n in names:
+                    if n.lower().endswith(exts):
+                        fp = os.path.join(root, n)
+                        try:
+                            stt = os.stat(fp)
+                            rel = os.path.relpath(fp, src).replace("\\", "/")
+                            files.append((rel, stt.st_size, int(stt.st_mtime)))
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+        files.sort()
+        parts.append(src + "::" + repr(files))
+    return hashlib.sha1("\n".join(parts).encode("utf-8", "replace")).hexdigest()
+
+
+def _caches_ready(prep: dict) -> bool:
+    """True iff a prior preprocess of this EXACT spec finished — i.e. the marker
+    file exists, its stored signature matches the current one, and the cache root
+    is still present. Lets launch() skip the preprocess job and train directly.
+    """
+    marker, sig = prep.get("_marker"), prep.get("_sig")
+    if not marker or not sig:
+        return False
+    path = marker if os.path.isabs(marker) else str(ROOT / marker)
+    if not os.path.isfile(path) or not os.path.isdir(os.path.dirname(path)):
+        return False
+    try:
+        import json as _json
+
+        return _json.loads(open(path, encoding="utf-8").read()).get("sig") == sig
+    except (OSError, ValueError):
+        return False
+
+
 def _prepare_auto_preprocess(form: dict) -> dict:
     """Set up the auto-preprocess→train daemon chain from the form.
 
@@ -1020,7 +1071,16 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     mf_path = STORE_DIR / f"manifest_{name}.json"
     mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
 
-    env = {"MANIFEST_FILE": str(mf_path)}
+    # Completion marker + signature: the preprocess task writes `marker` (under the
+    # cache root) containing `sig` on full success; a later launch with the SAME
+    # sig (settings + source files unchanged) skips preprocess and trains directly.
+    sig = _dataset_fingerprint(entries)
+    marker = f"{base_cache}/.anima_preprocess.json"
+    env = {
+        "MANIFEST_FILE": str(mf_path),
+        "PREPROCESS_MARKER": marker,
+        "PREPROCESS_SIG": sig,
+    }
     if masking:
         env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
         env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
@@ -1038,6 +1098,8 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         "masking": masking,
         "multiscale": multiscale,
         "target": "preprocess-manifest",
+        "_marker": marker,
+        "_sig": sig,
     }
 
 
@@ -1091,7 +1153,8 @@ def launch(form: dict) -> dict:
             # idle foreign-root daemon and spawn one rooted here (it raises instead
             # if that daemon still has live jobs, rather than stealing them).
             cl = _dc.ensure_daemon(expected_root=str(ROOT))
-            if prep:
+            did_prep = bool(prep) and not _caches_ready(prep)
+            if did_prep:
                 # preprocess command-job → auto-chains the train job on success
                 # (manager._finalize). One Start click; both phases survive close.
                 resp = cl.submit_command(
@@ -1100,8 +1163,17 @@ def launch(form: dict) -> dict:
                     extra_env=prep["extra_env"],
                     chain_train={"method": method, "preset": preset, "extra": extra},
                 )
+                note = "auto-preprocess → train chain submitted"
             else:
+                # No preprocess needed: either auto-preprocess is off, or the cache
+                # is already complete for this exact spec (marker matched) → train
+                # straight away, skipping the 1–2 min re-scan.
                 resp = cl.submit(method=method, preset=preset, extra=extra)
+                note = (
+                    "caches already complete → preprocess skipped, training directly"
+                    if prep
+                    else None
+                )
             _STATE.update(
                 proc=None,
                 cmd=None,
@@ -1116,9 +1188,9 @@ def launch(form: dict) -> dict:
                 "job_id": resp.get("job_id"),
                 "daemon_base": getattr(cl, "base", None),
                 "monitor_url": mon,
-                "preprocess": bool(prep),
+                "preprocess": did_prep,
                 "command": cmd_str,
-                "note": ("auto-preprocess → train chain submitted" if prep else None),
+                "note": note,
             }
         except Exception as exc:  # noqa: BLE001 — fall back to a direct spawn
             fallback_note = f"daemon unavailable ({exc}); ran directly instead"
