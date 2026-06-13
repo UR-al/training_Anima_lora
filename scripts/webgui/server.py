@@ -451,10 +451,24 @@ _ARG_DESCRIPTIONS = {
     "cycle_multiplier": "Per-cycle length multiplier (CAWR/RAWR restart growth).",
     "max_lr": "Peak learning rate at cycle start.",
     "d": "Rex schedule shape parameter.",
-    # per-optimizer overrides (key = lowercase registry name)
+    # per-optimizer overrides (key = lowercase friendly name OR a dotted path's
+    # class-name tail — see _arg_desc; e.g. "came" matches both `CAME` and
+    # `LoraEasyCustomOptimizer.came.CAME` / `pytorch_optimizer.…came.CAME`).
     "_by_opt": {
         "adopt": {"clip": "Gradient clip; ADOPT default 0.25."},
         "scion": {"gamma": "Norm/constraint scaling for Scion LMO."},
+        "came": {
+            # CAME takes THREE betas (Adam takes two): grad EMA, grad² EMA, and
+            # the instability/confidence EMA — the term that down-weights noisy
+            # updates. Vendored LoraEasyCustomOptimizer.came (friendly `CAME`,
+            # lr≈5e-5) adds cautious/grams update_strategy + CPU state offload
+            # (state_storage_*); pytorch_optimizer's CAME (lr≈2e-4) is leaner +
+            # has `maximize`; `customized_optimizers.came` is legacy/not installed.
+            "betas": "3 EMA rates: grad · grad² · instability (CAME uses 3, not 2).",
+            "clip_threshold": "RMS clip on the update vector (CAME; default 1.0).",
+            "eps1": "Denominator stability ε for the 2nd moment (CAME).",
+            "eps2": "Stability ε for the instability/confidence term (CAME).",
+        },
     },
 }
 
@@ -464,9 +478,16 @@ def _arg_desc(arg_name: str, opt_key: str | None = None) -> str | None:
     Per-optimizer override (``_by_opt[opt_key][arg]``) wins over the flat map."""
     a = (arg_name or "").lstrip("-").lower()
     if opt_key:
-        ov = _ARG_DESCRIPTIONS.get("_by_opt", {}).get(opt_key.lower())
-        if ov and a in ov:
-            return ov[a]
+        byo = _ARG_DESCRIPTIONS.get("_by_opt", {})
+        k = opt_key.lower()
+        # Match both the friendly name ("came") AND a dotted path's class-name
+        # tail ("loraeasycustomoptimizer.came.came" / "pytorch_optimizer.…came.came"
+        # → "came"), so per-optimizer overrides fire however the optimizer_type
+        # was spelled — the same CAME exists in three packages.
+        for cand in (k, k.rsplit(".", 1)[-1]):
+            ov = byo.get(cand)
+            if ov and a in ov:
+                return ov[a]
     return _ARG_DESCRIPTIONS.get(a)
 
 
