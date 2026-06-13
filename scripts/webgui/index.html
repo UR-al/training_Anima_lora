@@ -194,6 +194,7 @@
   <div class="panel full">
     <h2>Dataset &amp; preprocessing</h2>
     <div class="chk"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) → train, all from one Start (like latent caching)</label></div>
+    <p class="hint" id="manual_hint">Multiple image folders, or already resized + cached dirs? <b>Uncheck</b> the box above for the multi-subset builder (<code>+ Add image subset</code>).</p>
 
     <div id="autoblock">
       <label>Raw images folder <span class="hint">images + matching <code>.txt</code> caption files</span></label>
@@ -386,7 +387,8 @@ function updateAlgo(){ const lyco=($('network_module').value||'').includes('lyco
   const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?(id==='na_grp_oft'?'flex':'block'):'none'; };
   show('na_grp_lokr', algo==='lokr'); show('na_grp_dylora', algo==='dylora'); show('na_grp_oft', algo==='diag-oft'||algo==='boft');
 }
-function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block'; }
+function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block';
+  const mh=$('manual_hint'); if(mh) mh.style.display=auto?'block':'none'; }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
   const n=document.querySelectorAll('.tier:checked').length;
