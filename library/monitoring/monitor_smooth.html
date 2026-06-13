@@ -877,14 +877,19 @@
                 // Stats
                 document.getElementById('epoch').textContent = data.epoch || 0;
                 document.getElementById('step').textContent = data.step || 0;
-                // tqdm-style: show s/it when slower than 1 it/s, else it/s.
-                const _sp = data.speed || 0;
+                // Speed + ETA from the OVERALL average (step / elapsed) so they
+                // AGREE with the trainer's cmd tqdm (also overall — it includes
+                // the one-time compile warmup + sampling pauses). tqdm-style:
+                // show s/it when slower than 1 it/s, else it/s.
+                const _elapsed = data.start_time ? (Date.now() / 1000 - data.start_time) : 0;
+                const _step = data.step || 0;
+                const _itps = (_elapsed > 0 && _step > 0) ? (_step / _elapsed) : 0;
                 const _su = document.getElementById('speed-unit');
-                if (_sp > 0 && _sp < 1) {
-                    document.getElementById('speed').textContent = (1 / _sp).toFixed(2);
+                if (_itps > 0 && _itps < 1) {
+                    document.getElementById('speed').textContent = (1 / _itps).toFixed(2);
                     if (_su) _su.textContent = 's/it';
                 } else {
-                    document.getElementById('speed').textContent = _sp.toFixed(2);
+                    document.getElementById('speed').textContent = _itps.toFixed(2);
                     if (_su) _su.textContent = 'it/s';
                 }
                 if (data.total_steps) document.getElementById('total-steps').textContent = data.total_steps;
@@ -904,9 +909,10 @@
                     const pct = Math.min(100, (data.step / data.total_steps) * 100);
                     document.getElementById('progress-bar').style.width = `${pct}%`;
                     document.getElementById('progress-pct').textContent = `${pct.toFixed(1)}%`;
-                    const elapsed = data.start_time ? (Date.now() / 1000 - data.start_time) : 0;
-                    const eta = data.speed > 0 ? (data.total_steps - data.step) / data.speed : 0;
-                    document.getElementById('elapsed').textContent = formatTime(elapsed);
+                    // ETA from the same overall average (remaining * elapsed/step)
+                    // so it tracks the cmd's ETA instead of an optimistic recent rate.
+                    const eta = _step > 0 ? (data.total_steps - _step) * (_elapsed / _step) : 0;
+                    document.getElementById('elapsed').textContent = formatTime(_elapsed);
                     document.getElementById('eta').textContent = formatTime(eta);
                 }
 
