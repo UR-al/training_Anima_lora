@@ -220,7 +220,8 @@
       <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow.</p>
       <div id="tiers" class="tiers"></div>
       <div class="chk"><input id="multiscale" type="checkbox" onchange="updateMultiscale()"><label><b>Multi-scale</b> — train every image at <b>all</b> selected tiers at once (kohya-style, e.g. 512+1024+1536). Off = each image goes to its single best-fit tier.</label></div>
-      <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier, and one <code>[[datasets]]</code> block per tier is generated. Needs ≥2 tiers checked.</p>
+      <div class="chk" id="ms_skip_row" style="display:none"><input id="ms_skip_upscale" type="checkbox" checked><label>Skip upscaling — a tier only takes images big enough for it (downscale-only; the anima equivalent of kohya <code>skip_image_resolution</code>). Uncheck to force every image into every tier.</label></div>
+      <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier (or only tiers it's large enough for, if "Skip upscaling" is on), one <code>[[datasets]]</code> block per tier. Needs ≥2 tiers checked.</p>
       <div class="row" style="margin-top:10px">
         <div><label>Caption shuffle variants <span class="hint">0 = off</span></label><input id="caption_shuffle_variants" type="number" value="4"></div>
         <div><label>Tag dropout rate <span class="hint">preprocess</span></label><input id="caption_tag_dropout_rate" value="0.1"></div>
@@ -335,7 +336,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
   'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
-const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','ds_random_crop','drop_lowres','multiscale','mask_enable','mask_sam','mask_mit'];
+const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','ds_random_crop','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
@@ -430,6 +431,7 @@ function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').s
   const mh=$('manual_hint'); if(mh) mh.style.display=auto?'block':'none'; }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
+  const sr=$('ms_skip_row'); if(sr) sr.style.display=on?'flex':'none';
   const n=document.querySelectorAll('.tier:checked').length;
   if(on&&n<2) $('ms_note').innerHTML='⚠ Multi-scale needs <b>≥2 tiers</b> checked — currently '+n+'. Check more tiers above.';
 }

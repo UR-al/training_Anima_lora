@@ -882,6 +882,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     if multiscale:
         target = "preprocess-multiscale"
         env["MULTISCALE_TIERS"] = ",".join(str(t) for t in tiers)
+        # "Skip upscaling" on (default) = downscale-only (a tier only takes images
+        # big enough for it). Unchecked = force every image into every tier.
+        if form.get("ms_skip_upscale") is False:
+            env["MULTISCALE_NO_SKIP"] = "1"
         if masking:
             env["MULTISCALE_MASK"] = "1"
             _add_mask_env()

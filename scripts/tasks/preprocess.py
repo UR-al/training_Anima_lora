@@ -444,18 +444,29 @@ def cmd_preprocess_multiscale(extra):
     shuffle = os.environ.get("CAPTION_SHUFFLE_VARIANTS", "4")
     tagdrop = os.environ.get("CAPTION_TAG_DROPOUT_RATE", "0.1")
     do_mask = os.environ.get("MULTISCALE_MASK", "").strip() not in ("", "0", "false", "no")
+    # Skip-upscale (anima equivalent of kohya skip_image_resolution): a tier only
+    # takes source images big enough for it — downscale-only, never upscale a small
+    # image into a higher tier. Threshold for tier T = the next-lower tier's area
+    # (so 1536 skips <1024², 1024 skips <512², 512 takes all) — matching a kohya
+    # config's skip_image_resolution=[1024,1024]/[512,512]/(none). Set
+    # MULTISCALE_NO_SKIP=1 to force every image into every tier (allow upscaling).
+    no_skip = os.environ.get("MULTISCALE_NO_SKIP", "").strip() not in ("", "0", "false", "no")
+    tiers_int = sorted(int(t) for t in tiers)
 
-    for t in tiers:
+    for idx, ti in enumerate(tiers_int):
+        t = str(ti)
         rdst = f"{resized_base}/{t}"
         cdir = f"{cache_base}/{t}"
-        print(f"\n=== multi-scale tier {t} → {rdst} / {cdir} ===")
-        # min_pixels 0: keep EVERY source image in EVERY tier (no low-res drop) —
-        # that's the point of multi-scale.
+        min_px = "0" if (no_skip or idx == 0) else str(tiers_int[idx - 1] ** 2)
+        print(
+            f"\n=== multi-scale tier {t} → {rdst} / {cdir}"
+            f"{'' if min_px == '0' else f' (skip source < {min_px}px ≈ {tiers_int[idx - 1]}²)'} ==="
+        )
         run(
             [
                 PY, "scripts/preprocess/resize_images.py",
                 "--src", src, "--dst", rdst,
-                "--target_res", t, "--min_pixels", "0", "--recursive",
+                "--target_res", t, "--min_pixels", min_px, "--recursive",
             ]
         )
         run(
