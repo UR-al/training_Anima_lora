@@ -143,6 +143,21 @@ def add_optimizer_arguments(parser: argparse.ArgumentParser):
         help="Polynomial power for polynomial scheduler",
     )
     parser.add_argument(
+        "--use_constantcosine",
+        action="store_true",
+        help="Constant→cosine one-shot: hold a constant LR for the planned run, "
+        "then EXTEND by --constantcosine_tail_epochs of cosine decay (LR→min) in "
+        "the same run — no constant-then-resume-with-cosine. Overrides lr_scheduler. "
+        "Cosine floor = --lr_scheduler_min_lr_ratio (default 0).",
+    )
+    parser.add_argument(
+        "--constantcosine_tail_epochs",
+        type=int,
+        default=0,
+        help="Extra cosine-decay epochs appended after the constant phase when "
+        "--use_constantcosine is set (0 = off).",
+    )
+    parser.add_argument(
         "--fused_backward_pass",
         action="store_true",
         help="Combines backward pass and optimizer step to reduce VRAM usage.",

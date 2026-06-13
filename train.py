@@ -1969,6 +1969,32 @@ class AnimaTrainer:
                 f"override steps. steps for {args.max_train_epochs} epochs is"
             )
 
+        # use_constantcosine: the planned run above is the CONSTANT phase; append
+        # `constantcosine_tail_epochs` of cosine decay (LR→min) so a single run does
+        # constant-then-cosine instead of constant + resume-with-cosine. Done here
+        # (after the budget is sized, before the scheduler is built) so the extended
+        # step count propagates to the epoch loop, save schedule, and progress bar.
+        if getattr(args, "use_constantcosine", False):
+            _tail_epochs = int(getattr(args, "constantcosine_tail_epochs", 0) or 0)
+            if _tail_epochs > 0:
+                _steps_per_epoch = math.ceil(
+                    len(train_dataloader)
+                    / accelerator.num_processes
+                    / args.gradient_accumulation_steps
+                )
+                _constant_steps = args.max_train_steps
+                _tail_steps = _tail_epochs * _steps_per_epoch
+                args.max_train_steps = _constant_steps + _tail_steps
+                args._constantcosine_constant_steps = _constant_steps
+                if args.max_train_epochs is not None:
+                    args.max_train_epochs = args.max_train_epochs + _tail_epochs
+                args.lr_scheduler = "constant_then_cosine"
+                accelerator.print(
+                    f"use_constantcosine: constant {_constant_steps} steps + cosine "
+                    f"tail {_tail_steps} steps ({_tail_epochs} epochs) → "
+                    f"{args.max_train_steps} total steps."
+                )
+
         train_dataset_group.set_max_train_steps(args.max_train_steps)
 
         # lr scheduler

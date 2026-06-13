@@ -141,6 +141,36 @@ def get_scheduler_fix(args, optimizer: Optimizer, num_processes: int):
         schedule_func = DIFFUSERS_TYPE_TO_SCHEDULER_FUNCTION[name]
         return schedule_func(optimizer, **lr_scheduler_kwargs)
 
+    # use_constantcosine (set by train.py): hold a constant LR for the planned
+    # phase, then cosine-decay 1 → min_lr_ratio over the appended tail. The switch
+    # step (the constant phase, pre-num_processes) is stashed on args by train.py.
+    if name == "constant_then_cosine":
+        import math as _math
+
+        from torch.optim.lr_scheduler import LambdaLR
+
+        constant_steps = (
+            int(getattr(args, "_constantcosine_constant_steps", 0) or 0) * num_processes
+        )
+        tail = max(1, num_training_steps - constant_steps)
+        floor = float(min_lr_ratio or 0.0)
+
+        def _cc_lambda(step: int) -> float:
+            if step < constant_steps:
+                return 1.0
+            prog = min(1.0, (step - constant_steps) / tail)
+            return floor + (1.0 - floor) * 0.5 * (1.0 + _math.cos(_math.pi * prog))
+
+        logger.info(
+            "constant_then_cosine: constant for %d steps, then cosine→%.3g over %d "
+            "(×%d procs)",
+            constant_steps,
+            floor,
+            tail,
+            num_processes,
+        )
+        return LambdaLR(optimizer, _cc_lambda)
+
     from transformers.optimization import SchedulerType, TYPE_TO_SCHEDULER_FUNCTION
 
     name = SchedulerType(name)

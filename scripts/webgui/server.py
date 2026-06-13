@@ -201,6 +201,7 @@ _ROLE_RULES = [
             "optimizer", "unet_lr", "text_encoder_lr", "scheduler",
             "lr_warmup", "lr_decay", "loss_type", "masked_loss", "huber",
             "min_snr", "multiscale_loss", "debiased", "max_grad_norm",
+            "constantcosine",  # use_constantcosine + constantcosine_tail_epochs
         ],
     ),
     ("SAVE", ["save", "resume", "state", "config_snapshot", "output_dir", "output_config", "metadata", "checkpointing"]),
