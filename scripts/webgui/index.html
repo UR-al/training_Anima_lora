@@ -174,12 +174,15 @@
       <div class="row3">
         <div><label>Caption dropout rate</label><input id="ds_caption_dropout_rate" value="0"></div>
         <div class="chk"><input id="ds_flip_aug" type="checkbox"><label>Flip augment</label></div>
-        <div class="chk"><input id="drop_lowres" type="checkbox" checked><label>Drop low-res (&lt;0.5MP)</label></div>
+        <div class="chk"><input id="ds_random_crop" type="checkbox"><label>Random crop</label></div>
       </div>
+      <div class="chk"><input id="drop_lowres" type="checkbox" checked><label>Drop low-res source images (&lt;0.5MP)</label></div>
 
       <h3>Resolution tiers <span style="text-transform:none;color:var(--mut)">(target_res)</span></h3>
-      <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow. Each image lands in the tier that resizes it least. (This replaces kohya's min/max bucket reso + steps, which don't apply here.)</p>
+      <p class="hint">Anima uses <b>constant-token buckets</b> — pick which tier edges to allow.</p>
       <div id="tiers" class="tiers"></div>
+      <div class="chk"><input id="multiscale" type="checkbox" onchange="updateMultiscale()"><label><b>Multi-scale</b> — train every image at <b>all</b> selected tiers at once (kohya-style, e.g. 512+1024+1536). Off = each image goes to its single best-fit tier.</label></div>
+      <p class="hint" id="ms_note" style="display:none">Multi-scale: each image is resized+cached into <b>every</b> checked tier, and one <code>[[datasets]]</code> block per tier is generated. Needs ≥2 tiers checked.</p>
       <div class="row" style="margin-top:10px">
         <div><label>Caption shuffle variants <span class="hint">0 = off</span></label><input id="caption_shuffle_variants" type="number" value="4"></div>
         <div><label>Tag dropout rate <span class="hint">preprocess</span></label><input id="caption_tag_dropout_rate" value="0.1"></div>
@@ -289,7 +292,7 @@ const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epoch
   'raw_image_dir','ds_name','ds_batch','ds_num_repeats','ds_keep_tokens','ds_caption_extension','ds_caption_dropout_rate',
   'caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
-const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','drop_lowres','mask_enable','mask_sam','mask_mit'];
+const CHECKS = ['monitor','daemon','auto_preprocess','ds_flip_aug','ds_random_crop','drop_lowres','multiscale','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
@@ -309,7 +312,7 @@ function setForm(f){ if(!f) return;
   if(Array.isArray(f.target_res)){ document.querySelectorAll('.tier').forEach(c=>{ c.checked=f.target_res.map(String).includes(c.value); }); }
   (f.adv||[]).forEach(it=>{ const a=(window._args||[]).find(x=>x.flag===it.flag); if(!a) return;
     const en=$('adv_'+a.dest); if(en) en.checked=true; const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
-  updateWarmup(); updateAlgo(); updatePrep(); updateMask();
+  updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale();
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
@@ -317,6 +320,10 @@ function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup
 function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris'); ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; }); }
 function updatePrep(){ const auto=$('auto_preprocess').checked; $('autoblock').style.display=auto?'block':'none'; $('manualblock').style.display=auto?'none':'block'; }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
+function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
+  const n=document.querySelectorAll('.tier:checked').length;
+  if(on&&n<2) $('ms_note').innerHTML='⚠ Multi-scale needs <b>≥2 tiers</b> checked — currently '+n+'. Check more tiers above.';
+}
 
 // ---- optimizer/scheduler help drawer ----
 let _drawerOpen=true;
@@ -449,13 +456,13 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   fill($('lycoris_preset'),o.lycoris_presets,'anima-attn-mlp');
   // resolution tiers (default-check 1024 + 896 = preprocess.toml default)
   const defTiers=['1024','896'];
-  $('tiers').innerHTML=(o.target_res_tiers||[]).map(t=>`<label class="tier-lab"><input type="checkbox" class="tier" value="${t}" ${defTiers.includes(String(t))?'checked':''}>${t}</label>`).join('');
+  $('tiers').innerHTML=(o.target_res_tiers||[]).map(t=>`<label class="tier-lab"><input type="checkbox" class="tier" value="${t}" onchange="updateMultiscale()" ${defTiers.includes(String(t))?'checked':''}>${t}</label>`).join('');
   // SAM3 availability note
   const sn=$('sam_note');
   if(o.sam3_available) sn.textContent='SAM3 weights present at the default location.'; else sn.innerHTML='⚠ No SAM3 weights at the default <code>models/sam3/</code> — set the SAM3 checkpoint path above, or run <code>hf auth login</code> then <code>make download-sam3</code> (gated repo). MIT works without SAM3.';
   if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
   renderArgs(o.arg_groups); addSubset();
-  updateWarmup(); updateAlgo(); updatePrep(); updateMask(); refreshConfigs(); refreshQueue();
+  updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
   optHelp('optimizer_type');
   setInterval(poll,2000); poll();
 })();

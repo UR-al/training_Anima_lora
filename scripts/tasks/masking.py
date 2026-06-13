@@ -160,19 +160,23 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
-def cmd_mask(extra):
+def cmd_mask(extra, *, resized_dir=None, mask_dir=None):
     """Run SAM + MIT into a tempdir, merge, write to post_image_dataset/masks/.
 
     ``RUN_SAM_MASK`` / ``RUN_MIT_MASK`` env vars gate each backend
     independently (default on). If both are disabled the command is a no-op.
+
+    ``resized_dir`` / ``mask_dir`` override the CONFIG_FILE-resolved defaults —
+    used by the multi-scale preprocess to mask each tier's resized dir into its
+    own mask dir (the 512 vs 1536 render of an image needs its own pixel mask).
     """
     run_sam = _env_flag("RUN_SAM_MASK")
     run_mit = _env_flag("RUN_MIT_MASK")
     if not (run_sam or run_mit):
         print("Both SAM and MIT masking are disabled — nothing to do.")
         return
-    resized_dir = _resized_dir()
-    mask_out_dir = _mask_output_dir()
+    resized_dir = Path(resized_dir) if resized_dir else _resized_dir()
+    mask_out_dir = Path(mask_dir) if mask_dir else _mask_output_dir()
     runtime_sam_cfg = _runtime_sam_config()
     sam_cfg = _load_sam_config(runtime_sam_cfg)
     pattern = _config_path_pattern(sam_cfg)

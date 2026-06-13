@@ -160,6 +160,11 @@ COMMANDS = {
         "Full preprocess THEN SAM3/MIT masking (masking self-skips when "
         "RUN_SAM_MASK/RUN_MIT_MASK are off). The web GUI's auto-preprocess chain.",
     ),
+    "preprocess-multiscale": (
+        preprocess.cmd_preprocess_multiscale,
+        "Multi-scale: resize+cache each image into EVERY MULTISCALE_TIERS tier "
+        "(512,1024,1536) so it trains at all resolutions at once (kohya parity).",
+    ),
     "preprocess-config": (
         preprocess.cmd_preprocess_config,
         "Preprocess the dirs named in a --dataset_config TOML (resize --src "

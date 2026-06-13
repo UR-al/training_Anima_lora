@@ -777,32 +777,62 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     cache = f"post_image_dataset/lora/{name}"
     masks = f"post_image_dataset/masks/{name}"
     masking = bool(form.get("mask_enable"))
+    tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
+    # Multi-scale = train the SAME images at EVERY selected tier at once (kohya
+    # parity). Needs ≥2 tiers to be meaningful; falls back to single otherwise.
+    multiscale = bool(form.get("multiscale")) and len(tiers) >= 2
+
+    def _mk_subset(image_dir: str, cache_dir: str, mask_dir: str | None) -> dict:
+        s = {
+            "image_dir": image_dir,
+            "cache_dir": cache_dir,
+            "num_repeats": int(form.get("ds_num_repeats") or 1),
+            "keep_tokens": int(form.get("ds_keep_tokens") or 0),
+            "caption_extension": form.get("ds_caption_extension") or ".txt",
+            "recursive": True,
+        }
+        if form.get("ds_flip_aug"):
+            s["flip_aug"] = True
+        if form.get("ds_random_crop"):
+            s["random_crop"] = True
+        cdr = str(form.get("ds_caption_dropout_rate") or "").strip()
+        if cdr:
+            try:
+                s["caption_dropout_rate"] = float(cdr)
+            except ValueError:
+                pass
+        if mask_dir:
+            s["mask_dir"] = mask_dir
+        return s
 
     # 1) Training dataset config → points at the (to-be-created) cache dirs.
-    sub = {
-        "image_dir": resized,
-        "cache_dir": cache,
-        "num_repeats": form.get("ds_num_repeats") or 1,
-        "keep_tokens": form.get("ds_keep_tokens") or 0,
-        "caption_extension": form.get("ds_caption_extension") or ".txt",
-        "recursive": True,
-    }
-    if form.get("ds_flip_aug"):
-        sub["flip_aug"] = True
-    if str(form.get("ds_caption_dropout_rate") or "").strip():
-        sub["caption_dropout_rate"] = form["ds_caption_dropout_rate"]
-    if masking:
-        sub["mask_dir"] = masks
-    built = build_dataset_toml(
-        {
-            "name": f"{name}_auto",
-            "batch_size": form.get("ds_batch") or 1,
-            "subsets": [sub],
-        }
-    )
-    if not built.get("ok"):
-        return {"error": built.get("error", "could not build dataset config")}
-    form["dataset_config"] = built["path"]
+    #    Multi-scale: one [[datasets]] block per tier (resized/<tier> + cache/<tier>).
+    bs = int(form.get("ds_batch") or 1)
+    if multiscale:
+        datasets = [
+            {
+                "batch_size": bs,
+                "subsets": [
+                    _mk_subset(
+                        f"{resized}/{t}", f"{cache}/{t}",
+                        f"{masks}/{t}" if masking else None,
+                    )
+                ],
+            }
+            for t in tiers
+        ]
+    else:
+        datasets = [
+            {
+                "batch_size": bs,
+                "subsets": [_mk_subset(resized, cache, masks if masking else None)],
+            }
+        ]
+    ds_toml = _toml.dumps({"datasets": datasets})
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    ds_path = DATASET_DIR / f"{name}_auto.toml"
+    ds_path.write_text(ds_toml, encoding="utf-8")
+    form["dataset_config"] = str(ds_path)
 
     # 2) CONFIG_FILE snapshot redirecting the standard pipeline at the raw folder.
     snap: dict = {
@@ -821,7 +851,6 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         v = (form.get(form_key) or "").strip()
         if v:
             snap[snap_key] = v
-    tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
     if tiers:
         snap["target_res"] = tiers
     if form.get("drop_lowres") is False:
@@ -830,15 +859,14 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     snap_path = STORE_DIR / f"preprocess_{name}.toml"
     snap_path.write_text(_toml.dumps(snap), encoding="utf-8")
 
-    # 3) Command-job env + target (preprocess, or preprocess-and-mask).
+    # 3) Command-job env + target.
     env = {"CONFIG_FILE": str(snap_path)}
     if str(form.get("caption_shuffle_variants") or "").strip():
         env["CAPTION_SHUFFLE_VARIANTS"] = str(form["caption_shuffle_variants"])
     if str(form.get("caption_tag_dropout_rate") or "").strip():
         env["CAPTION_TAG_DROPOUT_RATE"] = str(form["caption_tag_dropout_rate"])
-    target = "preprocess"
-    if masking:
-        target = "preprocess-and-mask"
+
+    def _add_mask_env() -> None:
         env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
         env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
         if str(form.get("mit_text_threshold") or "").strip():
@@ -849,12 +877,25 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         # instead of forcing `make download-sam3` (which needs `hf auth login`).
         if form.get("mask_sam") and str(form.get("sam3_path") or "").strip():
             env["SAM3_CHECKPOINT"] = str(form["sam3_path"]).strip()
+
+    if multiscale:
+        target = "preprocess-multiscale"
+        env["MULTISCALE_TIERS"] = ",".join(str(t) for t in tiers)
+        if masking:
+            env["MULTISCALE_MASK"] = "1"
+            _add_mask_env()
+    elif masking:
+        target = "preprocess-and-mask"
+        _add_mask_env()
+    else:
+        target = "preprocess"
     return {
         "argv": ["tasks.py", target],
         "extra_env": env,
-        "dataset_config": built["path"],
-        "training_toml": built["toml"],
+        "dataset_config": str(ds_path),
+        "training_toml": ds_toml,
         "masking": masking,
+        "multiscale": multiscale,
         "target": target,
     }
 

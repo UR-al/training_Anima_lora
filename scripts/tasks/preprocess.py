@@ -411,6 +411,73 @@ def cmd_preprocess_and_mask(extra):
     cmd_mask(_pop_target_res(extra))
 
 
+def cmd_preprocess_multiscale(extra):
+    """Multi-scale preprocess — resize+cache EACH image into EVERY selected tier
+    so the SAME image trains at all those resolutions at once (kohya parity:
+    pointing one folder at [[datasets]] blocks of 512/1024/1536).
+
+    Anima's normal preprocess assigns each image to ONE best-fit tier
+    (``choose_edge``); this instead forces every image through each tier. Tiers
+    come from the ``MULTISCALE_TIERS`` env (e.g. ``"512,1024,1536"``). For each
+    tier T: resize source → ``{resized_image_dir}/{T}`` (single-tier target_res,
+    so every image lands in T's bucket) and VAE+TE-cache → ``{lora_cache_dir}/{T}``.
+    The GUI builds a ``[[datasets]]`` block per tier pointing at those dirs. With
+    ``MULTISCALE_MASK=1`` it also masks each tier (the 512 vs 1536 render needs
+    its own pixel mask). All model/dir paths honor the CONFIG_FILE snapshot."""
+    from .masking import cmd_mask
+
+    tiers = [
+        t.strip()
+        for t in os.environ.get("MULTISCALE_TIERS", "512,1024,1536").split(",")
+        if t.strip()
+    ]
+    src = _path("source_image_dir", "image_dataset")
+    resized_base = _path("resized_image_dir", "post_image_dataset/resized")
+    cache_base = _path("lora_cache_dir", "post_image_dataset/lora")
+    mask_base = _path("mask_dir", "post_image_dataset/masks")
+    vae = _path("vae", "models/vae/qwen_image_vae.safetensors")
+    qwen3 = _path("qwen3", "models/text_encoders/qwen_3_06b_base.safetensors")
+    dit = _path(
+        "pretrained_model_name_or_path",
+        "models/diffusion_models/anima-base-v1.0.safetensors",
+    )
+    shuffle = os.environ.get("CAPTION_SHUFFLE_VARIANTS", "4")
+    tagdrop = os.environ.get("CAPTION_TAG_DROPOUT_RATE", "0.1")
+    do_mask = os.environ.get("MULTISCALE_MASK", "").strip() not in ("", "0", "false", "no")
+
+    for t in tiers:
+        rdst = f"{resized_base}/{t}"
+        cdir = f"{cache_base}/{t}"
+        print(f"\n=== multi-scale tier {t} → {rdst} / {cdir} ===")
+        # min_pixels 0: keep EVERY source image in EVERY tier (no low-res drop) —
+        # that's the point of multi-scale.
+        run(
+            [
+                PY, "scripts/preprocess/resize_images.py",
+                "--src", src, "--dst", rdst,
+                "--target_res", t, "--min_pixels", "0", "--recursive",
+            ]
+        )
+        run(
+            [
+                PY, "scripts/preprocess/cache_latents.py",
+                "--dir", rdst, "--cache_dir", cdir,
+                "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
+            ]
+        )
+        run(
+            [
+                PY, "scripts/preprocess/cache_text_embeddings.py",
+                "--dir", src, "--cache_dir", cdir,
+                "--qwen3", qwen3, "--dit", dit,
+                "--caption_shuffle_variants", shuffle,
+                "--caption_tag_dropout_rate", tagdrop, "--recursive",
+            ]
+        )
+        if do_mask:
+            cmd_mask([], resized_dir=rdst, mask_dir=f"{mask_base}/{t}")
+
+
 def cmd_preprocess_config(extra):
     """Preprocess the exact directories named in a ``--dataset_config`` TOML.
 
