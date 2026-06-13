@@ -753,6 +753,8 @@ def _dataset_subsets(form: dict) -> list[dict]:
     fields) into clean subset dicts: image_dir [+ cache_dir] + per-subset settings.
     This is the single dataset definition both the auto-preprocess and pre-cached
     paths consume."""
+    import re
+
     out: list[dict] = []
     for s in form.get("subsets") or []:
         if not isinstance(s, dict):
@@ -764,7 +766,8 @@ def _dataset_subsets(form: dict) -> list[dict]:
         if str(s.get("cache_dir") or "").strip():
             d["cache_dir"] = str(s["cache_dir"]).strip()
         for k, cast in (("num_repeats", int), ("keep_tokens", int),
-                        ("caption_extension", str), ("caption_dropout_rate", float)):
+                        ("caption_extension", str), ("caption_dropout_rate", float),
+                        ("batch_size", int)):
             v = s.get(k)
             if v in (None, ""):
                 continue
@@ -775,6 +778,10 @@ def _dataset_subsets(form: dict) -> list[dict]:
         for fk in ("flip_aug", "random_crop"):
             if s.get(fk):
                 d[fk] = True
+        # per-subset tiers (multi-scale): "512,1024" → [512,1024]; blank = all tiers
+        tlist = [int(x) for x in re.findall(r"\d+", str(s.get("tiers") or ""))]
+        if tlist:
+            d["tiers"] = tlist
         out.append(d)
     if not out:  # back-compat: a single raw folder + the panel-level ds_* fields
         raw = str(form.get("raw_image_dir") or "").strip()
@@ -815,7 +822,7 @@ def _build_precached_config(form: dict) -> str | None:
     for s in subs:
         blk = {k: s[k] for k in keep if k in s}
         blk.setdefault("recursive", True)
-        blocks.append({"batch_size": bs, "subsets": [blk]})
+        blocks.append({"batch_size": int(s.get("batch_size") or bs), "subsets": [blk]})
     name = _safe_name(form.get("ds_name") or "dataset")
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
     path = DATASET_DIR / f"{name}_precached.toml"
@@ -870,10 +877,16 @@ def _prepare_auto_preprocess(form: dict) -> dict:
                 pass
     no_skip = form.get("ms_skip_upscale") is False
 
-    def _skip_minpx(idx: int, tier: int) -> int:
+    def _skip_minpx(tier: int) -> int:
+        # skip edge keyed by the tier's place in the GLOBAL tier list (so per-subset
+        # tier choices still get the right next-lower-tier auto threshold).
         if no_skip:
             return 0
-        edge = skip_map.get(tier, 0 if idx == 0 else tiers[idx - 1])
+        if tier in skip_map:
+            edge = skip_map[tier]
+        else:
+            gi = tiers.index(tier) if tier in tiers else 0
+            edge = 0 if gi == 0 else tiers[gi - 1]
         return edge * edge
 
     entries: list[dict] = []
@@ -883,24 +896,29 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         for fk in ("flip_aug", "random_crop"):
             if s.get(fk):
                 block_common[fk] = True
+        sub_bs = int(s.get("batch_size") or bs)  # per-subset batch, else dataset default
+        # per-subset tiers (multi-scale) — intersect with the globally-enabled tiers;
+        # blank falls back to all of them. Lets a subset target one resolution with
+        # its own batch/repeat (kohya per-block parity).
+        sub_tiers = [t for t in (s.get("tiers") or tiers) if t in tiers] or tiers
         if multiscale:
-            for idx, t in enumerate(tiers):
+            for t in sub_tiers:
                 rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
                 mdir = f"{base_mask}/{i}/{t}" if masking else None
                 e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                     "target_res": str(t), "min_pixels": _skip_minpx(idx, t)}
+                     "target_res": str(t), "min_pixels": _skip_minpx(t)}
                 if mdir:
                     e["mask"] = mdir
                 entries.append(e)
                 blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
                 if mdir:
                     blk["mask_dir"] = mdir
-                datasets.append({"batch_size": bs, "subsets": [blk]})
+                datasets.append({"batch_size": sub_bs, "subsets": [blk]})
         else:
             rdir, cdir = f"{base_resized}/{i}", f"{base_cache}/{i}"
             mdir = f"{base_mask}/{i}" if masking else None
             e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                 "target_res": " ".join(str(t) for t in tiers),
+                 "target_res": " ".join(str(t) for t in sub_tiers),
                  "min_pixels": 0 if form.get("drop_lowres") is False else 500000}
             if mdir:
                 e["mask"] = mdir
@@ -908,7 +926,7 @@ def _prepare_auto_preprocess(form: dict) -> dict:
             blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
             if mdir:
                 blk["mask_dir"] = mdir
-            datasets.append({"batch_size": bs, "subsets": [blk]})
+            datasets.append({"batch_size": sub_bs, "subsets": [blk]})
 
     # training dataset config → the (to-be-created) cache dirs
     ds_toml = _toml.dumps({"datasets": datasets})

@@ -72,11 +72,12 @@
   details.argroup>summary{cursor:pointer;padding:9px 12px;font-weight:600;font-size:13px;list-style:none}
   details.argroup>summary::-webkit-details-marker{display:none}
   details.argroup>summary:before{content:'▸ ';color:var(--mut)}details.argroup[open]>summary:before{content:'▾ '}
-  .arggrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:4px 12px 12px}
-  .argrow{display:flex;align-items:center;gap:8px;font-size:12px}
+  .arggrid{display:block;padding:4px 12px 12px}
+  .argrow{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid #23262e}
   .argrow input[type=checkbox]{width:auto;flex:0 0 auto}
-  .argrow .an{flex:0 0 44%;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
-  .argrow .av{flex:1;padding:5px 8px;font-size:12px}
+  .argrow .an{flex:0 0 220px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .argrow .av{flex:0 0 150px;padding:5px 8px;font-size:12px}
+  .argrow .adesc{flex:1;color:var(--mut);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
   /* dataset subset */
   .subset{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;position:relative}
   .subset .x{position:absolute;top:8px;right:8px;padding:2px 8px;font-size:12px;background:#101116;border:1px solid var(--line);color:var(--txt)}
@@ -128,27 +129,27 @@
         <div></div>
       </div>
       <div class="row3">
-        <div class="chk"><input id="na_use_scalar" type="checkbox"><label>use_scalar</label></div>
-        <div class="chk"><input id="na_train_norm" type="checkbox"><label>train_norm</label></div>
-        <div class="chk"><input id="na_bypass_mode" type="checkbox"><label>bypass_mode</label></div>
+        <div class="chk"><input id="na_use_scalar" type="checkbox"><label title="Trainable scalar gate on the update (softer start).">use_scalar</label></div>
+        <div class="chk"><input id="na_train_norm" type="checkbox"><label title="Also train Norm (LayerNorm/GroupNorm) layers.">train_norm</label></div>
+        <div class="chk"><input id="na_bypass_mode" type="checkbox"><label title="Apply the adapter as a side branch instead of merging into the weight.">bypass_mode</label></div>
       </div>
       <div class="row3">
-        <div class="chk"><input id="na_dora_wd" type="checkbox"><label>dora_wd (DoRA)</label></div>
-        <div class="chk"><input id="na_rs_lora" type="checkbox"><label>rs_lora</label></div>
+        <div class="chk"><input id="na_dora_wd" type="checkbox"><label title="DoRA: decompose weights into magnitude + direction.">dora_wd (DoRA)</label></div>
+        <div class="chk"><input id="na_rs_lora" type="checkbox"><label title="Rank-stabilized scaling: alpha/sqrt(rank) instead of alpha/rank.">rs_lora</label></div>
         <div></div>
       </div>
       <div id="na_grp_lokr">
         <div class="row3">
-          <div><label>factor <span class="hint">lokr</span></label><input id="na_factor" value="4"></div>
-          <div class="chk"><input id="na_full_matrix" type="checkbox" checked><label>full_matrix</label></div>
-          <div class="chk"><input id="na_decompose_both" type="checkbox"><label>decompose_both</label></div>
+          <div><label title="LoKr Kronecker factorization factor (-1 = auto/maximal).">factor <span class="hint">lokr</span></label><input id="na_factor" value="4"></div>
+          <div class="chk"><input id="na_full_matrix" type="checkbox" checked><label title="LoKr: use a full (un-factored) second Kronecker factor.">full_matrix</label></div>
+          <div class="chk"><input id="na_decompose_both" type="checkbox"><label title="LoKr: low-rank-decompose BOTH Kronecker factors.">decompose_both</label></div>
         </div>
-        <div class="chk"><input id="na_unbalanced_factorization" type="checkbox"><label>unbalanced_factorization</label></div>
+        <div class="chk"><input id="na_unbalanced_factorization" type="checkbox"><label title="LoKr: allow unbalanced Kronecker factor shapes.">unbalanced_factorization</label></div>
       </div>
       <div id="na_grp_dylora"><label>block_size <span class="hint">dylora</span></label><input id="na_block_size" placeholder="4"></div>
       <div id="na_grp_oft" class="row">
         <div><label>constraint <span class="hint">oft</span></label><input id="na_constraint" placeholder="0"></div>
-        <div class="chk"><input id="na_rescaled" type="checkbox"><label>rescaled</label></div>
+        <div class="chk"><input id="na_rescaled" type="checkbox"><label title="OFT: add a learned per-output rescale to the orthogonal transform.">rescaled</label></div>
       </div>
       <label>Extra network_args <span class="hint">space-separated escape hatch (e.g. wd_on_output=True)</span></label>
       <textarea id="network_args_extra" placeholder=""></textarea>
@@ -243,7 +244,7 @@
   <div class="panel full">
     <h2>Monitor &amp; run</h2>
     <div class="row3">
-      <div class="chk"><input id="monitor" type="checkbox" checked><label>Live web monitor</label></div>
+      <div class="chk"><input id="monitor" type="checkbox" checked><label title="Live loss / LR / sample-image dashboard in the browser (--monitor).">Live web monitor</label></div>
       <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
       <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
     </div>
@@ -413,7 +414,8 @@ function collectSubsets(){ return [...document.querySelectorAll('#subsets .subse
   const g=c=>{const e=d.querySelector(c);return e?(e.type==='checkbox'?e.checked:e.value):'';};
   return {image_dir:(g('.s_image_dir')||'').trim(), cache_dir:(g('.s_cache_dir')||'').trim(),
     num_repeats:g('.s_num_repeats'), keep_tokens:g('.s_keep_tokens'), caption_extension:g('.s_caption_extension'),
-    caption_dropout_rate:g('.s_caption_dropout_rate'), flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'), recursive:g('.s_recursive')};
+    caption_dropout_rate:g('.s_caption_dropout_rate'), batch_size:g('.s_batch'), tiers:(g('.s_tiers')||'').trim(),
+    flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'), recursive:g('.s_recursive')};
   }).filter(s=>s.image_dir); }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
@@ -486,12 +488,12 @@ function renderArgs(groups){
   window._args=[]; const root=$('all-args'); root.innerHTML='';
   (groups||[]).forEach(g=>{
     const rows=g.args.map(a=>{ window._args.push(a);
-      const tip=esc((a.help||a.dest)+(a.default!=null?'  (default: '+a.default+')':''));
+      const desc=(a.help||'')+(a.default!=null?' (default: '+a.default+')':'');
       let ctl='';
       if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
       else if(a.choices&&a.choices.length) ctl=`<select class="av" id="advv_${a.dest}">`+a.choices.map(c=>`<option>${esc(c)}</option>`).join('')+`</select>`;
       else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${a.default!=null?esc(a.default):esc(a.type)}">`;
-      return `<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an" title="${tip}">${esc(a.dest)}</span>${ctl}</div>`;
+      return `<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" title="${esc(desc)}">${esc(desc)}</span></div>`;
     }).join('');
     const d=document.createElement('details'); d.className='argroup';
     d.innerHTML=`<summary>${esc(g.role)} (${g.args.length})</summary><div class="arggrid">${rows}</div>`;
@@ -519,6 +521,10 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
       <div><label>caption_dropout_rate</label><input class="s_caption_dropout_rate" value="${esc(s.caption_dropout_rate||0)}"></div>
       <div class="chk"><input type="checkbox" class="s_flip_aug" ${s.flip_aug?'checked':''}><label>flip_aug</label></div>
       <div class="chk"><input type="checkbox" class="s_random_crop" ${s.random_crop?'checked':''}><label>random_crop</label></div>
+    </div>
+    <div class="row3">
+      <div><label>batch_size <span class="hint">blank = dataset default</span></label><input class="s_batch" type="number" value="${esc(s.batch_size||'')}"></div>
+      <div style="grid-column:span 2"><label>tiers <span class="hint">multi-scale: which tiers this subset trains at — e.g. <code>512</code> or <code>512,1024</code> · blank = all. Give one tier per subset for per-resolution batch/repeat (kohya per-block).</span></label><input class="s_tiers" value="${esc((s.tiers||[]).join(','))}" placeholder="all"></div>
     </div>
     <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive (walk subfolders)</label></div>`;
   $('subsets').appendChild(div);
