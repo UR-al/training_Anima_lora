@@ -191,11 +191,16 @@ _ROLE_RULES = [
         ],
     ),
     (
-        "NETWORK",  # adapter dropout/train-on/weights · timestep window · net regularization
+        "NETWORK",  # adapter · timestep window + flow-matching/timestep + token length · net regularization
         [
             "network",  # network_dropout / network_train_* / network_weights
-            "t_min", "t_max", "scale_weight", "base_weights",
-            "lora_path", "lora_multiplier", "dim_from_weights",
+            "t_min", "t_max",
+            # flow-matching / timestep cluster (moved here from ANIMA per request —
+            # the LoRA_Easy "Network args" tab groups these with min/max timestep).
+            "timestep", "sigmoid", "weighting", "discrete_flow", "logit",
+            "mode_scale", "qwen3_max_token", "t5_max_token",
+            "scale_weight", "base_weights", "lora_path", "lora_multiplier",
+            "dim_from_weights",
         ],
     ),
     (
@@ -227,10 +232,10 @@ _ROLE_RULES = [
     ("NOISE", ["ip_noise"]),  # flow-matching input-perturbation noise (classic noise_offset N/A)
     ("SAMPLE", ["sample", "valid", "cmmd", "prompt"]),
     (
-        "ANIMA",  # flow-matching · tokenizer · Anima-specific experimental features
+        "ANIMA",  # tokenizer path · Anima-specific experimental features (flow/timestep
+        # cluster moved to NETWORK per request)
         [
-            "timestep", "sigmoid", "weighting", "discrete_flow", "shift",
-            "logit", "mode_scale", "t5", "qwen", "tokenizer",
+            "tokenizer",  # t5_tokenizer_path / tokenizer_cache_dir
             "ema", "byg", "easycontrol", "cond_diff", "vr_", "functional",
             "llm_adapter", "self_attn_lr", "cross_attn_lr", "mlp_lr", "mod_lr",
             "artist_filter", "inversion", "use_shuffled",
@@ -1469,6 +1474,44 @@ def import_config(path: str) -> dict:
         notes.append(
             f"resolution {res_for_tier} → target_res tier {tier} (anima constant-token)."
         )
+
+    # Flow-matching / timestep settings → auto-arg overrides (the form's adv[]),
+    # which setForm checks on + fills in. kohya's discrete min/max_timestep (0~1000)
+    # become anima's continuous t_min/t_max SIGMA (÷1000): min_timestep=0 → t_min=0.0,
+    # max_timestep=1000 → t_max=1.0. The rest map name-for-name.
+    adv: list = []
+
+    def _adv(flag: str, val) -> None:
+        if val not in (None, ""):
+            adv.append({"flag": flag, "value": str(val), "is_bool": False})
+
+    if "min_timestep" in flat:
+        try:
+            _adv("--t_min", round(float(flat["min_timestep"]) / 1000.0, 6))
+            notes.append("min_timestep → t_min (÷1000, anima uses sigma 0~1).")
+        except (TypeError, ValueError):
+            pass
+    if "max_timestep" in flat:
+        try:
+            _adv("--t_max", round(float(flat["max_timestep"]) / 1000.0, 6))
+            notes.append("max_timestep → t_max (÷1000, anima uses sigma 0~1).")
+        except (TypeError, ValueError):
+            pass
+    for src, flag in (
+        ("timestep_sample_method", "--timestep_sampling"),
+        ("timestep_sampling", "--timestep_sampling"),
+        ("sigmoid_scale", "--sigmoid_scale"),
+        ("sigmoid_bias", "--sigmoid_bias"),
+        ("discrete_flow_shift", "--discrete_flow_shift"),
+        ("weighting_scheme", "--weighting_scheme"),
+        ("logit_mean", "--logit_mean"),
+        ("logit_std", "--logit_std"),
+        ("max_token_length", "--qwen3_max_token_length"),
+    ):
+        if src in flat:
+            _adv(flag, flat[src])
+    if adv:
+        form["adv"] = adv
 
     # subsets → the manual builder's shape (only valid anima keys)
     out_subs = []

@@ -87,6 +87,10 @@
   .argrow input[type=checkbox]{width:auto;flex:0 0 auto;margin-top:3px}
   .argrow .an{flex:0 0 220px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-top:2px}
   .argrow .av{flex:0 0 150px;padding:5px 8px;font-size:12px}
+  /* path-typed auto-arg: input + 📁 browse */
+  .argrow .avp{flex:0 0 190px;display:flex;gap:3px}
+  .argrow .avp input{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 6px;font-size:12px}
+  .argrow .avp .pickbtn{flex:0 0 auto;padding:4px 7px}
   /* full description — wraps instead of truncating (English + 한국어) */
   .argrow .adesc{flex:1;color:var(--mut);font-size:11px;white-space:normal;line-height:1.45;cursor:help}
   /* two help drawers side by side (Optimizer | Scheduler) */
@@ -714,9 +718,14 @@ function renderArgs(groups){
       const descEn=(a.help||'')+def;
       const descKo=(ARG_HELP_KO[a.dest]||a.help||'')+def;  // Korean overlay, fall back to English
       let ctl='';
+      const ph=a.default!=null?esc(a.default):esc(a.type);
+      // path-typed args get a 📁 browse button (folder for *_dir, file otherwise)
+      const isPath=/(_dir|_path)$/.test(a.dest)||['resume','in_json','network_weights','base_weights','log_tracker_config','train_data_dir','progress_jsonl','console_log_file'].includes(a.dest);
       if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
       else if(a.choices&&a.choices.length) ctl=`<select class="av" id="advv_${a.dest}">`+a.choices.map(c=>`<option>${esc(c)}</option>`).join('')+`</select>`;
-      else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${a.default!=null?esc(a.default):esc(a.type)}">`;
+      else if(isPath){ const dir=/_dir$/.test(a.dest);
+        ctl=`<span class="avp"><input id="advv_${a.dest}" placeholder="${ph}"><button class="pickbtn" title="Browse" onclick="${dir?`pickFolder('advv_${a.dest}')`:`pickFile('advv_${a.dest}','')`}">📁</button></span>`; }
+      else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${ph}">`;
       return `<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
     }).join('');
   });
