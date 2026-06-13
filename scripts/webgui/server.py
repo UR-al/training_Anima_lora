@@ -814,7 +814,8 @@ def _prepare_auto_preprocess(form: dict) -> dict:
                 "batch_size": bs,
                 "subsets": [
                     _mk_subset(
-                        f"{resized}/{t}", f"{cache}/{t}",
+                        f"{resized}/{t}",
+                        f"{cache}/{t}",
                         f"{masks}/{t}" if masking else None,
                     )
                 ],
@@ -1158,6 +1159,244 @@ _SUBSET_KEYS = {
 }
 
 
+def _flatten_kv(v) -> str:
+    """A dict {k:val} / list ['k=v'] / 'k=v k=v' string → a 'k=v k=v' string."""
+    if isinstance(v, dict):
+        return " ".join(f"{k}={vv}" for k, vv in v.items())
+    if isinstance(v, (list, tuple)):
+        return " ".join(str(x) for x in v)
+    return str(v or "").strip()
+
+
+def _snap_tier(res) -> int | None:
+    """Map a kohya resolution (int / [W,H] / 'W,H') to the nearest anima tier edge."""
+    import re as _re
+
+    edges = list_target_res_tiers()
+    r = None
+    if isinstance(res, (list, tuple)) and res:
+        r = max(int(x) for x in res)
+    elif isinstance(res, (int, float)):
+        r = int(res)
+    elif isinstance(res, str):
+        nums = [int(x) for x in _re.findall(r"\d+", res)]
+        r = max(nums) if nums else None
+    return min(edges, key=lambda e: abs(e - r)) if r else None
+
+
+# kohya / LoRA_Easy keys with NO anima equivalent — dropped on import (anima uses
+# constant-token buckets + preprocess-time caption shuffle, not these).
+_IMPORT_DROP = {
+    "enable_bucket",
+    "min_bucket_reso",
+    "max_bucket_reso",
+    "bucket_reso_steps",
+    "bucket_no_upscale",
+    "multires_training",
+    "skip_image_resolution",
+    "shuffle_caption",
+    "caption_tag_dropout_rate",
+    "random_crop_padding_percent",
+    "sdxl",
+    "v2",
+    "v_parameterization",
+    "clip_skip",
+    "xformers",
+    "no_half_vae",
+    "min_snr_gamma",
+    "prior_loss_weight",
+    "reg_data_dir",
+    "name",
+}
+
+
+def import_config(path: str) -> dict:
+    """Parse an anima dataset .toml OR a LoRA_Easy / kohya config and map it onto
+    the GUI form dict. Returns ``{ok, form, subsets, notes}``.
+
+    Detects: LoRA_Easy sectioned (``*_args.args``/``subsets``/``train_mode``),
+    kohya sectioned (``*_arguments``), kohya GUI ``.json`` (flat), or an
+    anima/kohya dataset blueprint (``[[datasets]]``). Incompatible keys
+    (``_IMPORT_DROP`` — enable_bucket/skip_image_resolution/shuffle_caption/…) are
+    stripped; ``resolution`` → nearest ``target_res`` tier(s). Only fields it
+    actually found are returned, so ``setForm`` merges onto current defaults.
+    """
+    p = Path((path or "").strip().strip('"'))
+    if not p.is_file():
+        return {"ok": False, "error": f"not a file: {p}"}
+    text = p.read_text(encoding="utf-8")
+    notes: list[str] = []
+
+    flat: dict = {}
+    subsets: list = []
+    datasets: list = []
+    if p.suffix.lower() == ".json":
+        import json as _json
+
+        flat = dict(_json.loads(text))  # kohya GUI flat json
+    else:
+        import tomllib
+
+        raw = tomllib.loads(text)
+        # LoRA_Easy sectioned is defined by the `.args` / `.dataset_args` nesting
+        # (NOT a bare `train_mode`/`subsets` key — those also appear in flat configs).
+        le_sectioned = any(
+            isinstance(v, dict) and ("args" in v or "dataset_args" in v)
+            for v in raw.values()
+        )
+        kohya_sectioned = any(k.endswith("_arguments") for k in raw)
+        subsets = list(raw.get("subsets") or [])
+        datasets = list(raw.get("datasets") or [])
+        if le_sectioned:
+            for val in raw.values():
+                if not isinstance(val, dict):
+                    continue
+                for sub in ("args", "dataset_args"):
+                    if isinstance(val.get(sub), dict):
+                        flat.update(val[sub])
+        elif kohya_sectioned:
+            for val in raw.values():
+                if isinstance(val, dict):
+                    flat.update(val)
+        else:
+            # flat / hand-written (config_anima.toml) — keep scalars AND list keys
+            # (network_args / optimizer_args are lists here); drop only the blueprint
+            # sections handled separately.
+            flat = {
+                k: v
+                for k, v in raw.items()
+                if k not in ("datasets", "general", "subsets")
+            }
+
+    # Dataset blueprint (anima/kohya): pull subsets from the [[datasets]] blocks.
+    res_for_tier = flat.get("resolution")
+    if datasets and not subsets:
+        for ds in datasets:
+            if isinstance(ds, dict):
+                res_for_tier = res_for_tier or ds.get("resolution")
+                subsets.extend(ds.get("subsets") or [])
+
+    form: dict = {"method": "lora"}
+
+    def _put(key, *src_keys, cast=str):
+        for sk in src_keys:
+            if sk in flat and flat[sk] not in (None, ""):
+                try:
+                    form[key] = cast(flat[sk]) if cast is not str else str(flat[sk])
+                except (TypeError, ValueError):
+                    form[key] = str(flat[sk])
+                return
+
+    _put("dit_path", "pretrained_model_name_or_path")
+    _put("te_path", "qwen3")
+    _put("vae_path", "vae")
+    _put("network_dim", "network_dim")
+    _put("network_alpha", "network_alpha")
+    _put("optimizer_type", "optimizer_type", "optimizer")
+    _put("learning_rate", "learning_rate", "lr", "unet_lr")
+    _put("max_train_epochs", "max_train_epochs")
+    _put("output_name", "output_name")
+    _put("seed", "seed")
+
+    # network module / algo / preset / extra net args
+    nm = str(flat.get("network_module") or "").strip()
+    na = flat.get("network_args")
+    na_dict = dict(na) if isinstance(na, dict) else {}
+    if isinstance(na, (list, tuple)):
+        for item in na:
+            if isinstance(item, str) and "=" in item:
+                k, v = item.split("=", 1)
+                na_dict[k] = v
+    if nm:
+        form["network_module"] = nm if "lycoris" in nm else "networks.lora_anima"
+    if "algo" in na_dict:
+        form["algo"] = str(na_dict.pop("algo"))
+        # LoRA_Easy/kohya lycoris configs often omit network_module — if an algo
+        # is present, route to the Anima-safe lycoris bridge so the algo applies.
+        if "lycoris" not in (form.get("network_module") or ""):
+            form["network_module"] = "networks.lycoris_anima"
+            notes.append("network_module → networks.lycoris_anima (algo present).")
+    if "preset" in na_dict:
+        pv = str(na_dict.pop("preset"))
+        # Stock LyCORIS presets target diffusers class names absent from the Anima
+        # DiT — remap to the Anima preset that actually wraps its blocks.
+        _stock = {
+            "full",
+            "full-lin",
+            "attn-mlp",
+            "attn-only",
+            "unet-only",
+            "unet-transformer-only",
+            "unet-convblock-only",
+            "ia3",
+        }
+        if pv in _stock or pv not in list_lycoris_presets():
+            form["lycoris_preset"] = "anima-attn-mlp"
+            notes.append(
+                f"preset {pv!r} → anima-attn-mlp (stock presets don't wrap the Anima DiT)."
+            )
+        else:
+            form["lycoris_preset"] = pv
+    leftover_na = _flatten_kv(na_dict)
+    if leftover_na:
+        form["network_args_extra"] = leftover_na
+
+    # optimizer / scheduler args (dict/list/str → 'k=v' string)
+    if flat.get("optimizer_args"):
+        form["optimizer_args"] = _flatten_kv(flat["optimizer_args"])
+    if str(flat.get("lr_scheduler_type") or "").strip():
+        form["lr_scheduler_type"] = str(flat["lr_scheduler_type"])
+    elif str(flat.get("lr_scheduler") or "").strip():
+        form["lr_scheduler_type"] = str(flat["lr_scheduler"])
+    if flat.get("lr_scheduler_args"):
+        form["lr_scheduler_args"] = _flatten_kv(flat["lr_scheduler_args"])
+    if str(flat.get("lr_warmup_steps") or "").strip():
+        try:
+            if float(flat["lr_warmup_steps"]) >= 1:
+                form["lr_warmup_steps"] = str(flat["lr_warmup_steps"])
+            else:
+                notes.append("lr_warmup_steps was a ratio (<1) — left blank.")
+        except (TypeError, ValueError):
+            pass
+    if "warmup_ratio" in flat:
+        notes.append(
+            "warmup_ratio can't convert to steps without total steps — set LR warmup manually."
+        )
+
+    # resolution → target_res tier(s)
+    tier = _snap_tier(res_for_tier) if res_for_tier is not None else None
+    if tier:
+        form["target_res"] = [str(tier)]
+        notes.append(
+            f"resolution {res_for_tier} → target_res tier {tier} (anima constant-token)."
+        )
+
+    # subsets → the manual builder's shape (only valid anima keys)
+    out_subs = []
+    for s in subsets:
+        if not isinstance(s, dict) or not s.get("image_dir"):
+            continue
+        out_subs.append(
+            {
+                "image_dir": s.get("image_dir"),
+                "num_repeats": s.get("num_repeats", 1),
+                "keep_tokens": s.get("keep_tokens", 0),
+                "caption_extension": s.get("caption_extension", ".txt"),
+                "caption_dropout_rate": s.get("caption_dropout_rate", 0),
+                "flip_aug": bool(s.get("flip_aug")),
+                "recursive": bool(s.get("recursive")),
+            }
+        )
+
+    dropped = sorted(k for k in _IMPORT_DROP if k in flat)
+    if dropped:
+        notes.append("dropped anima-incompatible keys: " + ", ".join(dropped))
+    if not form.get("te_path"):
+        notes.append("no text-encoder (qwen3) path in source — set it in Model files.")
+
+    return {"ok": True, "form": form, "subsets": out_subs, "notes": notes}
+
+
 def build_dataset_toml(data: dict) -> dict:
     """Write an anima_lora-compatible dataset config TOML from the GUI builder
     (one or more image subsets) and return its path — set it as dataset_config.
@@ -1336,6 +1575,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(config_delete(body.get("name", "")))
         elif path == "/api/dataset/build":
             self._json(build_dataset_toml(body))
+        elif path == "/api/config/import":
+            self._json(import_config(body.get("path", "")))
         else:
             self._json({"error": "not found"}, 404)
 

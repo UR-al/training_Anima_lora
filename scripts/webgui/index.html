@@ -257,7 +257,8 @@
     </div>
 
     <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-set in auto mode · built/typed in manual mode</span></label>
-    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml')">📁</button></div>
+    <div class="pathrow"><input id="dataset_config" placeholder="auto in auto-preprocess mode" onchange="if(this.value.trim())importConfigFile(this.value.trim())"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml',importConfigFile)">📁</button></div>
+    <p class="hint">Entering / picking a dataset .toml auto-fills the subsets &amp; tiers. To import a <b>LoRA_Easy / kohya</b> config, use "Import config file" in Queue &amp; saved configs below.</p>
   </div>
 
   <div class="panel full">
@@ -294,6 +295,10 @@
         <button class="ghost" style="flex:1" onclick="delConfig()">Delete</button>
       </div>
     </div>
+    <div class="btns" style="margin-top:8px">
+      <button class="ghost" onclick="pickFile(null,'toml,json',importConfigFile)">↑ Import config file (anima / LoRA_Easy / kohya)</button>
+    </div>
+    <p class="hint">Imports a LoRA_Easy / kohya <code>.toml</code>/<code>.json</code> (or an anima dataset toml) and maps it onto the form — incompatible kohya keys (enable_bucket / resolution / shuffle_caption…) are dropped, <code>resolution</code> → nearest tier.</p>
     <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px">
       <label style="margin:0">Queue — runs top → bottom via the daemon</label>
       <div style="display:flex;gap:8px"><button class="primary" onclick="runQueue()">▶ Run queue</button><button class="ghost" onclick="clearQueue()">Clear</button></div>
@@ -450,12 +455,12 @@ function optHelp(srcId){ const isOpt=srcId==='optimizer_type';
 // ---- folder / file picker modal ----
 let _pick={input:null,cur:'',parent:null,fileMode:false,exts:''};
 function je(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }  // safe inline-onclick string
-function pickFolder(inputId,fileMode){ _openPicker(inputId,!!fileMode,''); }
-function pickFile(inputId,exts){ _openPicker(inputId,true,exts||''); }
-function _openPicker(inputId,fileMode,exts){ _pick.input=inputId; _pick.fileMode=fileMode; _pick.exts=exts;
+function pickFolder(inputId,fileMode){ _openPicker(inputId,!!fileMode,'',null); }
+function pickFile(inputId,exts,cb){ _openPicker(inputId,true,exts||'',cb||null); }
+function _openPicker(inputId,fileMode,exts,cb){ _pick.input=inputId; _pick.fileMode=fileMode; _pick.exts=exts; _pick.then=cb||null;
   $('fselect').style.display=fileMode&&exts?'none':'inline-block';
   $('fselect').textContent='Select this folder';
-  $('fmodal').style.display='flex'; navFolder(($(inputId).value||'').trim()); }
+  $('fmodal').style.display='flex'; navFolder((inputId&&$(inputId)?($(inputId).value||''):'').trim()); }
 function closePicker(){ $('fmodal').style.display='none'; }
 function navFolder(path){ const q='/api/browse?path='+encodeURIComponent(path||'')+(_pick.exts?'&exts='+encodeURIComponent(_pick.exts):'');
   fetch(q).then(r=>r.json()).then(d=>{
@@ -465,8 +470,17 @@ function navFolder(path){ const q='/api/browse?path='+encodeURIComponent(path||'
   h+=files.map(x=>`<div class="frow" onclick="chooseFile('${je(x.path)}')"><span class="ic">📄</span>${esc(x.name)}</div>`).join('');
   list.innerHTML=h||'<div class="fempty">(empty)</div>'; }); }
 function navUp(){ if(_pick.parent!=null) navFolder(_pick.parent); }
-function chooseFile(p){ if(_pick.input) $(_pick.input).value=p; closePicker(); }
-function choosePicker(){ if(_pick.input&&_pick.cur) $(_pick.input).value=_pick.cur; closePicker(); }
+function chooseFile(p){ if(_pick.input&&$(_pick.input)) $(_pick.input).value=p; const cb=_pick.then; closePicker(); if(cb) cb(p); }
+function choosePicker(){ if(_pick.input&&$(_pick.input)&&_pick.cur) $(_pick.input).value=_pick.cur; closePicker(); }
+
+// ---- config importer (anima dataset .toml + LoRA_Easy/kohya configs → form) ----
+async function importConfigFile(path){ path=(path||'').trim(); if(!path) return;
+  const r=await post('/api/config/import',{path}); applyImport(r); }
+function applyImport(r){ if(!r||!r.ok){ showCmd('✗ import: '+((r&&r.error)||'?')); return; }
+  setForm(r.form||{});
+  if(r.subsets&&r.subsets.length){ $('subsets').innerHTML=''; r.subsets.forEach(s=>addSubset(s)); $('auto_preprocess').checked=false; updatePrep(); }
+  showCmd('imported ✓'+(r.notes&&r.notes.length?'\n• '+r.notes.join('\n• '):''));
+}
 
 // ---- all-args render ----
 function renderArgs(groups){
