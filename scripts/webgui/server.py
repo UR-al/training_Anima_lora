@@ -156,105 +156,82 @@ _CURATED_ARGS = {
     "monitor_host",
     "monitor_port",
     "monitor_open_browser",
+    # Model paths — curated in the GENERAL "Model files" controls (dit/te/vae);
+    # excluded so they don't also appear as toggleable auto-args.
+    "pretrained_model_name_or_path",
+    "qwen3",
+    "vae",
 }
 
 # Role buckets (first keyword match wins; order = display order).
+# LoRA_Easy-style section taxonomy. Roles == the GUI's collapsible section keys;
+# the FIRST matching keyword wins, so order + specificity matter (more-specific
+# sections precede broad ones). Every introspected arg lands in one of these or
+# falls through to "Other" → relabeled EXTRA (the catch-all). Curated-panel args
+# (_CURATED_ARGS) are excluded entirely. Keyword choices are deliberately precise
+# to avoid cross-section bleed (e.g. "lr_warmup"/"lr_decay" not bare "warmup"/
+# "decay", which would grab anima's byg_/ema_ args meant for ANIMA).
 _ROLE_RULES = [
     (
-        "Speed / compile",
+        "GENERAL",  # precision · seed · batch/grad · dataloader · all speed/VRAM/compile knobs
         [
-            "compile",
-            "attn",
-            "flash",
-            "sdpa",
-            "sage",
-            "flex",
-            "block_swap",
-            "blocks_to_swap",
-            "cudagraph",
-            "dynamo",
-            "channel_scal",
-            "activation_memory",
-            "persistent_data",
-            "pin_memory",
-            "dataloader",
-            "highvram",
-            "split_attn",
-            "vae_chunk",
-            "full_bf16",
-            "fp8",
-            "unsloth",
-            "gradient_checkpoint",
+            "mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8",
+            "gradient_checkpoint", "gradient_accumulation",
+            "max_data_loader", "train_batch_size", "max_train_epochs",
+            "max_train_steps", "prior_loss_weight", "lowram", "highvram",
+            "compile", "dynamo", "cudagraph", "activation_memory",
+            "attn_mode", "attn_softmax", "flash", "sdpa", "sageattn", "flex",
+            "blocks_to_swap", "block_swap", "channel_scal",
+            "persistent_data", "pin_memory", "prefetch", "dataloader",
+            "split_attn", "vae_chunk", "vae_disable_cache", "vae_batch_size",
+            "unsloth", "cpu_offload", "fused_backward", "skip_until", "initial_",
         ],
     ),
     (
-        "Training",
+        "NETWORK",  # adapter dropout/train-on/weights · timestep window · net regularization
         [
-            "lr",
-            "epoch",
-            "step",
-            "batch",
-            "grad",
-            "warmup",
-            "loss",
-            "huber",
-            "timestep",
-            "sigmoid",
-            "weighting",
-            "discrete_flow",
-            "shift",
-            "noise",
-            "min_snr",
-            "edm",
-            "scale_weight",
-            "mixed_precision",
-            "clip",
-            "accum",
-            "prior",
-            "masked_loss",
-            "vr_",
-        ],
-    ),
-    ("Network / adapter", ["network", "dim", "alpha", "dropout", "conv", "rank"]),
-    (
-        "Dataset / caching",
-        [
-            "dataset",
-            "cache",
-            "bucket",
-            "resolution",
-            "caption",
-            "shuffle",
-            "token",
-            "reg_",
-            "repeat",
-            "flip",
-            "color",
-            "crop",
-            "mask",
-            "image_dir",
-            "max_data_loader",
+            "network",  # network_dropout / network_train_* / network_weights
+            "t_min", "t_max", "scale_weight", "base_weights",
+            "lora_path", "lora_multiplier", "dim_from_weights",
         ],
     ),
     (
-        "Paths / model",
+        "OPTIMIZER",  # optimizer · scheduler · LR · loss
         [
-            "path",
-            "_dir",
-            "vae",
-            "qwen",
-            "t5",
-            "tokenizer",
-            "pretrained",
-            "model",
-            "logging",
-            "_weights",
-            "base_weights",
+            "optimizer", "unet_lr", "text_encoder_lr", "scheduler",
+            "lr_warmup", "lr_decay", "loss_type", "masked_loss", "huber",
+            "min_snr", "multiscale_loss", "debiased", "max_grad_norm",
         ],
     ),
-    ("Saving / resume", ["save", "resume", "state", "snapshot", "output"]),
-    ("Sampling / validation", ["sample", "valid", "cmmd", "prompt"]),
-    ("Logging / misc", ["log", "wandb", "tensorboard", "progress", "metadata"]),
+    ("SAVE", ["save", "resume", "state", "config_snapshot", "output_dir", "output_config", "metadata", "checkpointing"]),
+    (
+        "BUCKET",  # preprocessing / resolution / dataset-shape / caching toggles
+        [
+            "bucket", "resolution", "target_res", "resize", "min_pixels",
+            "drop_lowres", "sample_ratio", "path_pattern", "dataset_repeats", "in_json",
+            "use_vae_cache", "use_text_cache", "cache_info", "skip_cache",
+        ],
+    ),
+    (
+        "SUBSET",  # per-subset caption/aug knobs (the few that are also argparse)
+        [
+            "caption", "shuffle", "token_warmup", "reg_", "flip", "color",
+            "crop", "image_dir", "keep_token", "wildcard", "alpha_mask",
+            "secondary", "custom_attributes", "weighted_caption",
+        ],
+    ),
+    ("NOISE", ["ip_noise"]),  # flow-matching input-perturbation noise (classic noise_offset N/A)
+    ("SAMPLE", ["sample", "valid", "cmmd", "prompt"]),
+    (
+        "ANIMA",  # flow-matching · tokenizer · Anima-specific experimental features
+        [
+            "timestep", "sigmoid", "weighting", "discrete_flow", "shift",
+            "logit", "mode_scale", "t5", "qwen", "tokenizer",
+            "ema", "byg", "easycontrol", "cond_diff", "vr_", "functional",
+            "llm_adapter", "self_attn_lr", "cross_attn_lr", "mlp_lr", "mod_lr",
+            "artist_filter", "inversion", "use_shuffled",
+        ],
+    ),
 ]
 
 
@@ -314,8 +291,9 @@ def list_arg_groups() -> list:
         }
         buckets.setdefault(_arg_role(dest), []).append(item)
     order = [r for r, _ in _ROLE_RULES] + ["Other"]
-    # "Other" is the LoRA_Easy-style "기타 / Extra args" catch-all bucket.
-    label = {"Other": "Misc / other (기타)"}
+    # "Other" is the LoRA_Easy-style EXTRA catch-all (logging/metadata/console/…
+    # plus anything unmatched) — the GUI's "add any --flag" bucket.
+    label = {"Other": "EXTRA"}
     return [
         {"role": label.get(r, r), "args": sorted(buckets[r], key=lambda x: x["dest"])}
         for r in order
