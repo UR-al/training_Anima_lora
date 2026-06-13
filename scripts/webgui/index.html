@@ -11,8 +11,18 @@
   header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
   header h1{font-size:17px;margin:0;font-weight:700}
   header .tag{font-size:12px;color:var(--mut)}
-  .wrap{max-width:1100px;margin:0 auto;padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 24px;display:block}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+  /* LoRA_Easy-style collapsible top-level sections */
+  details.section{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+  details.section>summary{cursor:pointer;list-style:none;padding:13px 18px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--txt);background:var(--panel2);display:flex;align-items:center;gap:9px}
+  details.section>summary::-webkit-details-marker{display:none}
+  details.section>summary:before{content:'▸';color:var(--acc);font-size:11px}
+  details.section[open]>summary:before{content:'▾'}
+  details.section>.sbody{padding:14px 18px}
+  .secargs{margin-top:14px}
+  .secargs-h{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut);border-top:1px solid var(--line);padding-top:10px;margin:0 0 2px}
+  .secnote{font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 11px;margin:0 0 8px;line-height:1.5}
   .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 12px}
   .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut);margin:16px 0 6px;border-top:1px solid var(--line);padding-top:12px}
   .full{grid-column:1/3}
@@ -98,19 +108,35 @@
 <select id="lang" onchange="setLang(this.value)" style="width:auto;margin-left:auto"><option value="en">English</option><option value="ko">한국어</option></select></header>
 
 <div class="wrap">
-  <div class="panel">
-    <h2>Model / method</h2>
-    <label>Method</label><select id="method"></select>
-    <label>Preset (VRAM profile)</label><select id="preset"></select>
-    <div class="row">
-      <div><label>Max train epochs</label><input id="max_train_epochs" type="number" placeholder="e.g. 16"></div>
-      <div><label>Seed</label><input id="seed" type="number" placeholder="42"></div>
-    </div>
-    <label>Output name</label><input id="output_name" placeholder="my_lora">
-  </div>
 
-  <div class="panel">
-    <h2>Adapter / LoRA type</h2>
+  <!-- ═══════════ GENERAL ═══════════ -->
+  <details class="section" open>
+    <summary>General args</summary>
+    <div class="sbody">
+      <div class="row">
+        <div><label>Method</label><select id="method"></select></div>
+        <div><label>Preset (VRAM profile)</label><select id="preset"></select></div>
+      </div>
+      <div class="row">
+        <div><label>Max train epochs</label><input id="max_train_epochs" type="number" placeholder="e.g. 16"></div>
+        <div><label>Seed</label><input id="seed" type="number" placeholder="42"></div>
+      </div>
+      <h3>Model files — DiT / text encoder / VAE</h3>
+      <p class="hint">Point at your model files (e.g. <b>forge-neo</b> / <b>ComfyUI</b>) so the repo needs no local <code>models/</code>. Blank = the bundled default (<code>models/…</code>). Used for both training and auto-preprocess caching.</p>
+      <label>DiT / base model <span class="hint">.safetensors</span></label>
+      <div class="pathrow"><input id="dit_path" placeholder="models/diffusion_models/anima-base-v1.0.safetensors"><button class="pickbtn" title="Browse files" onclick="pickFile('dit_path','safetensors,ckpt,pt,sft')">📁</button></div>
+      <div class="row">
+        <div><label>Text encoder (qwen3)</label><div class="pathrow"><input id="te_path" placeholder="models/text_encoders/qwen_3_06b_base.safetensors"><button class="pickbtn" onclick="pickFile('te_path','safetensors,pt,sft')">📁</button></div></div>
+        <div><label>VAE</label><div class="pathrow"><input id="vae_path" placeholder="models/vae/qwen_image_vae.safetensors"><button class="pickbtn" onclick="pickFile('vae_path','safetensors,pt,sft')">📁</button></div></div>
+      </div>
+      <div class="secargs"><p class="secargs-h">More general args — precision · grad checkpoint/accum · batch · dataloader · speed / VRAM (attn_mode, blocks_to_swap, vae_chunk, unsloth…)</p><div id="args_GENERAL"></div></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ NETWORK ═══════════ -->
+  <details class="section">
+    <summary>Network args</summary>
+    <div class="sbody">
     <label>network_module</label><select id="network_module" onchange="updateAlgo()"></select>
     <div class="row">
       <div><label>LyCORIS algo</label><select id="algo" onchange="updateAlgo()"></select></div>
@@ -155,21 +181,14 @@
       <textarea id="network_args_extra" placeholder=""></textarea>
     </div>
     <p class="hint">Anima DiT: use <code>networks.lycoris_anima</code> + an <code>anima-*</code> preset to wrap the transformer blocks (the stock presets target diffusers names the Anima DiT doesn't use). <code>conv_*</code>/<code>use_tucker</code> are hidden — Anima has no conv layers.</p>
-  </div>
-
-  <div class="panel full">
-    <h2>Model files — DiT / text encoder / VAE</h2>
-    <p class="hint">Point at your model files (e.g. <b>forge-neo</b> / <b>ComfyUI</b>) so the repo needs no local <code>models/</code>. Blank = the bundled default (<code>models/…</code>). Used for both training and auto-preprocess caching.</p>
-    <label>DiT / base model <span class="hint">.safetensors</span></label>
-    <div class="pathrow"><input id="dit_path" placeholder="models/diffusion_models/anima-base-v1.0.safetensors"><button class="pickbtn" title="Browse files" onclick="pickFile('dit_path','safetensors,ckpt,pt,sft')">📁</button></div>
-    <div class="row">
-      <div><label>Text encoder (qwen3)</label><div class="pathrow"><input id="te_path" placeholder="models/text_encoders/qwen_3_06b_base.safetensors"><button class="pickbtn" onclick="pickFile('te_path','safetensors,pt,sft')">📁</button></div></div>
-      <div><label>VAE</label><div class="pathrow"><input id="vae_path" placeholder="models/vae/qwen_image_vae.safetensors"><button class="pickbtn" onclick="pickFile('vae_path','safetensors,pt,sft')">📁</button></div></div>
+      <div class="secargs"><p class="secargs-h">More network args — network/rank/module dropout · train-on (unet/te) · min/max timestep (t_min/t_max) · scale_weight_norms · base/merge weights</p><div id="args_NETWORK"></div></div>
     </div>
-  </div>
+  </details>
 
-  <div class="panel full">
-    <h2>Optimizer / scheduler</h2>
+  <!-- ═══════════ OPTIMIZER ═══════════ -->
+  <details class="section">
+    <summary>Optimizer args</summary>
+    <div class="sbody">
     <div class="optwrap">
       <div class="optfields">
         <div class="row">
@@ -191,19 +210,25 @@
         <div class="hsec"><div class="hsec-t" id="sch_help_title">Scheduler</div><div id="sch_help_body"><p class="hnote">Pick a scheduler.</p></div></div>
       </div>
     </div>
-  </div>
-
-  <div class="panel full">
-    <h2>Dataset &amp; preprocessing</h2>
-    <div class="row">
-      <div><label>Dataset name</label><input id="ds_name" placeholder="my_char"></div>
-      <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
+      <div class="secargs"><p class="secargs-h">More optimizer args — loss_type · huber · min_snr_gamma · unet/te LR · max_grad_norm · LR num_cycles/power/min_lr_ratio/decay</p><div id="args_OPTIMIZER"></div></div>
     </div>
-    <h3>Subsets <span style="text-transform:none;color:var(--mut)">— image folder(s) + per-subset settings</span></h3>
-    <div id="subsets"></div>
-    <div class="btns" style="margin-top:8px"><button class="ghost" onclick="addSubset()">+ Add image subset</button></div>
+  </details>
 
-    <div class="chk" style="margin-top:14px"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) each subset folder, then train, from one Start. <b>Off</b> = the subset folders are already resized + cached (set each subset's <code>cache_dir</code>).</label></div>
+  <!-- ═══════════ SAVE ═══════════ -->
+  <details class="section">
+    <summary>Save args</summary>
+    <div class="sbody">
+      <label>Output name</label><input id="output_name" placeholder="my_lora">
+      <div class="secargs"><p class="secargs-h">More save args — output_dir · save_precision · save_model_as · save_every/last_n_epochs/steps · save_state · resume · config_snapshot</p><div id="args_SAVE"></div></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ BUCKET ═══════════ -->
+  <details class="section">
+    <summary>Bucket args</summary>
+    <div class="sbody">
+    <p class="secnote">Preprocessing for the subsets defined in <b>Subset args</b> below. Anima uses <b>constant-token buckets</b> — kohya's min/max bucket reso &amp; steps don't apply.</p>
+    <div class="chk"><input id="auto_preprocess" type="checkbox" checked onchange="updatePrep()"><label><b>Auto-preprocess at training start</b> — resize → cache → (mask) each subset folder, then train, from one Start. <b>Off</b> = the subset folders are already resized + cached (set each subset's <code>cache_dir</code>).</label></div>
 
     <div id="prep_settings">
       <div class="chk"><input id="drop_lowres" type="checkbox" checked><label>Drop low-res source images (&lt;0.5MP)</label></div>
@@ -236,19 +261,75 @@
       </div>
     </div>
 
-    <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-built from the subsets on Start · or type / import one to override</span></label>
-    <div class="pathrow"><input id="dataset_config" placeholder="auto-built from subsets" onchange="if(this.value.trim())importConfigFile(this.value.trim())"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml',importConfigFile)">📁</button></div>
-    <p class="hint">Entering / picking a dataset .toml auto-fills the subsets &amp; tiers. To import a <b>LoRA_Easy / kohya</b> config, use "Import config file" in Queue &amp; saved configs below.</p>
-  </div>
+      <div class="secargs"><p class="secargs-h">More bucket / caching args — target_res · resize_interpolation · use_vae_cache / use_text_cache · sample_ratio · path_pattern</p><div id="args_BUCKET"></div></div>
+    </div>
+  </details>
 
-  <div class="panel full">
+  <!-- ═══════════ SUBSET ═══════════ -->
+  <details class="section">
+    <summary>Subset args</summary>
+    <div class="sbody">
+      <div class="row">
+        <div><label>Dataset name</label><input id="ds_name" placeholder="my_char"></div>
+        <div><label>Batch size</label><input id="ds_batch" type="number" value="1"></div>
+      </div>
+      <h3>Subsets <span style="text-transform:none;color:var(--mut)">— image folder(s) + per-subset settings</span></h3>
+      <div id="subsets"></div>
+      <div class="btns" style="margin-top:8px"><button class="ghost" onclick="addSubset()">+ Add image subset</button></div>
+      <label style="margin-top:14px">Dataset config (.toml) <span class="hint">auto-built from the subsets on Start · or type / import one to override</span></label>
+      <div class="pathrow"><input id="dataset_config" placeholder="auto-built from subsets" onchange="if(this.value.trim())importConfigFile(this.value.trim())"><button class="pickbtn" title="Browse .toml" onclick="pickFile('dataset_config','toml',importConfigFile)">📁</button></div>
+      <p class="hint">Entering / picking a dataset .toml auto-fills the subsets &amp; tiers. To import a <b>LoRA_Easy / kohya</b> config, use "Import config file" in Queue &amp; saved configs below.</p>
+      <div class="secargs"><p class="secargs-h">More subset args — caption_dropout / caption_tag_dropout · reg_data_dir · caption_separator (per-subset repeat / keep_tokens / flip / random_crop / pad are on each subset card above)</p><div id="args_SUBSET"></div></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ NOISE OFFSET ═══════════ -->
+  <details class="section">
+    <summary>Noise offset args</summary>
+    <div class="sbody">
+      <p class="secnote">Anima is <b>flow-matching</b> (rectified flow) — classic <code>noise_offset</code> / pyramid-noise don't apply. The equivalent input-perturbation knob is <code>ip_noise_gamma</code> (~0.1).</p>
+      <div id="args_NOISE"></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ SAMPLE ═══════════ -->
+  <details class="section">
+    <summary>Sample args</summary>
+    <div class="sbody">
+      <p class="secnote">Per-prompt resolution / seed / negative / steps / CFG are tokens inside the <code>sample_prompts</code> file (<code>--w --h --d --n --s --l</code>), not flags here. Samplers: <code>euler</code> / <code>er_sde</code>.</p>
+      <div id="args_SAMPLE"></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ TRAIN ANIMA ═══════════ -->
+  <details class="section">
+    <summary>Train Anima args</summary>
+    <div class="sbody">
+      <p class="secnote">Anima-DiT specifics — flow-matching (<code>timestep_sampling</code> / <code>discrete_flow_shift</code> / <code>sigmoid_*</code>) + tokenizer. <b>T5 tokenizer</b>: leave blank to use the bundled one. Model paths (DiT / Qwen3 / VAE) and speed/VRAM knobs (attn_mode, vae_chunk, blocks_to_swap, unsloth) live in <b>General args</b>.</p>
+      <div id="args_ANIMA"></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ EXTRA ═══════════ -->
+  <details class="section">
+    <summary>Extra args</summary>
+    <div class="sbody">
+      <p class="secnote">Anything not surfaced above. The curated sections cover the common knobs, so this should rarely be needed.</p>
+      <label>Extra CLI flags <span class="hint">raw, space-separated — appended verbatim</span></label>
+      <input id="extra_flags" placeholder="--some_flag value">
+      <input id="argfilter" placeholder="filter args across all sections…" oninput="filterArgs(this.value)" style="margin:10px 0 0">
+      <div class="secargs"><p class="secargs-h">Logging / metadata / console / misc + any unsorted --flag</p><div id="args_EXTRA"></div></div>
+    </div>
+  </details>
+
+  <!-- ═══════════ RUN / MONITOR (footer) ═══════════ -->
+  <div class="panel">
     <h2>Monitor &amp; run</h2>
     <div class="row3">
       <div class="chk"><input id="monitor" type="checkbox" checked><label title="Live loss / LR / sample-image dashboard in the browser (--monitor).">Live web monitor</label></div>
       <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
       <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
     </div>
-    <label>Extra CLI flags</label><input id="extra_flags" placeholder="--save_every_n_epochs 4">
     <div class="btns">
       <button class="ghost" onclick="preview()">Preview command</button>
       <button class="primary" onclick="start()">▶ Start now</button>
@@ -259,7 +340,7 @@
     <div class="status" style="margin-top:12px"><span class="dot" id="dot"></span><span id="stat">idle</span></div>
   </div>
 
-  <div class="panel full">
+  <div class="panel">
     <h2>Queue &amp; saved configs</h2>
     <div class="row">
       <div><label>Name this job / config</label><input id="job_name" placeholder="e.g. char_v1 lokr"></div>
@@ -284,13 +365,6 @@
       <div style="display:flex;gap:8px"><button class="primary" onclick="runQueue()">▶ Run queue</button><button class="ghost" onclick="clearQueue()">Clear</button></div>
     </div>
     <div id="queue-list"></div>
-  </div>
-
-  <div class="panel full">
-    <h2>All arguments — toggle any <code>--flag</code></h2>
-    <input id="argfilter" placeholder="filter args…" oninput="filterArgs(this.value)" style="margin-bottom:10px">
-    <div id="all-args"></div>
-    <p class="hint">Grouped by role (LoRA_Easy-style); anything without a home lands in <b>Misc / other (기타)</b>. Check a row to send that flag — its tooltip shows the help + default. Unchecked args use the config-chain defaults.</p>
   </div>
 </div>
 
@@ -322,6 +396,11 @@ function showCmd(t){ const p=$('cmd'); p.style.display='block'; p.textContent=t;
 
 // ---- i18n (English default; Korean overlay on plain-text labels/headings/buttons) ----
 const KO={
+  // collapsible section titles (LoRA_Easy-style)
+  "General args":"일반 설정","Network args":"네트워크 설정","Optimizer args":"옵티마이저 설정",
+  "Save args":"저장 설정","Bucket args":"버킷 / 전처리","Subset args":"서브셋 설정",
+  "Noise offset args":"노이즈 오프셋","Sample args":"샘플 설정","Train Anima args":"Anima 학습 설정",
+  "Extra args":"추가 인자","Model files — DiT / text encoder / VAE":"모델 파일 — DiT / 텍스트 인코더 / VAE",
   "Model / method":"모델 / 방법","Adapter / LoRA type":"어댑터 / LoRA 종류",
   "Optimizer / scheduler":"옵티마이저 / 스케줄러","Dataset & preprocessing":"데이터셋 & 전처리",
   "Monitor & run":"모니터 & 실행","Queue & saved configs":"큐 & 저장된 설정",
@@ -486,9 +565,12 @@ function applyImport(r){ if(!r||!r.ok){ showCmd('✗ import: '+((r&&r.error)||'?
 
 // ---- all-args render ----
 function renderArgs(groups){
-  window._args=[]; const root=$('all-args'); root.innerHTML='';
+  window._args=[];
+  // clear every per-section auto-args container (role name == section key)
+  document.querySelectorAll('.secargs > div[id^="args_"]').forEach(c=>c.innerHTML='');
   (groups||[]).forEach(g=>{
-    const rows=g.args.map(a=>{ window._args.push(a);
+    const box=$('args_'+g.role); if(!box) return;  // EXTRA == server's "Other" relabel
+    box.innerHTML=g.args.map(a=>{ window._args.push(a);
       const desc=(a.help||'')+(a.default!=null?' (default: '+a.default+')':'');
       let ctl='';
       if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
@@ -496,14 +578,12 @@ function renderArgs(groups){
       else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${a.default!=null?esc(a.default):esc(a.type)}">`;
       return `<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" title="${esc(desc)}">${esc(desc)}</span></div>`;
     }).join('');
-    const d=document.createElement('details'); d.className='argroup';
-    d.innerHTML=`<summary>${esc(g.role)} (${g.args.length})</summary><div class="arggrid">${rows}</div>`;
-    root.appendChild(d);
   });
 }
 function filterArgs(q){ q=(q||'').toLowerCase();
-  document.querySelectorAll('#all-args .argrow').forEach(r=>{ r.style.display = r.dataset.d.includes(q)?'flex':'none'; });
-  if(q) document.querySelectorAll('#all-args details').forEach(d=>d.open=true);
+  document.querySelectorAll('.argrow').forEach(r=>{ r.style.display=(!q||r.dataset.d.includes(q))?'flex':'none'; });
+  if(q) document.querySelectorAll('details.section').forEach(d=>{
+    if([...d.querySelectorAll('.argrow')].some(r=>r.dataset.d.includes(q))) d.open=true; });
 }
 
 // ---- manual dataset builder ----
