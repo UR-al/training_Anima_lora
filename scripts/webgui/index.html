@@ -249,8 +249,8 @@
     <summary>Save args</summary>
     <div class="sbody">
       <label>Output name</label><input id="output_name" placeholder="my_lora">
-      <label>Output folder (output_dir) <span class="hint">blank = the repo default (output/ckpt/)</span></label>
-      <div class="pathrow"><input id="output_dir" placeholder="output/ckpt"><button class="pickbtn" title="Browse folder" onclick="pickFolder('output_dir')">📁</button></div>
+      <label>Output base folder <span class="hint">→ &lt;base&gt;/&lt;output name&gt;/ holds the .safetensors + log/ + sample/ · blank = output/</span></label>
+      <div class="pathrow"><input id="output_dir" placeholder="output"><button class="pickbtn" title="Browse folder" onclick="pickFolder('output_dir')">📁</button></div>
       <label>Resume from state (resume) <span class="hint">a saved training-state folder to continue from · blank = fresh run</span></label>
       <div class="pathrow"><input id="resume" placeholder="(none — fresh run)"><button class="pickbtn" title="Browse folder" onclick="pickFolder('resume')">📁</button></div>
       <div class="secargs"><p class="secargs-h">More save args — save_precision · save_model_as · save_every/last_n_epochs/steps · save_state · config_snapshot</p><div id="args_SAVE"></div></div>

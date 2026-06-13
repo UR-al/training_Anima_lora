@@ -152,6 +152,7 @@ _CURATED_ARGS = {
     "max_train_epochs",
     "output_name",
     "output_dir",
+    "logging_dir",  # derived from output_dir (<base>/<output_name>/log) in _method_preset_extra
     "resume",
     "sample_prompts",
     "seed",
@@ -660,8 +661,23 @@ def _method_preset_extra(form: dict):
     add("--dataset_config", "dataset_config")
     add("--max_train_epochs", "max_train_epochs")
     add("--network_dim", "network_dim")
-    add("--output_name", "output_name")
-    add("--output_dir", "output_dir")
+    # Output layout: everything for a run lives under <base>/<output_name>/ —
+    # the <output_name>.safetensors checkpoint at the top, sample/ (auto-made by
+    # the trainer at <output_dir>/sample) and log/ (TensorBoard) one level inside.
+    # <base> is the form's output_dir field (default "output", repo-relative);
+    # <output_name> defaults to the method name when the field is blank. We always
+    # emit --output_name so the checkpoint filename matches its folder.
+    eff_name = (form.get("output_name") or "").strip() or method or "anima_lora"
+    out_base = (form.get("output_dir") or "output").strip().rstrip("/\\ ") or "output"
+    out_dir = f"{out_base}/{eff_name}"
+    extra += [
+        "--output_name",
+        eff_name,
+        "--output_dir",
+        out_dir,
+        "--logging_dir",
+        f"{out_dir}/log",
+    ]
     add("--resume", "resume")
     add("--sample_prompts", "sample_prompts")
     add("--seed", "seed")
@@ -885,10 +901,15 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         if not Path(s["image_dir"]).is_dir():
             return {"error": f"Image folder not found: {s['image_dir']}"}
 
-    name = _safe_name(form.get("ds_name") or form.get("output_name") or "gui")
-    base_resized = f"post_image_dataset/resized/{name}"
-    base_cache = f"post_image_dataset/lora/{name}"
-    base_mask = f"post_image_dataset/masks/{name}"
+    # Everything generated for this run lives under cache/<output_name>/: the
+    # VAE/TE/PE caches (split into vae/te/pe subfolders automatically by
+    # resolve_cache_path under each subset's cache_dir), plus resized/ and
+    # masks/. Keyed on output_name so a run's data is self-contained per the
+    # requested layout.
+    name = _safe_name(form.get("output_name") or form.get("ds_name") or "gui")
+    base_resized = f"cache/{name}/resized"
+    base_cache = f"cache/{name}"
+    base_mask = f"cache/{name}/masks"
     masking = bool(form.get("mask_enable"))
     tiers = sorted(int(t) for t in (form.get("target_res") or []) if str(t).strip()) or [1024]
     multiscale = bool(form.get("multiscale")) and len(tiers) >= 2

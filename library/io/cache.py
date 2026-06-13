@@ -24,6 +24,27 @@ TE_CACHE_SUFFIX = "_anima_te.safetensors"
 POOLED_CACHE_SUFFIX = "_anima_pooled.safetensors"
 
 
+def cache_subdir_for(suffix: str) -> str | None:
+    """The per-type subdirectory a cache of ``suffix`` lives in under a cache_dir.
+
+    Caches under an explicit ``cache_dir`` are split by TYPE into sibling
+    subfolders — ``vae/`` (latent ``*_anima.npz``), ``te/`` (text-encoder
+    ``*_anima_te.safetensors`` + the pooled ``*_anima_pooled.safetensors``
+    sidecar, which must ride with its TE), ``pe/`` (vision ``*_anima_{enc}.
+    safetensors``). Order matters: TE/pooled are matched before the generic
+    PE ``_anima_*.safetensors`` pattern (TE's suffix also matches it). Returns
+    ``None`` for unknown suffixes (kept flat). Deriving the subdir from the
+    suffix at the single resolution point means write and read always agree.
+    """
+    if suffix.endswith(LATENT_CACHE_SUFFIX):
+        return "vae"
+    if suffix.endswith(TE_CACHE_SUFFIX) or suffix.endswith(POOLED_CACHE_SUFFIX):
+        return "te"
+    if suffix.endswith(".safetensors") and "_anima_" in suffix:
+        return "pe"
+    return None
+
+
 def resolve_cache_path(
     image_abs_path: str | os.PathLike,
     suffix: str,
@@ -34,14 +55,20 @@ def resolve_cache_path(
 
     Sidecar default (``cache_dir=None``) preserves the legacy behavior of
     writing the cache next to the image. With ``cache_dir`` set, the cache
-    is redirected into that directory.
+    is redirected into that directory and SPLIT BY TYPE into a per-type
+    subfolder (``vae/`` / ``te/`` / ``pe/`` — see :func:`cache_subdir_for`):
+    ``cache_dir/vae/{stem}{suffix}`` etc.
 
     When ``image_dir`` is also provided, the relative subpath from
-    ``image_dir`` to ``image_abs_path`` is mirrored under ``cache_dir`` so
+    ``image_dir`` to ``image_abs_path`` is mirrored *under* the type subdir so
     nested source layouts (``image_dataset/charA/img1.png``) produce nested
-    caches (``cache_dir/charA/img1{suffix}``). Without ``image_dir`` the
-    legacy flat layout is preserved — used by callers that don't know the
-    source root.
+    caches (``cache_dir/vae/charA/img1{suffix}``). Without ``image_dir`` the
+    flat-within-type layout is used.
+
+    Backward compatibility: pre-split caches were written flat under
+    ``cache_dir`` (no type subfolder). On READ, if the per-type path is absent
+    but a legacy flat file exists, the flat path is returned — so existing
+    caches keep loading and are not silently re-generated.
     """
     src = str(image_abs_path)
     stem = os.path.splitext(os.path.basename(src))[0]
@@ -61,9 +88,21 @@ def resolve_cache_path(
         # surprising and the lookup-side scanners wouldn't see them anyway.
         if rel and rel != "." and not rel.startswith(".."):
             rel_dir = rel
-    target_dir = os.path.join(cache_dir_path, rel_dir) if rel_dir else cache_dir_path
+    subdir = cache_subdir_for(suffix)
+    type_root = os.path.join(cache_dir_path, subdir) if subdir else cache_dir_path
+    target_dir = os.path.join(type_root, rel_dir) if rel_dir else type_root
+    final = os.path.join(target_dir, stem + suffix)
+    # Legacy read-fallback: a pre-split cache sits flat under cache_dir (no
+    # vae/te/pe segment). If the typed path doesn't exist yet but a flat one
+    # does, return the flat path so existing caches keep loading. New writes
+    # (neither exists) fall through to the typed path below.
+    if subdir and not os.path.exists(final):
+        flat_dir = os.path.join(cache_dir_path, rel_dir) if rel_dir else cache_dir_path
+        flat = os.path.join(flat_dir, stem + suffix)
+        if os.path.exists(flat):
+            return flat
     os.makedirs(target_dir, exist_ok=True)
-    return os.path.join(target_dir, stem + suffix)
+    return final
 
 
 class CachedImage(NamedTuple):
@@ -104,9 +143,10 @@ def discover_cached_pairs(cache_dir: str) -> list[CachedImage]:
     """Find latent+TE cache pairs anywhere under a cache directory.
 
     Walks ``cache_dir`` recursively so nested layouts (caches mirrored from
-    a subfoldered ``image_dataset/`` source tree) are discovered. Each
-    latent NPZ is looked up next to the TE sidecar (same subdir + same
-    stem), which is where the writers place them.
+    a subfoldered ``image_dataset/`` source tree) are discovered. The latent
+    NPZ is looked up next to the TE sidecar (legacy flat layout) AND in the
+    sibling ``vae/`` directory (post-split layout: TE lives under
+    ``cache_dir/te/…`` while latents live under ``cache_dir/vae/…``).
     """
     images = []
     te_paths = sorted(
@@ -115,7 +155,19 @@ def discover_cached_pairs(cache_dir: str) -> list[CachedImage]:
     for te_path in te_paths:
         stem = os.path.basename(te_path).removesuffix(TE_CACHE_SUFFIX)
         parent = os.path.dirname(te_path)
-        npz_files = glob.glob(os.path.join(parent, f"{stem}_*{LATENT_CACHE_SUFFIX}"))
+        # Candidate latent dirs: the TE's own dir (legacy flat), and the same
+        # path with a leading "te" type-segment swapped to "vae" (split layout).
+        search_dirs = [parent]
+        rel = os.path.relpath(parent, cache_dir)
+        parts = [] if rel in (".", "") else rel.split(os.sep)
+        if parts and parts[0] == "te":
+            parts[0] = "vae"
+            search_dirs.append(os.path.join(cache_dir, *parts))
+        npz_files: list[str] = []
+        for d in search_dirs:
+            npz_files = glob.glob(os.path.join(d, f"{stem}_*{LATENT_CACHE_SUFFIX}"))
+            if npz_files:
+                break
         if not npz_files:
             continue
         images.append(
