@@ -448,6 +448,7 @@ _ARG_DESCRIPTIONS = {
     "first_cycle_steps": "Length of the first restart cycle.",
     "first_cycle_max_steps": "Length of the first restart cycle.",
     "cycle_mult": "Per-cycle length multiplier.",
+    "cycle_multiplier": "Per-cycle length multiplier (CAWR/RAWR restart growth).",
     "max_lr": "Peak learning rate at cycle start.",
     "d": "Rex schedule shape parameter.",
     # per-optimizer overrides (key = lowercase registry name)
