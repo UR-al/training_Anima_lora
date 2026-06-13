@@ -194,11 +194,58 @@ def list_lycoris_presets() -> list[str]:
             "unet-transformer-only", "unet-convblock-only"]
 
 
+# kohya built-in optimizer aliases -> the real class get_optimizer constructs.
+_BUILTIN_OPT_MAP = {
+    "adamw8bit": "bitsandbytes.optim.AdamW8bit",
+    "sgdnesterov8bit": "bitsandbytes.optim.SGD8bit",
+    "lion8bit": "bitsandbytes.optim.Lion8bit",
+    "pagedadamw8bit": "bitsandbytes.optim.PagedAdamW8bit",
+    "pagedlion8bit": "bitsandbytes.optim.PagedLion8bit",
+    "pagedadamw": "bitsandbytes.optim.PagedAdamW",
+    "pagedadamw32bit": "bitsandbytes.optim.PagedAdamW32bit",
+    "lion": "lion_pytorch.Lion",
+    "prodigy": "prodigyopt.Prodigy",
+    "dadaptadam": "dadaptation.DAdaptAdam",
+    "dadaptadagrad": "dadaptation.DAdaptAdaGrad",
+    "dadaptlion": "dadaptation.DAdaptLion",
+    "dadaptsgd": "dadaptation.DAdaptSGD",
+    "adamwschedulefree": "schedulefree.AdamWScheduleFree",
+    "radamschedulefree": "schedulefree.RAdamScheduleFree",
+    "sgdschedulefree": "schedulefree.SGDScheduleFree",
+    "adafactor": "transformers.optimization.Adafactor",
+}
+# Built-in (transformers/diffusers) schedulers are functions, not classes — they
+# read the trainer's --flags, not lr_scheduler_args. Curate the relevant flags.
+_BUILTIN_SCHED_ARGS = {
+    "cosine": ["lr_warmup_steps", "lr_scheduler_num_cycles"],
+    "cosine_with_restarts": ["lr_warmup_steps", "lr_scheduler_num_cycles"],
+    "cosine_with_min_lr": ["lr_warmup_steps", "lr_scheduler_num_cycles", "lr_scheduler_min_lr_ratio"],
+    "constant": [],
+    "constant_with_warmup": ["lr_warmup_steps"],
+    "linear": ["lr_warmup_steps"],
+    "polynomial": ["lr_warmup_steps", "lr_scheduler_power"],
+    "inverse_sqrt": ["lr_warmup_steps", "lr_scheduler_timescale"],
+    "piecewise_constant": [],
+    "warmup_stable_decay": ["lr_warmup_steps", "lr_decay_steps", "lr_scheduler_min_lr_ratio", "lr_scheduler_num_cycles"],
+    "adafactor": [],
+}
+
+
 def optimizer_arg_help(name: str) -> dict:
-    """Introspect an optimizer/scheduler class __init__ for its kwargs + defaults
-    so the GUI can show what optimizer_args / lr_scheduler_args accept."""
+    """What an optimizer/scheduler accepts, for the GUI help line. Introspects the
+    class __init__ for custom/3rd-party optimizers; resolves kohya built-in aliases
+    to their real class; and for built-in schedulers (functions, not classes) lists
+    the trainer --flags they read."""
     import importlib
     import inspect
+
+    key = name.lower()
+    if key in _BUILTIN_SCHED_ARGS:  # built-in scheduler -> trainer flags
+        flags = _BUILTIN_SCHED_ARGS[key]
+        note = ("configured via the main flags (see All arguments): "
+                + (", ".join("--" + f for f in flags) if flags else "no extra args needed"))
+        return {"ok": True, "builtin_scheduler": True, "note": note,
+                "args": [{"name": "--" + f, "default": None, "required": False} for f in flags]}
 
     cls = None
     try:
@@ -208,24 +255,26 @@ def optimizer_arg_help(name: str) -> dict:
         else:
             from LoraEasyCustomOptimizer import OPTIMIZERS
 
-            cls = OPTIMIZERS.get(name.lower())
+            cls = OPTIMIZERS.get(key)
+            if cls is None and key in _BUILTIN_OPT_MAP:
+                vals = _BUILTIN_OPT_MAP[key].split(".")
+                cls = getattr(importlib.import_module(".".join(vals[:-1])), vals[-1])
             if cls is None:
                 import torch
 
-                cls = getattr(torch.optim, name, None) or getattr(
-                    torch.optim.lr_scheduler, name, None
-                )
+                cls = getattr(torch.optim, name, None)
     except Exception:
         cls = None
     if cls is None:
-        return {"ok": False, "args": []}
+        return {"ok": False, "args": [],
+                "note": "no introspectable args (its package may not be installed)"}
     try:
         sig = inspect.signature(cls.__init__)
     except Exception:
         return {"ok": False, "args": []}
     args = []
     for pn, p in sig.parameters.items():
-        if pn in ("self", "params", "model", "optimizer") or p.kind in (
+        if pn in ("self", "params", "model", "optimizer", "base_optimizer") or p.kind in (
             p.VAR_POSITIONAL, p.VAR_KEYWORD
         ):
             continue

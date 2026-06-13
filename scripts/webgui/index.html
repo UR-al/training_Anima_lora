@@ -194,8 +194,9 @@ function updateAlgo(){ const lyco=($('network_module').value||'').startsWith('ly
 function optHelp(srcId,outId){ const n=$(srcId).value||''; const out=$(outId);
   if(!n||n.includes(' ')){ out.innerHTML=''; return; }
   fetch('/api/optimizer_args?name='+encodeURIComponent(n)).then(r=>r.json()).then(d=>{
-    if(!d.ok||!d.args.length){ out.innerHTML=''; return; }
-    out.innerHTML='accepts: '+d.args.map(a=>`<code>${esc(a.name)}${a.default!=null?'='+esc(a.default):(a.required?'*':'')}</code>`).join(' '); });
+    let h=''; if(d.args&&d.args.length) h='accepts: '+d.args.map(a=>`<code>${esc(a.name)}${a.default!=null?'='+esc(a.default):(a.required?'*':'')}</code>`).join(' ');
+    if(d.note) h+=(h?'<br>':'')+esc(d.note);
+    out.innerHTML=h; });
 }
 
 // ---- all-args render ----
