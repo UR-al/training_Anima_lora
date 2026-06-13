@@ -953,6 +953,16 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         v = (form.get(fk) or "").strip()
         if v:
             manifest[mk] = v
+    # REPA v2: if the form's network_args carry use_repa, tell the manifest loop
+    # to also cache PE-Spatial features (so the chained train job finds them).
+    na_kv = dict(
+        tok.split("=", 1)
+        for tok in str(form.get("network_args") or "").split()
+        if "=" in tok
+    )
+    if na_kv.get("use_repa", "").strip().lower() in ("1", "true", "yes"):
+        manifest["use_repa"] = True
+        manifest["repa_encoder"] = na_kv.get("repa_encoder") or "pe_spatial"
     STORE_DIR.mkdir(parents=True, exist_ok=True)
     mf_path = STORE_DIR / f"manifest_{name}.json"
     mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")

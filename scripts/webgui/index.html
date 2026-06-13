@@ -181,6 +181,25 @@
       <textarea id="network_args_extra" placeholder=""></textarea>
     </div>
     <p class="hint">Anima DiT: use <code>networks.lycoris_anima</code> + an <code>anima-*</code> preset to wrap the transformer blocks (the stock presets target diffusers names the Anima DiT doesn't use). <code>conv_*</code>/<code>use_tucker</code> are hidden — Anima has no conv layers.</p>
+
+    <div id="repa_args">
+      <h3>REPA alignment <span style="text-transform:none;color:var(--mut)">— vision-encoder feature alignment (any LoRA variant)</span></h3>
+      <div class="chk"><input id="na_use_repa" type="checkbox" onchange="updateRepa()"><label title="Align a mid-block DiT feature to a frozen vision encoder (REPA, arXiv:2410.06940) — speeds convergence. Auto-caches PE-Spatial at preprocess.">use_repa</label></div>
+      <div id="repa_fields" style="display:none">
+        <div class="row3">
+          <div><label>repa_mode</label><select id="na_repa_mode"><option value="relational">relational (Gram, no head)</option><option value="absolute">absolute (patchwise + head)</option></select></div>
+          <div><label>repa_weight <span class="hint">~0.05</span></label><input id="na_repa_weight" placeholder="0.05"></div>
+          <div><label>repa_layer <span class="hint">DiT block</span></label><input id="na_repa_layer" placeholder="8"></div>
+        </div>
+        <div class="row3">
+          <div><label>repa_encoder</label><select id="na_repa_encoder"><option value="pe_spatial">pe_spatial</option><option value="pe">pe</option></select></div>
+          <div><label>repa_anneal_steps <span class="hint">0=off; (0,1]=frac</span></label><input id="na_repa_anneal_steps" placeholder="0"></div>
+          <div></div>
+        </div>
+        <p class="hint">Turning this on auto-caches PE-Spatial features at preprocess (<code>{stem}_anima_pe_spatial.safetensors</code>). Works with <code>networks.lora_anima</code> and <code>lycoris_anima</code>.</p>
+      </div>
+    </div>
+
       <div class="secargs"><p class="secargs-h">More network args — network/rank/module dropout · train-on (unet/te) · min/max timestep (t_min/t_max) · scale_weight_norms · base/merge weights</p><div id="args_NETWORK"></div></div>
     </div>
   </details>
@@ -454,7 +473,8 @@ function setForm(f){ if(!f) return;
   // parse a loaded network_args string back into the structured controls (known
   // keys) + the extra textarea (everything else), so save/load round-trips.
   if(typeof f.network_args==='string'){
-    const known=new Set([].concat(NA_GENERAL,NA_BY_ALGO.lokr,NA_BY_ALGO.dylora,NA_BY_ALGO['diag-oft']).map(x=>x[0]));
+    const known=new Set([].concat(NA_GENERAL,NA_BY_ALGO.lokr,NA_BY_ALGO.dylora,NA_BY_ALGO['diag-oft']).map(x=>x[0])
+      .concat(['use_repa','repa_mode','repa_weight','repa_layer','repa_encoder','repa_anneal_steps']));
     const leftover=[];
     f.network_args.split(/\s+/).filter(Boolean).forEach(tok=>{ const i=tok.indexOf('='); if(i<0){leftover.push(tok);return;}
       const k=tok.slice(0,i),v=tok.slice(i+1),el=$('na_'+k);
@@ -462,7 +482,7 @@ function setForm(f){ if(!f) return;
       else leftover.push(tok); });
     if($('network_args_extra')) $('network_args_extra').value=leftover.join(' ');
   }
-  updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale();
+  updateWarmup(); updateAlgo(); updateRepa(); updatePrep(); updateMask(); updateMultiscale();
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
@@ -478,9 +498,16 @@ function collectNetArgs(){ // build the network_args string from the structured 
       if(t==='b'){ if(el.checked) out.push(name+'=True'); }
       else { const v=(el.value||'').trim(); if(v!=='') out.push(name+'='+v); } });
   }
+  // REPA rides ANY LoRA variant (not just lycoris) — emit outside the gate above.
+  if($('na_use_repa') && $('na_use_repa').checked){
+    out.push('use_repa=True');
+    [['repa_mode'],['repa_weight'],['repa_layer'],['repa_encoder'],['repa_anneal_steps']].forEach(([k])=>{
+      const el=$('na_'+k); const v=el?(el.value||'').trim():''; if(v!=='') out.push(k+'='+v); });
+  }
   const extra=($('network_args_extra').value||'').trim(); if(extra) out.push(extra);
   return out.join(' ');
 }
+function updateRepa(){ const on=$('na_use_repa')&&$('na_use_repa').checked; const f=$('repa_fields'); if(f) f.style.display=on?'block':'none'; }
 function updateAlgo(){ const lyco=($('network_module').value||'').includes('lycoris');
   ['algo','lycoris_preset'].forEach(id=>{ const e=$(id); e.disabled=!lyco; e.style.opacity=lyco?1:.45; });
   $('lycoris_args').style.display=lyco?'block':'none';

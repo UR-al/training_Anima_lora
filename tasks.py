@@ -195,6 +195,11 @@ COMMANDS = {
         "Cache PE-Core vision-encoder features into the LoRA cache dir. "
         "Consumed by CMMD validation and the DCW v4 fusion head.",
     ),
+    "preprocess-pe-spatial": (
+        preprocess.cmd_preprocess_pe_spatial,
+        "Cache PE-Spatial (dense B16-512 patch tokens) into the LoRA cache dir "
+        "as {stem}_anima_pe_spatial.safetensors. Consumed by REPA v2 (use_repa).",
+    ),
     "caption-index": (
         preprocess.cmd_caption_index,
         "Build the typed-tag caption index (character/copyright/artist groups) "

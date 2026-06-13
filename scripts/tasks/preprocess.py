@@ -320,6 +320,32 @@ def cmd_preprocess_pe(extra):
     )
 
 
+def cmd_preprocess_pe_spatial(extra):
+    """Cache PE-Spatial (dense B16-512 patch tokens) features for REPA v2.
+
+    Reads pre-resized images from ``post_image_dataset/resized/`` and writes
+    ``{stem}_anima_pe_spatial.safetensors`` sidecars into the LoRA cache dir
+    (disjoint from the PE-Core ``_anima_pe`` caches DCW/CMMD read). No
+    ``--centroid`` — REPA aligns per-patch, not against a dataset mean. Run
+    before a ``use_repa=true`` training arm (or it's auto-run by
+    ``preprocess`` when the config in scope sets ``use_repa``).
+    """
+    run(
+        [
+            PY,
+            "scripts/preprocess/cache_pe_encoder.py",
+            "--dir",
+            _path("resized_image_dir", "post_image_dataset/resized"),
+            "--cache_dir",
+            _path("lora_cache_dir", "post_image_dataset/lora"),
+            "--encoder",
+            "pe_spatial",
+            "--recursive",
+            *extra,
+        ]
+    )
+
+
 def cmd_caption_index(extra):
     """Build the method-agnostic typed-tag caption index.
 
@@ -537,6 +563,11 @@ def cmd_preprocess_manifest(extra):
     )
     shuffle = str(spec.get("caption_shuffle_variants", "4"))
     tagdrop = str(spec.get("caption_tag_dropout_rate", "0.1"))
+    # REPA v2: when the GUI set use_repa, also cache PE-Spatial patch tokens into
+    # each subset's cache dir so the chained train job's repa_pe_features resolve.
+    repa_encoder = None
+    if str(spec.get("use_repa", "")).strip().lower() in ("1", "true", "yes"):
+        repa_encoder = str(spec.get("repa_encoder") or "pe_spatial").strip() or "pe_spatial"
     entries = spec.get("entries") or []
     for i, e in enumerate(entries):
         tr = str(e.get("target_res", "")).split()
@@ -574,6 +605,14 @@ def cmd_preprocess_manifest(extra):
                 "--caption_tag_dropout_rate", tagdrop, "--recursive",
             ]
         )
+        if repa_encoder is not None:
+            run(
+                [
+                    PY, "scripts/preprocess/cache_pe_encoder.py",
+                    "--dir", e["resized"], "--cache_dir", e["cache"],
+                    "--encoder", repa_encoder, "--recursive",
+                ]
+            )
         if e.get("mask"):
             cmd_mask([], resized_dir=e["resized"], mask_dir=e["mask"])
 
