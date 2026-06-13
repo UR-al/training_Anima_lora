@@ -6,7 +6,7 @@ A fast **Anima** LoRA trainer with a browser control panel, a ~89-optimizer zoo,
 
 | From | What | Vendored as |
 |---|---|---|
-| **[anima_lora](https://github.com/sorryhyun/anima_lora)** (Apache-2.0) | the fast base: `torch.compile` LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader) | the repo itself |
+| **[anima_lora](https://github.com/sorryhyun/anima_lora)** (MIT) | the fast base: `torch.compile` LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader) | the repo itself |
 | **LoRA_Easy_Training_Scripts** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `LoraEasyCustomOptimizer/` |
 | **AnimaLoraToolkit** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
 
@@ -52,8 +52,8 @@ Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models
 
 This is a **derivative work** of the three projects above:
 
-- **anima_lora** — Apache-2.0 (the base engine).
+- **anima_lora** — **MIT** (the base engine; its notice is preserved as `LICENSE-MIT`).
 - **LoRA_Easy_Training_Scripts** — its optimizer/scheduler package is vendored under `LoraEasyCustomOptimizer/` (retains upstream authorship; see that tree's headers).
-- **AnimaLoraToolkit** — its web monitor is vendored under `library/monitoring/`. **AnimaLoraToolkit is GPL-3.0** (it derives from ComfyUI's GPL-3.0 model code). The monitor files (`train_monitor.py`, `monitor_smooth.html`) carry no separate license, so they are covered by that GPL-3.0.
+- **AnimaLoraToolkit** — its web monitor is vendored under `library/monitoring/`. **AnimaLoraToolkit is GPL-3.0** (it derives from ComfyUI's GPL-3.0 model code). The monitor files carry no separate license, so they are covered by that GPL-3.0.
 
-⚠️ **Because a GPL-3.0 component is included, this combined work is effectively GPL-3.0.** If you need a more permissive license, replace `library/monitoring/` with an independently-written monitor. See `LICENSE`, `LICENSE-APACHE`, and `NOTICE`. Model weights (Anima / Qwen / VAE) have their own terms — check each model card.
+**This combined work is licensed under GPL-3.0** (`LICENSE`) because it includes the GPL-3.0 monitor; the permissive MIT/Apache notices of the included parts are kept as `LICENSE-MIT` / `LICENSE-APACHE` and in `NOTICE`. Model weights (Anima / Qwen / VAE) have their own terms — check each model card.
