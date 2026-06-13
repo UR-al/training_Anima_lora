@@ -21,7 +21,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 HTML_FILE = Path(__file__).resolve().parent / "index.html"
@@ -82,6 +82,24 @@ def list_schedulers() -> list[str]:
     ]
 
 
+def list_network_modules() -> list[str]:
+    """Adapter backends. lycoris.kohya unlocks ALL LyCORIS LoRA types; the rest
+    are anima_lora's native adapters / methods."""
+    mods = ["lycoris.kohya", "networks.lora_anima"]
+    d = ROOT / "networks" / "methods"
+    if d.is_dir():
+        for p in sorted(d.glob("*.py")):
+            if p.stem not in ("__init__", "base"):
+                mods.append(f"networks.methods.{p.stem}")
+    return mods
+
+
+def list_lycoris_algos() -> list[str]:
+    """LyCORIS algorithms (used with lycoris.kohya via network_args algo=...).
+    The full set LoRA_Easy exposes."""
+    return ["lora", "loha", "lokr", "dylora", "glora", "full", "diag-oft", "boft", "ia3"]
+
+
 _OPTIONS_CACHE = None
 
 
@@ -95,6 +113,8 @@ def options() -> dict:
             "presets": list_presets(),
             "optimizers": list_optimizers(),
             "schedulers": list_schedulers(),
+            "network_modules": list_network_modules(),
+            "lycoris_algos": list_lycoris_algos(),
         }
     return _OPTIONS_CACHE
 
@@ -146,6 +166,22 @@ def _method_preset_extra(form: dict):
             extra += ["--monitor_port", str(form["monitor_port"])]
         if str(form.get("monitor_host", "")).strip() != "":
             extra += ["--monitor_host", str(form["monitor_host"])]
+
+    # Adapter / LoRA type: network_module (e.g. lycoris.kohya for the LyCORIS
+    # algos — LoRA/LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT — or networks.lora_anima
+    # for the native adapters) + algo (folded into network_args) + alpha + free args.
+    nm = (form.get("network_module") or "").strip()
+    if nm:
+        extra += ["--network_module", nm]
+    na = str(form.get("network_alpha", "")).strip()
+    if na:
+        extra += ["--network_alpha", na]
+    nargs = (form.get("network_args") or "").split()
+    algo = (form.get("algo") or "").strip()
+    if algo and nm.startswith("lycoris"):
+        nargs = [f"algo={algo}"] + nargs
+    if nargs:
+        extra += ["--network_args", *nargs]
 
     extra_flags = (form.get("extra_flags") or "").strip()
     if extra_flags:
@@ -239,6 +275,105 @@ def stop() -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Queue + saved-config store (persisted JSON, LoRA_Easy-style)
+# --------------------------------------------------------------------------- #
+STORE_DIR = Path(__file__).resolve().parent / "store"
+QUEUE_FILE = STORE_DIR / "queue.json"
+CONFIG_DIR = STORE_DIR / "configs"
+
+
+def _read_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def _write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+
+
+def _safe_name(name: str) -> str:
+    out = "".join(c for c in (name or "") if c.isalnum() or c in "-_ ").strip()
+    return out or "config"
+
+
+def queue_list() -> list:
+    return _read_json(QUEUE_FILE, [])
+
+
+def queue_add(name: str, form: dict) -> dict:
+    q = queue_list()
+    next_id = max((int(i.get("id", 0)) for i in q), default=0) + 1
+    q.append({"id": next_id, "name": (name or f"job {len(q) + 1}"), "form": form})
+    _write_json(QUEUE_FILE, q)
+    return {"ok": True, "queue": q}
+
+
+def queue_remove(item_id) -> dict:
+    q = [i for i in queue_list() if str(i.get("id")) != str(item_id)]
+    _write_json(QUEUE_FILE, q)
+    return {"ok": True, "queue": q}
+
+
+def queue_reorder(order: list) -> dict:
+    q = queue_list()
+    by_id = {str(i["id"]): i for i in q}
+    seen = {str(x) for x in order}
+    new = [by_id[str(i)] for i in order if str(i) in by_id]
+    new += [i for i in q if str(i["id"]) not in seen]  # keep any not listed
+    _write_json(QUEUE_FILE, new)
+    return {"ok": True, "queue": new}
+
+
+def queue_clear() -> dict:
+    _write_json(QUEUE_FILE, [])
+    return {"ok": True, "queue": []}
+
+
+def queue_run() -> dict:
+    """Submit every queued job to the training daemon in order (it then runs
+    them sequentially). The queue is left intact — clear it if you want."""
+    results = []
+    for item in queue_list():
+        form = dict(item.get("form") or {})
+        form["daemon"] = True
+        form.pop("dry_run", None)
+        r = launch(form)
+        results.append({"name": item.get("name"), "ok": bool(r.get("ok")),
+                        "job_id": r.get("job_id"), "error": r.get("error")})
+    return {"ok": True, "submitted": results}
+
+
+def config_list() -> list:
+    return sorted(p.stem for p in CONFIG_DIR.glob("*.json")) if CONFIG_DIR.is_dir() else []
+
+
+def config_save(name: str, form: dict) -> dict:
+    n = _safe_name(name)
+    _write_json(CONFIG_DIR / f"{n}.json", form)
+    return {"ok": True, "name": n, "configs": config_list()}
+
+
+def config_load(name: str) -> dict:
+    p = CONFIG_DIR / f"{_safe_name(name)}.json"
+    if not p.exists():
+        return {"ok": False, "error": "not found"}
+    return {"ok": True, "form": _read_json(p, {})}
+
+
+def config_delete(name: str) -> dict:
+    p = CONFIG_DIR / f"{_safe_name(name)}.json"
+    try:
+        if p.exists():
+            p.unlink()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "configs": config_list()}
+
+
+# --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
 class Handler(BaseHTTPRequestHandler):
@@ -263,6 +398,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(options())
         elif path == "/api/status":
             self._json(status())
+        elif path == "/api/queue/list":
+            self._json({"queue": queue_list()})
+        elif path == "/api/config/list":
+            self._json({"configs": config_list()})
+        elif path == "/api/config/load":
+            qs = parse_qs(urlparse(self.path).query or "")
+            self._json(config_load((qs.get("name") or [""])[0]))
         else:
             self._json({"error": "not found"}, 404)
 
@@ -277,6 +419,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(launch(body))
         elif path == "/api/stop":
             self._json(stop())
+        elif path == "/api/queue/add":
+            self._json(queue_add(body.get("name", ""), body.get("form", {})))
+        elif path == "/api/queue/remove":
+            self._json(queue_remove(body.get("id")))
+        elif path == "/api/queue/reorder":
+            self._json(queue_reorder(body.get("order", [])))
+        elif path == "/api/queue/clear":
+            self._json(queue_clear())
+        elif path == "/api/queue/run":
+            self._json(queue_run())
+        elif path == "/api/config/save":
+            self._json(config_save(body.get("name", ""), body.get("form", {})))
+        elif path == "/api/config/delete":
+            self._json(config_delete(body.get("name", "")))
         else:
             self._json({"error": "not found"}, 404)
 
