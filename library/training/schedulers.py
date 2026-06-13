@@ -94,8 +94,11 @@ def get_scheduler_fix(args, optimizer: Optimizer, num_processes: int):
     lr_scheduler_kwargs = {}
     if args.lr_scheduler_args is not None and len(args.lr_scheduler_args) > 0:
         for arg in args.lr_scheduler_args:
-            key, value = arg.split("=")
-            value = ast.literal_eval(value)
+            key, value = arg.split("=", 1)
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass  # bare-string value — keep as-is (LoRA_Easy parity)
             lr_scheduler_kwargs[key] = value
 
     def wrap_check_needless_num_warmup_steps(return_vals):
