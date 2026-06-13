@@ -26,8 +26,9 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[2]
 HTML_FILE = Path(__file__).resolve().parent / "index.html"
 
-# Single in-flight training process (this panel launches one run at a time).
-_STATE: dict = {"proc": None, "cmd": None, "monitor_url": None, "started_at": None}
+# Last launch this panel issued (direct Popen and/or a daemon job id).
+_STATE: dict = {"proc": None, "cmd": None, "monitor_url": None, "started_at": None,
+                "daemon_job": None, "daemon_base": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -93,10 +94,9 @@ def options() -> dict:
 # --------------------------------------------------------------------------- #
 # Command building + launch
 # --------------------------------------------------------------------------- #
-def build_command(form: dict) -> list[str]:
-    """Translate the form dict into the exact train.py launch command."""
-    from scripts.tasks._common import build_launch_cmd, build_method_args
-
+def _method_preset_extra(form: dict):
+    """(method, preset, extra) from the form — shared by the preview, the direct
+    Popen path, and the daemon-submit path."""
     method = (form.get("method") or "lora").strip()
     preset = (form.get("preset") or "default").strip()
     extra: list[str] = []
@@ -143,32 +143,65 @@ def build_command(form: dict) -> list[str]:
     if extra_flags:
         extra += extra_flags.split()
 
-    args = build_method_args(method, preset=preset, extra=extra)
-    return build_launch_cmd(*args)
+    return method, preset, extra
+
+
+def build_command(form: dict) -> list[str]:
+    """The exact train.py launch command (preview / direct-Popen path)."""
+    from scripts.tasks._common import build_launch_cmd, build_method_args
+
+    method, preset, extra = _method_preset_extra(form)
+    return build_launch_cmd(*build_method_args(method, preset=preset, extra=extra))
+
+
+def _monitor_url(form: dict):
+    if not form.get("monitor"):
+        return None
+    port = str(form.get("monitor_port") or "8765")
+    host = str(form.get("monitor_host") or "127.0.0.1")
+    shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
+    return f"http://{shown}:{port}"
 
 
 def launch(form: dict) -> dict:
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
-        return {"ok": False, "error": "A training run is already in progress."}
-    cmd = build_command(form)
+        return {"ok": False, "error": "A direct run is already in progress."}
     if form.get("dry_run"):
-        return {"ok": True, "dry_run": True, "command": " ".join(cmd)}
+        return {"ok": True, "dry_run": True, "command": " ".join(build_command(form))}
+
+    method, preset, extra = _method_preset_extra(form)
+    mon = _monitor_url(form)
+    cmd_str = " ".join(build_command(form))
+    fallback_note = None
+
+    # Robust path (default): submit to the local training daemon — detached, so
+    # training SURVIVES the GUI closing; it also queues + captures logs. Same
+    # path as `make lora --queue`. Falls back to a direct Popen if unreachable.
+    if form.get("daemon", True):
+        try:
+            from scripts.daemon import client as _dc
+
+            cl = _dc.ensure_daemon()
+            resp = cl.submit(method=method, preset=preset, extra=extra)
+            _STATE.update(proc=None, cmd=None, started_at=None, monitor_url=mon,
+                          daemon_job=resp.get("job_id"), daemon_base=getattr(cl, "base", None))
+            return {"ok": True, "daemon": True, "job_id": resp.get("job_id"),
+                    "daemon_base": getattr(cl, "base", None), "monitor_url": mon,
+                    "command": cmd_str}
+        except Exception as exc:  # noqa: BLE001 — fall back to a direct spawn
+            fallback_note = f"daemon unavailable ({exc}); ran directly instead"
+
+    cmd = build_command(form)
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
     try:
         proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"failed to spawn: {exc}"}
-    _STATE.update(proc=proc, cmd=cmd, started_at=time.time())
-    mon = None
-    if form.get("monitor"):
-        port = str(form.get("monitor_port") or "8765")
-        host = str(form.get("monitor_host") or "127.0.0.1")
-        shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
-        mon = f"http://{shown}:{port}"
-    _STATE["monitor_url"] = mon
-    return {"ok": True, "command": " ".join(cmd), "pid": proc.pid, "monitor_url": mon}
+    _STATE.update(proc=proc, cmd=cmd, started_at=time.time(), monitor_url=mon, daemon_job=None)
+    return {"ok": True, "command": cmd_str, "pid": proc.pid, "monitor_url": mon,
+            "note": fallback_note}
 
 
 def status() -> dict:
@@ -181,6 +214,8 @@ def status() -> dict:
         "command": " ".join(_STATE["cmd"]) if _STATE.get("cmd") else None,
         "monitor_url": _STATE.get("monitor_url"),
         "elapsed": (time.time() - _STATE["started_at"]) if _STATE.get("started_at") and running else None,
+        "daemon_job": _STATE.get("daemon_job"),
+        "daemon_base": _STATE.get("daemon_base"),
     }
 
 

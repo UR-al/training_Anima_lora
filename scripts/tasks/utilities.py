@@ -100,10 +100,6 @@ def cmd_distill_mod(extra):
     )
 
 
-def cmd_test_unit(extra):
-    run([PY, "-m", "pytest", "-q", "tests/", *extra])
-
-
 def cmd_vendor_sync(extra):
     """Refresh custom_nodes/*/_vendor/ trees from the live library.* sources.
 

@@ -76,6 +76,7 @@
       <div class="chk"><input id="monitor" type="checkbox" checked><label style="margin:0">Live web monitor</label></div>
       <div><label>Monitor port</label><input id="monitor_port" type="number" value="8765"></div>
     </div>
+    <div class="chk"><input id="daemon" type="checkbox" checked><label style="margin:0">Run via daemon (keeps training alive after closing this page; queues + logs)</label></div>
     <label>Extra CLI flags <span class="hint">appended verbatim, e.g. --network_alpha 16 --save_every_n_epochs 4</span></label>
     <input id="extra_flags" placeholder="">
     <div class="btns">
@@ -98,6 +99,7 @@ function form(extra){
    'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args',
    'lr_warmup_steps','monitor_port','extra_flags'].forEach(k=>{ f[k] = $(k).value; });
   f.monitor = $('monitor').checked;
+  f.daemon = $('daemon').checked;
   return Object.assign(f, extra||{});
 }
 async function post(path, body){ const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); }
@@ -107,7 +109,8 @@ async function preview(){ const r = await post('/api/launch', form({dry_run:true
 async function start(){
   const r = await post('/api/launch', form());
   if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
-  showCmd('$ '+r.command);
+  const head = r.daemon ? ('submitted to daemon — job '+(r.job_id||'?')+'\n$ ') : '$ ';
+  showCmd(head + r.command + (r.note ? ('\n('+r.note+')') : ''));
   if(r.monitor_url){ const a=$('monlink'); a.href=r.monitor_url; a.style.display='inline'; a.textContent='Open monitor ('+r.monitor_url+') ↗'; }
   poll();
 }
@@ -117,6 +120,7 @@ async function poll(){
     const s = await (await fetch('/api/status')).json();
     $('dot').className = 'dot' + (s.running ? ' run' : '');
     if(s.running){ const m = Math.floor((s.elapsed||0)/60), sec = Math.floor((s.elapsed||0)%60); $('stat').textContent = `training (pid ${s.pid}) — ${m}m ${sec}s`; }
+    else if(s.daemon_job){ $('dot').className='dot run'; $('stat').textContent = 'submitted to daemon — job '+s.daemon_job+' (see monitor, or: make daemon-status)'; }
     else if(s.returncode===0){ $('stat').textContent = 'finished ✓'; }
     else if(s.returncode!=null){ $('stat').textContent = 'exited (code '+s.returncode+')'; }
     else { $('stat').textContent = 'idle'; }

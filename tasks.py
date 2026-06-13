@@ -244,7 +244,6 @@ COMMANDS = {
         utilities.cmd_distill_mod,
         "Distill pooled_text_proj MLP for modulation guidance",
     ),
-    "test-unit": (utilities.cmd_test_unit, "Run smoke/unit tests (pytest tests/)"),
     "export-logs": (
         utilities.cmd_export_logs,
         "Dump TB scalar logs to JSON (RUN=<dir>, ALL=1 for every subrun, JSONL=1 for line-delimited)",

@@ -503,7 +503,7 @@ class SCION(BaseOptimizer):
                     if group['weight_decay'] > 0.0:
                         p_fp32.add_(pbar_hat, alpha=-group['lr'] * group['weight_decay'])
 
-                update = (p_fp32 - pbar_hat).sign_().mul_(0.1).add_(torch.sign(d))
+                    update = (p_fp32 - pbar_hat).sign_().mul_(0.1).add_(torch.sign(d))
 
                 p_fp32.add_(update, alpha=-group['lr'])
 
