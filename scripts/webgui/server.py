@@ -100,6 +100,141 @@ def list_lycoris_algos() -> list[str]:
     return ["lora", "loha", "lokr", "dylora", "glora", "full", "diag-oft", "boft", "ia3"]
 
 
+# Args owned by the curated panels (don't duplicate them in the auto-generated
+# "all arguments" section).
+_CURATED_ARGS = {
+    "method", "preset", "help", "optimizer_type", "learning_rate", "optimizer_args",
+    "lr_scheduler", "lr_scheduler_type", "lr_scheduler_args", "lr_warmup_steps",
+    "network_module", "network_args", "network_alpha", "network_dim",
+    "dataset_config", "max_train_epochs", "output_name", "seed",
+    "monitor", "monitor_host", "monitor_port", "monitor_open_browser",
+}
+
+# Role buckets (first keyword match wins; order = display order).
+_ROLE_RULES = [
+    ("Speed / compile", ["compile", "attn", "flash", "sdpa", "sage", "flex", "block_swap",
+                         "blocks_to_swap", "cudagraph", "dynamo", "channel_scal",
+                         "activation_memory", "persistent_data", "pin_memory",
+                         "dataloader", "highvram", "split_attn", "vae_chunk", "full_bf16",
+                         "fp8", "unsloth", "gradient_checkpoint"]),
+    ("Training", ["lr", "epoch", "step", "batch", "grad", "warmup", "loss", "huber",
+                  "timestep", "sigmoid", "weighting", "discrete_flow", "shift", "noise",
+                  "min_snr", "edm", "scale_weight", "mixed_precision", "clip", "accum",
+                  "prior", "masked_loss", "vr_"]),
+    ("Network / adapter", ["network", "dim", "alpha", "dropout", "conv", "rank"]),
+    ("Dataset / caching", ["dataset", "cache", "bucket", "resolution", "caption",
+                           "shuffle", "token", "reg_", "repeat", "flip", "color", "crop",
+                           "mask", "image_dir", "max_data_loader"]),
+    ("Paths / model", ["path", "_dir", "vae", "qwen", "t5", "tokenizer", "pretrained",
+                       "model", "logging", "_weights", "base_weights"]),
+    ("Saving / resume", ["save", "resume", "state", "snapshot", "output"]),
+    ("Sampling / validation", ["sample", "valid", "cmmd", "prompt"]),
+    ("Logging / misc", ["log", "wandb", "tensorboard", "progress", "metadata"]),
+]
+
+
+def _arg_role(dest: str) -> str:
+    for role, kws in _ROLE_RULES:
+        if any(k in dest for k in kws):
+            return role
+    return "Other"
+
+
+def _arg_type(action) -> str:
+    cls = action.__class__.__name__
+    if cls in ("_StoreTrueAction", "_StoreFalseAction", "BooleanOptionalAction"):
+        return "bool"
+    t = action.type
+    if t is int:
+        return "int"
+    if t is float:
+        return "float"
+    return "str"
+
+
+def _jsonable(v):
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    return str(v)
+
+
+def list_arg_groups() -> list:
+    """Introspect train.py's argparse into role-grouped, toggleable arg metadata,
+    so the GUI can expose EVERY --flag with its help text. Curated-panel args are
+    excluded to avoid duplication."""
+    try:
+        import train
+
+        parser = train.setup_parser()
+    except Exception:
+        return []
+    buckets: dict = {}
+    for a in parser._actions:
+        dest = a.dest
+        if dest in _CURATED_ARGS or not a.option_strings:
+            continue
+        flag = max(a.option_strings, key=len)  # the long --form
+        is_bool = _arg_type(a) == "bool"
+        item = {
+            "dest": dest, "flag": flag, "type": _arg_type(a), "is_bool": is_bool,
+            "default": _jsonable(a.default), "help": (a.help or "").strip(),
+            "choices": [str(c) for c in a.choices] if a.choices else [],
+            "nargs": a.nargs if a.nargs in ("*", "+") or isinstance(a.nargs, int) else None,
+        }
+        buckets.setdefault(_arg_role(dest), []).append(item)
+    order = [r for r, _ in _ROLE_RULES] + ["Other"]
+    return [{"role": r, "args": sorted(buckets[r], key=lambda x: x["dest"])}
+            for r in order if r in buckets]
+
+
+def list_lycoris_presets() -> list[str]:
+    """LyCORIS target presets (network_args preset=...). attn-mlp / unet-transformer-only
+    target the transformer blocks — the ones that matter for the Anima DiT."""
+    return ["full", "full-lin", "attn-mlp", "attn-only",
+            "unet-transformer-only", "unet-convblock-only"]
+
+
+def optimizer_arg_help(name: str) -> dict:
+    """Introspect an optimizer/scheduler class __init__ for its kwargs + defaults
+    so the GUI can show what optimizer_args / lr_scheduler_args accept."""
+    import importlib
+    import inspect
+
+    cls = None
+    try:
+        if "." in name:
+            vals = name.split(".")
+            cls = getattr(importlib.import_module(".".join(vals[:-1])), vals[-1])
+        else:
+            from LoraEasyCustomOptimizer import OPTIMIZERS
+
+            cls = OPTIMIZERS.get(name.lower())
+            if cls is None:
+                import torch
+
+                cls = getattr(torch.optim, name, None) or getattr(
+                    torch.optim.lr_scheduler, name, None
+                )
+    except Exception:
+        cls = None
+    if cls is None:
+        return {"ok": False, "args": []}
+    try:
+        sig = inspect.signature(cls.__init__)
+    except Exception:
+        return {"ok": False, "args": []}
+    args = []
+    for pn, p in sig.parameters.items():
+        if pn in ("self", "params", "model", "optimizer") or p.kind in (
+            p.VAR_POSITIONAL, p.VAR_KEYWORD
+        ):
+            continue
+        empty = p.default is inspect.Parameter.empty
+        args.append({"name": pn, "default": None if empty else _jsonable(p.default),
+                     "required": empty})
+    return {"ok": True, "cls": f"{cls.__module__}.{cls.__qualname__}", "args": args}
+
+
 _OPTIONS_CACHE = None
 
 
@@ -115,6 +250,8 @@ def options() -> dict:
             "schedulers": list_schedulers(),
             "network_modules": list_network_modules(),
             "lycoris_algos": list_lycoris_algos(),
+            "lycoris_presets": list_lycoris_presets(),
+            "arg_groups": list_arg_groups(),
         }
     return _OPTIONS_CACHE
 
@@ -177,11 +314,33 @@ def _method_preset_extra(form: dict):
     if na:
         extra += ["--network_alpha", na]
     nargs = (form.get("network_args") or "").split()
-    algo = (form.get("algo") or "").strip()
-    if algo and nm.startswith("lycoris"):
-        nargs = [f"algo={algo}"] + nargs
+    if nm.startswith("lycoris"):
+        lp = (form.get("lycoris_preset") or "").strip()
+        if lp:
+            nargs = [f"preset={lp}"] + nargs
+        algo = (form.get("algo") or "").strip()
+        if algo:
+            nargs = [f"algo={algo}"] + nargs
     if nargs:
         extra += ["--network_args", *nargs]
+
+    # Auto-generated "all arguments" section: each enabled item is
+    # {flag, value, is_bool, nargs}. Only enabled args are emitted (the rest fall
+    # back to the config-chain defaults).
+    for item in form.get("adv") or []:
+        flag = item.get("flag")
+        if not flag:
+            continue
+        if item.get("is_bool"):
+            if item.get("value"):
+                extra.append(flag)
+        else:
+            val = item.get("value")
+            if val not in (None, "", []):
+                if item.get("nargs") in ("*", "+"):
+                    extra += [flag, *str(val).split()]
+                else:
+                    extra += [flag, str(val)]
 
     extra_flags = (form.get("extra_flags") or "").strip()
     if extra_flags:
@@ -280,6 +439,7 @@ def stop() -> dict:
 STORE_DIR = Path(__file__).resolve().parent / "store"
 QUEUE_FILE = STORE_DIR / "queue.json"
 CONFIG_DIR = STORE_DIR / "configs"
+DATASET_DIR = STORE_DIR / "datasets"
 
 
 def _read_json(path: Path, default):
@@ -373,6 +533,44 @@ def config_delete(name: str) -> dict:
     return {"ok": True, "configs": config_list()}
 
 
+_SUBSET_KEYS = {
+    "image_dir": str, "cache_dir": str, "num_repeats": int, "keep_tokens": int,
+    "caption_extension": str, "recursive": bool, "caption_dropout_rate": float,
+    "caption_tag_dropout_rate": float, "flip_aug": bool, "color_aug": bool,
+    "random_crop": bool, "caption_prefix": str, "caption_suffix": str,
+}
+
+
+def build_dataset_toml(data: dict) -> dict:
+    """Write an anima_lora-compatible dataset config TOML from the GUI builder
+    (one or more image subsets) and return its path — set it as dataset_config.
+    NOTE: caption SHUFFLING is a top-level --shuffle_caption flag in anima_lora,
+    not a dataset key, so it lives in the 'all arguments' section."""
+    import toml as _toml
+
+    name = _safe_name(data.get("name") or "dataset")
+    ds = {"batch_size": int(data.get("batch_size") or 1), "subsets": []}
+    for s in data.get("subsets") or []:
+        sub = {}
+        for k, caster in _SUBSET_KEYS.items():
+            v = s.get(k)
+            if v in (None, ""):
+                continue
+            try:
+                sub[k] = caster(v) if caster is not bool else bool(v)
+            except (TypeError, ValueError):
+                continue
+        if sub.get("image_dir"):
+            ds["subsets"].append(sub)
+    if not ds["subsets"]:
+        return {"ok": False, "error": "add at least one subset with an image_dir"}
+    toml_str = _toml.dumps({"datasets": [ds]})
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    path = DATASET_DIR / f"{name}.toml"
+    path.write_text(toml_str, encoding="utf-8")
+    return {"ok": True, "path": str(path), "toml": toml_str}
+
+
 # --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
@@ -405,6 +603,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/config/load":
             qs = parse_qs(urlparse(self.path).query or "")
             self._json(config_load((qs.get("name") or [""])[0]))
+        elif path == "/api/optimizer_args":
+            qs = parse_qs(urlparse(self.path).query or "")
+            self._json(optimizer_arg_help((qs.get("name") or [""])[0]))
         else:
             self._json({"error": "not found"}, 404)
 
@@ -433,6 +634,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(config_save(body.get("name", ""), body.get("form", {})))
         elif path == "/api/config/delete":
             self._json(config_delete(body.get("name", "")))
+        elif path == "/api/dataset/build":
+            self._json(build_dataset_toml(body))
         else:
             self._json({"error": "not found"}, 404)
 
