@@ -24,6 +24,9 @@ einops>=0.7.0
 pytorch-optimizer>=3.9.0
 prodigyopt>=1.1.2
 
+# ── Adapters (LyCORIS: LoKr/LoHa/DyLoRA/GLoRA/Full/Diag-OFT/BOFT/IA3) ─────────
+lycoris-lora>=3.4.0
+
 # ── Data & config ────────────────────────────────────────────────────────────
 toml>=0.10.2
 tomlkit>=0.13
