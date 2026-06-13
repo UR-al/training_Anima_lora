@@ -118,6 +118,26 @@ def main() -> None:
             "(e.g. adding a --target_res tier) still re-resizes affected images."
         ),
     )
+    parser.add_argument(
+        "--random_crop",
+        action="store_true",
+        help=(
+            "Bake a random crop into each resized PNG (LoRA_Easy parity): cover-"
+            "resize the image larger than the bucket (by --random_crop_padding_"
+            "percent) then crop a random window instead of the center. The crop is "
+            "fixed once per image — re-runs keep it unless --overwrite re-rolls."
+        ),
+    )
+    parser.add_argument(
+        "--random_crop_padding_percent",
+        type=float,
+        default=0.05,
+        help=(
+            "Extra margin (fraction) added to the cover-resize before the random "
+            "crop, giving slack to shift on both axes. Only used with --random_crop. "
+            "Default: 0.05 (matches LoRA_Easy)."
+        ),
+    )
     args = parser.parse_args()
 
     constant_token_buckets = (
@@ -148,6 +168,8 @@ def main() -> None:
         recursive=args.recursive,
         path_pattern=args.path_pattern,
         overwrite=args.overwrite,
+        random_crop=args.random_crop,
+        random_crop_padding_percent=args.random_crop_padding_percent,
         progress=tqdm_progress("Resizing"),
     )
 

@@ -67,6 +67,8 @@ def process_image(
     copy_captions: bool = True,
     rel_dir: str = "",
     overwrite: bool = False,
+    random_crop: bool = False,
+    random_crop_padding_percent: float = 0.05,
 ) -> tuple[str, tuple[int, int], bool]:
     """Worker — receives bucket params (not a BucketManager) to stay picklable.
 
@@ -137,11 +139,27 @@ def process_image(
         new_w = bw
         new_h = round(bw / ar_img)
 
+    # random_crop (baked once into the resized PNG — LoRA_Easy parity): enlarge
+    # the cover-resize by random_crop_padding_percent on BOTH axes so there's
+    # slack to shift on each dimension, then take a random window below instead
+    # of the center. Off → unchanged center crop. The baked crop is stable across
+    # re-runs (the idempotent skip keeps the first PNG); pass --overwrite to
+    # re-roll, e.g. after toggling random_crop on for already-resized data.
+    if random_crop and random_crop_padding_percent > 0:
+        new_w = max(bw, round(new_w * (1.0 + random_crop_padding_percent)))
+        new_h = max(bh, round(new_h * (1.0 + random_crop_padding_percent)))
+
     img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Center crop to bucket resolution.
-    left = (new_w - bw) // 2
-    top = (new_h - bh) // 2
+    # Crop to bucket resolution — random offset when random_crop, else centered.
+    if random_crop:
+        import random as _random
+
+        left = _random.randint(0, new_w - bw) if new_w > bw else 0
+        top = _random.randint(0, new_h - bh) if new_h > bh else 0
+    else:
+        left = (new_w - bw) // 2
+        top = (new_h - bh) // 2
     img = img.crop((left, top, left + bw, top + bh))
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -173,6 +191,8 @@ def resize_to_buckets(
     path_pattern: str | None = None,
     verbose: bool = True,
     overwrite: bool = False,
+    random_crop: bool = False,
+    random_crop_padding_percent: float = 0.05,
     progress: ProgressFn | None = None,
 ) -> tuple[PreprocessStats, dict[tuple[int, int], int]]:
     """Resize+crop every image under ``src`` into bucket resolutions under ``dst``.
@@ -260,6 +280,8 @@ def resize_to_buckets(
                 copy_captions,
                 _rel_for(img_path),
                 overwrite,
+                random_crop,
+                random_crop_padding_percent,
             ): img_path
             for img_path in image_files
         }

@@ -541,12 +541,21 @@ def cmd_preprocess_manifest(extra):
     for i, e in enumerate(entries):
         tr = str(e.get("target_res", "")).split()
         print(f"\n=== manifest entry {i + 1}/{len(entries)}: {e['src']} → {e['resized']} ===")
+        # random_crop bakes a random window into the resized PNG (LoRA_Easy parity).
+        # NOT forced --overwrite: the baked crop stays stable across re-runs (so it
+        # matches the already-cached latents) — clear the cache dir to re-roll.
+        rc_args = (
+            ["--random_crop", "--random_crop_padding_percent",
+             str(e.get("random_crop_padding_percent", 0.05))]
+            if e.get("random_crop") else []
+        )
         run(
             [
                 PY, "scripts/preprocess/resize_images.py",
                 "--src", e["src"], "--dst", e["resized"],
                 *(["--target_res", *tr] if tr else []),
                 "--min_pixels", str(e.get("min_pixels", "0")), "--recursive",
+                *rc_args,
             ]
         )
         run(

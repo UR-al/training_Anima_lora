@@ -566,6 +566,7 @@ class LatentsCachingStrategy:
         apply_alpha_mask: bool,
         random_crop: bool,
         multi_resolution: bool = False,
+        random_crop_padding_percent: float = 0.05,
     ):
         """
         Default implementation for cache_batch_latents. Image loading, VAE, flipping, alpha mask handling are common.
@@ -587,7 +588,10 @@ class LatentsCachingStrategy:
 
         img_tensor, alpha_masks, original_sizes, crop_ltrbs = (
             load_images_and_masks_for_caching(
-                image_infos, apply_alpha_mask, random_crop
+                image_infos,
+                apply_alpha_mask,
+                random_crop,
+                random_crop_padding_percent=random_crop_padding_percent,
             )
         )
         img_tensor = img_tensor.to(device=vae_device, dtype=vae_dtype)

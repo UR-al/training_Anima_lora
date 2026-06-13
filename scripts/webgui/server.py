@@ -767,7 +767,7 @@ def _dataset_subsets(form: dict) -> list[dict]:
             d["cache_dir"] = str(s["cache_dir"]).strip()
         for k, cast in (("num_repeats", int), ("keep_tokens", int),
                         ("caption_extension", str), ("caption_dropout_rate", float),
-                        ("batch_size", int)):
+                        ("batch_size", int), ("random_crop_padding_percent", float)):
             v = s.get(k)
             if v in (None, ""):
                 continue
@@ -893,9 +893,16 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     datasets: list[dict] = []
     for i, s in enumerate(subs):
         block_common = {k: s[k] for k in ("num_repeats", "keep_tokens", "caption_extension", "caption_dropout_rate") if s.get(k) not in (None, "")}
-        for fk in ("flip_aug", "random_crop"):
-            if s.get(fk):
-                block_common[fk] = True
+        if s.get("flip_aug"):
+            block_common["flip_aug"] = True
+        # random_crop is BAKED into the resized PNG at preprocess time (it can't act
+        # on the fixed cached latents training reads), so it rides the resize ENTRY,
+        # not the training subset block.
+        rc_entry: dict = {}
+        if s.get("random_crop"):
+            rc_entry["random_crop"] = True
+            if s.get("random_crop_padding_percent") not in (None, ""):
+                rc_entry["random_crop_padding_percent"] = s["random_crop_padding_percent"]
         sub_bs = int(s.get("batch_size") or bs)  # per-subset batch, else dataset default
         # per-subset tiers (multi-scale) — intersect with the globally-enabled tiers;
         # blank falls back to all of them. Lets a subset target one resolution with
@@ -906,7 +913,7 @@ def _prepare_auto_preprocess(form: dict) -> dict:
                 rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
                 mdir = f"{base_mask}/{i}/{t}" if masking else None
                 e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                     "target_res": str(t), "min_pixels": _skip_minpx(t)}
+                     "target_res": str(t), "min_pixels": _skip_minpx(t), **rc_entry}
                 if mdir:
                     e["mask"] = mdir
                 entries.append(e)
@@ -919,7 +926,8 @@ def _prepare_auto_preprocess(form: dict) -> dict:
             mdir = f"{base_mask}/{i}" if masking else None
             e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
                  "target_res": " ".join(str(t) for t in sub_tiers),
-                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000}
+                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000,
+                 **rc_entry}
             if mdir:
                 e["mask"] = mdir
             entries.append(e)
@@ -1271,7 +1279,6 @@ _IMPORT_DROP = {
     "skip_image_resolution",
     "shuffle_caption",
     "caption_tag_dropout_rate",
-    "random_crop_padding_percent",
     "sdxl",
     "v2",
     "v_parameterization",
@@ -1459,6 +1466,8 @@ def import_config(path: str) -> dict:
                 "caption_extension": s.get("caption_extension", ".txt"),
                 "caption_dropout_rate": s.get("caption_dropout_rate", 0),
                 "flip_aug": bool(s.get("flip_aug")),
+                "random_crop": bool(s.get("random_crop")),
+                "random_crop_padding_percent": s.get("random_crop_padding_percent", 0.05),
                 "recursive": bool(s.get("recursive")),
             }
         )

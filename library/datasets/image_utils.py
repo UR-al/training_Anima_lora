@@ -241,9 +241,21 @@ def trim_and_resize_if_required(
     reso,
     resized_size: Tuple[int, int],
     resize_interpolation: Optional[str] = None,
+    random_crop_padding_percent: float = 0.05,
 ) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int, int, int]]:
     image_height, image_width = image.shape[0:2]
     original_size = (image_width, image_height)
+
+    # random_crop margin (LoRA_Easy parity): enlarge the cover-resize target by
+    # `random_crop_padding_percent` on BOTH axes so there's slack to crop from on
+    # each dimension (not just the cover-overhang axis), then the random offset
+    # below picks a window. No-op when random_crop is off — keeps the center-crop
+    # path byte-identical.
+    if random_crop and random_crop_padding_percent > 0:
+        resized_size = (
+            int(resized_size[0] * (1.0 + random_crop_padding_percent)),
+            int(resized_size[1] * (1.0 + random_crop_padding_percent)),
+        )
 
     if image_width != resized_size[0] or image_height != resized_size[1]:
         image = resize_image(
@@ -280,7 +292,10 @@ def trim_and_resize_if_required(
 
 # for new_cache_latents
 def load_images_and_masks_for_caching(
-    image_infos: List[ImageInfo], use_alpha_mask: bool, random_crop: bool
+    image_infos: List[ImageInfo],
+    use_alpha_mask: bool,
+    random_crop: bool,
+    random_crop_padding_percent: float = 0.05,
 ) -> Tuple[
     torch.Tensor,
     List[np.ndarray],
@@ -314,6 +329,7 @@ def load_images_and_masks_for_caching(
             info.bucket_reso,
             info.resized_size,
             resize_interpolation=info.resize_interpolation,
+            random_crop_padding_percent=random_crop_padding_percent,
         )
 
         original_sizes.append(original_size)
@@ -355,6 +371,7 @@ def cache_batch_latents(
     flip_aug: bool,
     use_alpha_mask: bool,
     random_crop: bool,
+    random_crop_padding_percent: float = 0.05,
 ) -> None:
     r"""
     requires image_infos to have: absolute_path, bucket_reso, resized_size, latents_npz
@@ -380,6 +397,7 @@ def cache_batch_latents(
             info.bucket_reso,
             info.resized_size,
             resize_interpolation=info.resize_interpolation,
+            random_crop_padding_percent=random_crop_padding_percent,
         )
 
         info.latents_original_size = original_size

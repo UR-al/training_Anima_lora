@@ -1416,6 +1416,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     image_info.bucket_reso,
                     image_info.resized_size,
                     resize_interpolation=image_info.resize_interpolation,
+                    random_crop_padding_percent=subset.random_crop_padding_percent,
                 )
 
                 aug = self.aug_helper.get_augmentor(subset.color_aug)

@@ -70,6 +70,11 @@ class BaseSubsetParams:
     flip_aug: bool = False
     face_crop_aug_range: Optional[Tuple[float, float]] = None
     random_crop: bool = False
+    # LoRA_Easy parity: extra margin (fraction) added to the cover-resize before a
+    # random crop, so there's slack to shift on both axes. Only consulted when
+    # random_crop is true. Honored at preprocess resize (baked) and on the live
+    # caching path (image_utils.trim_and_resize_if_required).
+    random_crop_padding_percent: float = 0.05
     caption_prefix: Optional[str] = None
     caption_suffix: Optional[str] = None
     caption_dropout_rate: float = 0.0
@@ -176,6 +181,7 @@ class ConfigSanitizer:
         "repeat_by_folder_name": bool,
         "sample_ratio": Any(float, int),
         "random_crop": bool,
+        "random_crop_padding_percent": Any(float, int),
         "keep_tokens": int,
         "keep_tokens_separator": str,
         "secondary_separator": str,
@@ -530,6 +536,7 @@ def generate_dataset_group_by_blueprint(
                     flip_aug: {subset.flip_aug}
                     face_crop_aug_range: {subset.face_crop_aug_range}
                     random_crop: {subset.random_crop}
+                    random_crop_padding_percent: {subset.random_crop_padding_percent}
                     token_warmup_min: {subset.token_warmup_min},
                     token_warmup_step: {subset.token_warmup_step},
                     alpha_mask: {subset.alpha_mask}

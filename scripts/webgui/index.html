@@ -415,7 +415,8 @@ function collectSubsets(){ return [...document.querySelectorAll('#subsets .subse
   return {image_dir:(g('.s_image_dir')||'').trim(), cache_dir:(g('.s_cache_dir')||'').trim(),
     num_repeats:g('.s_num_repeats'), keep_tokens:g('.s_keep_tokens'), caption_extension:g('.s_caption_extension'),
     caption_dropout_rate:g('.s_caption_dropout_rate'), batch_size:g('.s_batch'), tiers:(g('.s_tiers')||'').trim(),
-    flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'), recursive:g('.s_recursive')};
+    flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'),
+    random_crop_padding_percent:g('.s_rc_pad'), recursive:g('.s_recursive')};
   }).filter(s=>s.image_dir); }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
 function updateMultiscale(){ const on=$('multiscale').checked; $('ms_note').style.display=on?'block':'none';
@@ -520,7 +521,9 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
     <div class="row3">
       <div><label>caption_dropout_rate</label><input class="s_caption_dropout_rate" value="${esc(s.caption_dropout_rate||0)}"></div>
       <div class="chk"><input type="checkbox" class="s_flip_aug" ${s.flip_aug?'checked':''}><label>flip_aug</label></div>
-      <div class="chk"><input type="checkbox" class="s_random_crop" ${s.random_crop?'checked':''}><label>random_crop</label></div>
+      <div class="chk"><input type="checkbox" class="s_random_crop" ${s.random_crop?'checked':''} onchange="this.closest('.subset').querySelector('.rc_pad_wrap').style.display=this.checked?'inline-flex':'none'"><label>random_crop</label>
+        <span class="rc_pad_wrap" style="display:${s.random_crop?'inline-flex':'none'};align-items:center;gap:4px;margin-left:6px" title="Extra cover-resize margin before the random crop (LoRA_Easy parity). Baked into the resized PNG at preprocess.">
+          <input class="s_rc_pad" type="number" step="0.01" min="0" style="width:60px" value="${esc(s.random_crop_padding_percent!=null?s.random_crop_padding_percent:0.05)}"><span class="hint">pad</span></span></div>
     </div>
     <div class="row3">
       <div><label>batch_size <span class="hint">blank = dataset default</span></label><input class="s_batch" type="number" value="${esc(s.batch_size||'')}"></div>
