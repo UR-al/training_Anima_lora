@@ -375,8 +375,8 @@
           <span class="chk"><input type="checkbox" class="ab_res" value="1536" checked><label>1536</label></span>
         </div>
         <div><label>max batch <span class="hint">탐색 상한</span></label><input id="ab_max_batch" type="number" value="8"></div>
-        <div class="chk"><input id="ab_compile" type="checkbox"><label title="torch.compile 포함 측정 (첫 컴파일 느림). activation_memory_budget을 쓰려면 필요.">torch.compile</label></div>
-        <div><label>budget <span class="hint">&lt;1.0 + compile = 실제 학습 재현</span></label><input id="ab_budget" type="number" step="0.05" min="0.1" max="1.0" value="1.0"></div>
+        <div class="chk"><input id="ab_compile" type="checkbox" checked><label title="torch.compile 포함 측정 = 실제 학습과 동일(권장). 끄면 eager라 VRAM 과대평가 + 시도마다 첫 컴파일 ~30-60s.">torch.compile</label></div>
+        <div><label>budget <span class="hint">&lt;1.0 + compile = 실제 학습값(기본 0.99)</span></label><input id="ab_budget" type="number" step="0.05" min="0.1" max="1.0" value="0.99"></div>
       </div>
       <div class="row3">
         <div><label>grad-ckpt 적용 해상도 <span class="hint">이 해상도만 체크포인트</span></label>
