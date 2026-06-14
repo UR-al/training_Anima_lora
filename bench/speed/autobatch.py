@@ -38,12 +38,14 @@ RUN_BENCH = Path(__file__).resolve().parent / "run_bench.py"
 _TRIAL_LOG: list = []  # every trial's one-line result, replayed as a summary at the end
 
 
-def _trial(args, res, batch, swap, out_json, extra):
-    """Run one (res, batch, swap) trial via run_bench; return (fits: bool, rec: dict).
+def _trial(args, res, batch, swap, out_json, extra, budget=None):
+    """Run one (res, batch, swap, budget) trial via run_bench; return (fits, rec).
 
+    ``budget`` overrides args.activation_memory_budget (for the budget auto-search).
     rec carries median_s_per_it / peak_reserved_mib / grad_ckpt when it fit. A
     missing out_json (fatal/uncatchable OOM crash) counts as not-fit.
     """
+    budget = args.activation_memory_budget if budget is None else budget
     cmd = [
         sys.executable, str(RUN_BENCH),
         "--device", args.device, "--dtype", args.dtype, "--attn_mode", args.attn_mode,
@@ -51,7 +53,7 @@ def _trial(args, res, batch, swap, out_json, extra):
         "--plan", f"{res}:{batch}",
         "--steps", str(args.steps), "--warmup", str(args.warmup),
         "--blocks_to_swap", str(swap),
-        "--activation_memory_budget", str(args.activation_memory_budget),
+        "--activation_memory_budget", str(budget),
         "--network_module", args.network_module,
         "--network_dim", str(args.network_dim), "--network_alpha", str(args.network_alpha),
         "--optimizer_type", args.optimizer_type, "--learning_rate", str(args.learning_rate),
@@ -82,7 +84,7 @@ def _trial(args, res, batch, swap, out_json, extra):
     # Human-readable per-trial line: the exact config + OOM-or-success-with-speed.
     gc = res in (args.gradient_checkpointing_resolutions or [])
     net = args.network_module.split(".")[-1]
-    bud = f" bud={args.activation_memory_budget}" if args.activation_memory_budget < 1.0 else ""
+    bud = f" bud={budget}" if budget < 1.0 else ""
     cmp = " +compile" if args.compile else ""
     cfg = (f"res={res} batch={batch} swap={swap}" + (" +gc" if gc else "") + bud + cmp
            + f"  [{net} / {args.optimizer_type}]")
@@ -99,20 +101,59 @@ def _trial(args, res, batch, swap, out_json, extra):
     return fits, rec
 
 
-def _max_batch(args, res, swap, cell_dir, extra):
+def _max_batch(args, res, swap, cell_dir, extra, budget=None):
     """Binary-search the largest batch in [1, --max-batch] that fits at ``res`` with
-    ``swap`` blocks swapped. Returns (batch, rec) of the best fit, or None if even
-    batch 1 OOMs."""
+    ``swap`` blocks swapped and ``budget`` activation budget. Returns (batch, rec) of
+    the best fit, or None if even batch 1 OOMs."""
     lo, hi, best = 1, args.max_batch, None
     while lo <= hi:
         mid = (lo + hi) // 2
-        fits, rec = _trial(args, res, mid, swap, cell_dir / f"r{res}_s{swap}_b{mid}.json", extra)
+        tag = cell_dir / f"r{res}_s{swap}_bud{budget}_b{mid}.json"
+        fits, rec = _trial(args, res, mid, swap, tag, extra, budget=budget)
         if fits:
             best = (mid, rec)
             lo = mid + 1
         else:
             hi = mid - 1
     return best
+
+
+def _budget_grid(args) -> list:
+    """Activation-budget candidates: --min-budget up to 0.95 in 0.05 steps, + 0.99
+    (ascending). Fit is monotonic — lower budget recomputes more → frees more VRAM."""
+    g, b = [], args.min_budget
+    while b <= 0.951:
+        g.append(round(b, 2))
+        b += 0.05
+    if 0.99 not in g:
+        g.append(0.99)
+    return g
+
+
+def _search_budget(args, res, cell_dir, extra):
+    """Find (batch, swap, budget, rec) using activation_memory_budget as the fit lever
+    (needs compile; main() forces it on). Phase 1: max batch at the LOWEST budget
+    (most VRAM relief). Phase 2: for that batch, the HIGHEST budget (= least slowdown)
+    that still fits. Returns None if infeasible even at the lowest budget."""
+    swap = args.blocks_to_swap
+    grid = _budget_grid(args)
+    best = _max_batch(args, res, swap, cell_dir, extra, budget=grid[0])  # lowest budget
+    if best is None:
+        return None
+    batch = best[0]
+    # highest budget that still fits this batch (binary over the ascending grid).
+    lo, hi, hi_bud, hi_rec = 0, len(grid) - 1, grid[0], best[1]
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        bud = grid[mid]
+        tag = cell_dir / f"r{res}_b{batch}_bud{bud}.json"
+        fits, rec = _trial(args, res, batch, swap, tag, extra, budget=bud)
+        if fits:
+            hi_bud, hi_rec = bud, rec
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return batch, swap, hi_bud, hi_rec
 
 
 def _search(args, res, cell_dir, extra):
@@ -122,9 +163,10 @@ def _search(args, res, cell_dir, extra):
     the least needed; fit is monotonic in swap), then the max batch at that swap.
     Returns None if infeasible even at --max-swap."""
     base = args.blocks_to_swap
+    bud = args.activation_memory_budget
     best = _max_batch(args, res, base, cell_dir, extra)
     if best is not None:
-        return best[0], base, best[1]
+        return best[0], base, bud, best[1]
     if args.max_swap <= base:
         return None
     lo, hi, fit_swap, fit_rec = base + 1, args.max_swap, None, None
@@ -140,7 +182,7 @@ def _search(args, res, cell_dir, extra):
         return None
     # b1 fits at fit_swap, so this never returns None.
     best = _max_batch(args, res, fit_swap, cell_dir, extra)
-    return (best[0], fit_swap, best[1]) if best else (1, fit_swap, fit_rec)
+    return (best[0], fit_swap, bud, best[1]) if best else (1, fit_swap, bud, fit_rec)
 
 
 def main() -> None:
@@ -173,6 +215,12 @@ def main() -> None:
                    "intermediates → less VRAM, mild slowdown). Needs --compile, ignored under "
                    "grad-ckpt. THIS is the lever base anima_lora uses to fit big batches eager "
                    "OOMs — pass e.g. 0.4 + --compile to match real training.")
+    p.add_argument("--auto-budget", dest="auto_budget", action="store_true",
+                   help="AUTO-search activation_memory_budget: per resolution find the max batch "
+                   "at the lowest budget, then the HIGHEST budget (= least slowdown) that still "
+                   "fits it. Implies --compile. Reports (batch, budget) per resolution.")
+    p.add_argument("--min-budget", dest="min_budget", type=float, default=0.1,
+                   help="Lowest budget the --auto-budget search tries (most VRAM relief). 0.05 step.")
     # adapter + optimizer (forwarded to each run_bench trial)
     p.add_argument("--network_module", default="networks.lora_anima")
     p.add_argument("--network_dim", type=int, default=16)
@@ -190,25 +238,29 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--label", default=None)
     args = p.parse_args(argv)
+    if args.auto_budget:
+        args.compile = True  # activation_memory_budget only does anything with compile
 
     run_dir = make_run_dir("speed", label=args.label or "autobatch")
     cell_dir = run_dir / "cells"
     cell_dir.mkdir(exist_ok=True)
+    mode = (f"auto-budget [{args.min_budget}..0.99]" if args.auto_budget
+            else f"base_swap={args.blocks_to_swap} max_swap={args.max_swap} "
+                 f"budget={args.activation_memory_budget}")
     print(f"auto-batch search: res={args.res} max_batch={args.max_batch} "
-          f"grad_ckpt_res={args.gradient_checkpointing_resolutions or []} "
-          f"base_swap={args.blocks_to_swap} max_swap={args.max_swap} "
-          f"net={args.network_module} opt={args.optimizer_type}", flush=True)
+          f"grad_ckpt_res={args.gradient_checkpointing_resolutions or []} {mode} "
+          f"compile={args.compile} net={args.network_module} opt={args.optimizer_type}", flush=True)
 
     frontier = []
     for res in args.res:
-        found = _search(args, res, cell_dir, extra)
+        found = (_search_budget if args.auto_budget else _search)(args, res, cell_dir, extra)
         if found is None:
-            print(f"res {res}: OOM even at batch 1 (max swap {args.max_swap})", flush=True)
+            print(f"res {res}: OOM even at batch 1", flush=True)
             frontier.append({"res": res, "max_batch": 0, "oom": True})
         else:
-            b, swap, rec = found
+            b, swap, budget, rec = found
             frontier.append({
-                "res": res, "max_batch": b, "blocks_to_swap": swap,
+                "res": res, "max_batch": b, "blocks_to_swap": swap, "budget": budget,
                 "median_s_per_it": rec.get("median_s_per_it"),
                 "it_per_s": rec.get("it_per_s"),
                 "peak_reserved_mib": rec.get("peak_reserved_mib"),
@@ -232,8 +284,9 @@ def main() -> None:
         gib = (f.get("peak_reserved_mib") or 0) / 1024
         gc = " +gc" if f.get("grad_ckpt") else ""
         sw = f" swap{f['blocks_to_swap']}" if f.get("blocks_to_swap") else ""
+        bd = f" budget{f['budget']}" if (f.get("budget") or 1.0) < 1.0 else ""
         speed = f"  {sit:.3f} s/it ({1 / sit:.2f} it/s)  peak {gib:.1f} GiB" if sit else ""
-        print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}{sw}{speed}")
+        print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}{sw}{bd}{speed}")
 
     out = write_result(run_dir, script=__file__, args=args,
                        metrics={"frontier": frontier, "max_batch": args.max_batch},

@@ -1164,12 +1164,16 @@ def _autobatch_argv(form: dict):
         argv += ["--max-swap", "26"]
     if form.get("ab_compile"):
         argv += ["--compile"]
-    bud = str(form.get("ab_budget") or "1.0").strip()
-    try:
-        if float(bud) < 1.0:  # the activation lever base anima_lora uses (needs compile)
-            argv += ["--activation_memory_budget", bud]
-    except ValueError:
-        pass
+    if form.get("ab_auto_budget"):
+        # auto-search the activation budget — ab_budget is the LOWEST to try.
+        argv += ["--auto-budget", "--min-budget", str(form.get("ab_budget") or "0.1").strip()]
+    else:
+        bud = str(form.get("ab_budget") or "1.0").strip()
+        try:
+            if float(bud) < 1.0:  # the activation lever base anima_lora uses (needs compile)
+                argv += ["--activation_memory_budget", bud]
+        except ValueError:
+            pass
     dit = (form.get("ab_dit") or form.get("pretrained_model_name_or_path") or form.get("dit") or "").strip()
     if dit:
         argv += ["--dit", dit]

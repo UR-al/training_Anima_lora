@@ -376,7 +376,8 @@
         </div>
         <div><label>max batch <span class="hint">탐색 상한</span></label><input id="ab_max_batch" type="number" value="8"></div>
         <div class="chk"><input id="ab_compile" type="checkbox" checked><label title="torch.compile 포함 측정 = 실제 학습과 동일(권장). 끄면 eager라 VRAM 과대평가 + 시도마다 첫 컴파일 ~30-60s.">torch.compile</label></div>
-        <div><label>budget <span class="hint">&lt;1.0 + compile = 실제 학습값(기본 0.99)</span></label><input id="ab_budget" type="number" step="0.05" min="0.1" max="1.0" value="0.99"></div>
+        <div><label>budget <span class="hint">고정값(기본 0.99) · 자동탐색 시 = 최저값</span></label><input id="ab_budget" type="number" step="0.05" min="0.1" max="1.0" value="0.99"></div>
+        <div class="chk"><input id="ab_auto_budget" type="checkbox"><label title="budget을 0.05 단위로 자동 탐색: 해상도별 최대 batch + 그걸 담는 '가장 빠른(높은) budget'을 찾음. compile 자동 켜짐. budget칸은 탐색 최저값.">budget 자동 탐색</label></div>
       </div>
       <div class="row3">
         <div><label>grad-ckpt 적용 해상도 <span class="hint">이 해상도만 체크포인트</span></label>
@@ -662,6 +663,7 @@ function runAutobatch(){
     ab_dit:(($('ab_dit').value||'').trim() || ($('dit_path').value||'').trim()),
     ab_gradckpt_res:[...document.querySelectorAll('.ab_gc:checked')].map(c=>c.value),
     ab_max_batch:$('ab_max_batch').value, ab_compile:$('ab_compile').checked, ab_budget:$('ab_budget').value,
+    ab_auto_budget:$('ab_auto_budget').checked,
     ab_blocks_to_swap:$('ab_blocks_to_swap').value, ab_auto_swap:$('ab_auto_swap').checked,
     ab_network_module:$('ab_network_module').value, ab_network_dim:$('ab_network_dim').value,
     ab_network_alpha:$('ab_network_alpha').value, ab_network_args:$('ab_network_args').value,
