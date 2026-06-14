@@ -890,11 +890,14 @@ def do_sample(
     # ER-SDE: the stochastic ER-SDE-Solver-3 (reuses the inference sampler so the
     # train-time preview matches AnimaLoraToolkit / inference.py --sampler er_sde).
     # It consumes the model's x0 estimate (denoised) rather than the raw velocity.
-    er_sde = None
-    if sampler == "er_sde":
+    solver = None  # ER-SDE or LCM sampler object (both share .step(latents, denoised, i))
+    if sampler in ("er_sde", "lcm"):
         from library.inference import sampling as _inf_sampling
 
-        er_sde = _inf_sampling.ERSDESampler(sigmas, seed=seed, device=device)
+        _Cls = (
+            _inf_sampling.LCMSampler if sampler == "lcm" else _inf_sampling.ERSDESampler
+        )
+        solver = _Cls(sigmas, seed=seed, device=device)
 
     # Padding mask (zeros = no padding) — resized in prepare_embedded_sequence to match latent dims
     padding_mask = torch.zeros(1, 1, latent_h, latent_w, dtype=dtype, device=device)
@@ -917,11 +920,11 @@ def do_sample(
             model_output = dit(x, t, crossattn_emb, padding_mask=padding_mask)
             model_output = model_output.float()
 
-        if er_sde is not None:
+        if solver is not None:
             # x0 estimate for flow-matching: denoised = x_t - σ_t * v (same as the
-            # inference path), then the ER-SDE update + stochastic noise injection.
+            # inference path); ER-SDE / LCM then consume the x0 estimate.
             denoised = x.float() - sigma.float() * model_output
-            x = er_sde.step(x.float(), denoised, i).to(dtype)
+            x = solver.step(x.float(), denoised, i).to(dtype)
         else:
             # Euler step: x_{t-1} = x_t - (sigma_t - sigma_{t-1}) * model_output
             dt = sigmas[i + 1] - sigma

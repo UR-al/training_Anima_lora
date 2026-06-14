@@ -87,8 +87,17 @@
   details.argroup>summary::-webkit-details-marker{display:none}
   details.argroup>summary:before{content:'▸ ';color:var(--mut)}details.argroup[open]>summary:before{content:'▾ '}
   .arggrid{display:block;padding:4px 12px 12px}
-  .argrow{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid #23262e}
+  .argrow{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid #23262e;position:relative}
   .argsub{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--txt);opacity:.7;margin:9px 0 1px;padding-top:5px;border-top:1px dashed var(--line)}
+  /* greyed auto-arg: don't dim the whole row (keep the name readable) — blur the
+     description and lay a translucent red "reason" overlay over the desc column, so the
+     row height never grows. */
+  .argrow.conflict-off{opacity:1}
+  .argrow.conflict-off .adesc{filter:blur(2px);opacity:.4}
+  .argrow .conflict-msg{position:absolute;left:230px;right:6px;top:3px;bottom:3px;margin:0;width:auto;flex-basis:auto;
+    display:none;align-items:center;gap:5px;padding:0 9px;border-radius:5px;overflow:hidden;pointer-events:none;
+    background:rgba(20,22,28,.5);color:#ff5d5d;font-weight:700;font-size:11px;line-height:1.2}
+  .argrow.conflict-off .conflict-msg{display:flex}
   .argrow input[type=checkbox]{width:auto;flex:0 0 auto;margin-top:3px}
   .argrow .an{flex:0 0 220px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-top:2px}
   .argrow .av{flex:0 0 150px;padding:5px 8px;font-size:12px}
@@ -594,13 +603,13 @@ function form(extra){
   // so save/load round-trips a typed-but-unchecked value too. `on` = the toggle;
   // launch only emits entries where on is truthy (see server _method_preset_extra).
   const adv=[]; (window._args||[]).forEach(a=>{
-    if(a.is_bool&&a.negatable){ const sel=$('advtri_'+a.dest); if(!sel) return;  // tri-state: launch emits --flag(on)/--no-flag(off)/nothing(default)
+    if(a.is_bool&&a.negatable){ const sel=$('advtri_'+a.dest); if(!sel) return;  // tri-state: launch emits --flag(True)/--no-flag(False)/nothing(default)
       adv.push({flag:a.flag,dest:a.dest,is_bool:true,negatable:true,tri:sel.value||'default'}); return; }
-    const en=$('adv_'+a.dest); if(!en) return;
-    const on=!!en.checked;
-    if(a.is_bool){ adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:on,value:true}); }  // push even when off → unchecking a default-on flag round-trips (setForm restores it.on; launch skips on:false)
-    else { const v=$('advv_'+a.dest); const val=v?v.value:'';
-      if(on||val!=='') adv.push({flag:a.flag,dest:a.dest,is_bool:false,nargs:a.nargs,on,value:val}); } });
+    if(a.is_bool){ const sel=$('advb_'+a.dest); if(!sel) return;  // plain bool: True/False dropdown → emit flag only when True
+      adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:sel.value==='True',value:true}); return; }
+    const en=$('adv_'+a.dest); if(!en) return;  // value-arg: enable checkbox + value input
+    const on=!!en.checked; const v=$('advv_'+a.dest); const val=v?v.value:'';
+    if(on||val!=='') adv.push({flag:a.flag,dest:a.dest,is_bool:false,nargs:a.nargs,on,value:val}); });
   f.adv=adv; return Object.assign(f,extra||{});
 }
 function setForm(f){ if(!f) return;
@@ -612,8 +621,9 @@ function setForm(f){ if(!f) return;
     // even if its flag spelling drifted (e.g. the --no-X → --X cache-toggle fix).
     const a=args.find(x=>x.dest===it.dest)||args.find(x=>x.flag===it.flag); if(!a) return;
     if(a.is_bool&&a.negatable){ const sel=$('advtri_'+a.dest); if(sel) sel.value=it.tri||'default'; return; }  // tri-state restore
+    if(a.is_bool){ const sel=$('advb_'+a.dest); if(sel) sel.value=(it.on?'True':'False'); return; }  // plain bool dropdown restore
     const en=$('adv_'+a.dest); if(en) en.checked=(it.on!==false);  // missing on (import/old saves) ⇒ enabled
-    const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
+    const v=$('advv_'+a.dest); if(v) v.value=(it.value==null?'':it.value); });
   // parse a loaded network_args string back into the structured controls (known
   // keys) + the extra textarea (everything else), so save/load round-trips.
   if(typeof f.network_args==='string'){
@@ -831,14 +841,14 @@ function renderArgs(groups){
       let ctl='';
       const ph=a.default!=null?esc(a.default):esc(a.type);
       // path-typed args get a 📁 browse button (folder for *_dir, file otherwise)
-      const isPath=/(_dir|_path)$/.test(a.dest)||['resume','in_json','network_weights','base_weights','log_tracker_config','train_data_dir','progress_jsonl','console_log_file'].includes(a.dest);
-      if(a.is_bool&&a.negatable) ctl=`<select class="av" id="advtri_${a.dest}"><option value="default">default (config)</option><option value="on">on</option><option value="off">off</option></select>`;  // tri-state: off ⇒ --no-flag (override a config-forced-true bool)
-      else if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
+      const isPath=/(_dir|_path|_file)$/.test(a.dest)||['resume','in_json','network_weights','base_weights','log_tracker_config','train_data_dir','progress_jsonl','console_log_file','config_file'].includes(a.dest);
+      if(a.is_bool&&a.negatable) ctl=`<select class="av" id="advtri_${a.dest}"><option value="default">default (config)</option><option value="on">True</option><option value="off">False</option></select>`;  // tri-state: False ⇒ --no-flag (override a config-forced-true bool)
+      else if(a.is_bool) ctl=`<select class="av" id="advb_${a.dest}"><option value="False">False</option><option value="True">True</option></select>`;  // plain bool: True emits the flag
       else if(a.choices&&a.choices.length) ctl=`<select class="av" id="advv_${a.dest}">`+a.choices.map(c=>`<option>${esc(c)}</option>`).join('')+`</select>`;
       else if(isPath){ const dir=/_dir$/.test(a.dest);
         ctl=`<span class="avp"><input id="advv_${a.dest}" placeholder="${ph}"><button class="pickbtn" title="Browse" onclick="${dir?`pickFolder('advv_${a.dest}')`:`pickFile('advv_${a.dest}','')`}">📁</button></span>`; }
       else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${ph}">`;
-      const lead=(a.is_bool&&a.negatable)?'<span style="flex:0 0 13px"></span>':`<input type="checkbox" id="adv_${a.dest}">`;
+      const lead=(a.is_bool)?'<span style="flex:0 0 13px"></span>':`<input type="checkbox" id="adv_${a.dest}">`;  // bools use a dropdown as the control; only value-args keep the enable checkbox
       return sub+`<div class="argrow" data-d="${a.dest}">${lead}<span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
     }).join('');
   });
@@ -896,6 +906,7 @@ function applyConflicts(){
 function _argDefault(d){ const a=(window._args||[]).find(x=>x.dest===d); return a?a.default:null; }
 function _argStr(d){ const v=$('advv_'+d); const s=v?(v.value||'').trim():''; return s!==''?s:(_argDefault(d)??''); }
 function _argBool(d){ const sel=$('advtri_'+d); if(sel){ if(sel.value==='on')return true; if(sel.value==='off')return false; return _argDefault(d)===true; }
+  const b=$('advb_'+d); if(b) return b.value==='True';  // plain bool True/False dropdown
   const c=$('adv_'+d); if(c) return !!c.checked; return _argDefault(d)===true; }
 function _gcActive(){ return [...document.querySelectorAll('#subsets .s_gradckpt')].some(c=>c.checked) || _argBool('gradient_checkpointing'); }
 const _SIGMOID_FAMILY=['sigmoid','shift','flux_shift'];
@@ -916,13 +927,19 @@ const ARG_DEPS=[
     why:{en:'mutually exclusive with blocks_to_swap and unsloth offload checkpointing', ko:'blocks_to_swap / unsloth 오프로드 체크포인팅과 상호 배타'}},
   {t:'unsloth_offload_checkpointing', ok:()=>!(parseInt(_argStr('blocks_to_swap')||'0',10)>0)&&!_argBool('cpu_offload_checkpointing'),
     why:{en:'mutually exclusive with blocks_to_swap and cpu offload checkpointing', ko:'blocks_to_swap / cpu 오프로드 체크포인팅과 상호 배타'}},
+  // loss_type gates the Huber/pseudo-Huber knobs (no-op for l1/l2)
+  {t:'huber_c', ok:()=>['huber','smooth_l1'].includes(_argStr('loss_type')), why:{en:'only for huber / smooth_l1 loss_type', ko:'loss_type이 huber/smooth_l1일 때만 적용'}},
+  {t:'huber_scale', ok:()=>['huber','smooth_l1'].includes(_argStr('loss_type')), why:{en:'only for huber / smooth_l1 loss_type', ko:'loss_type이 huber/smooth_l1일 때만 적용'}},
+  {t:'huber_schedule', ok:()=>['huber','smooth_l1'].includes(_argStr('loss_type')), why:{en:'only for huber / smooth_l1 loss_type', ko:'loss_type이 huber/smooth_l1일 때만 적용'}},
+  {t:'pseudo_huber_c', ok:()=>['huber','smooth_l1'].includes(_argStr('loss_type')), why:{en:'only for huber / smooth_l1 loss_type', ko:'loss_type이 huber/smooth_l1일 때만 적용'}},
+  // noise-aug sub-knob needs its parent enabled (a float > 0)
+  {t:'ip_noise_gamma_random_strength', ok:()=>parseFloat(_argStr('ip_noise_gamma')||'0')>0, why:{en:'only when ip_noise_gamma > 0', ko:'ip_noise_gamma > 0일 때만 적용'}},
 ];
 function _setArgConflict(dest, off, why){ const row=document.querySelector('.argrow[data-d="'+dest+'"]'); if(!row) return;
-  row.classList.toggle('conflict-off', off);
+  row.classList.toggle('conflict-off', off);  // CSS overlay/blur is driven by this class
   row.querySelectorAll('input,select').forEach(e=>{ e.disabled=off; });
-  let b=row.querySelector('.conflict-msg');
-  if(off){ if(!b){ b=document.createElement('div'); b.className='conflict-msg'; row.appendChild(b); } b.textContent='⚠ '+(_lang==='ko'?why.ko:why.en); b.style.display='block'; }
-  else if(b){ b.style.display='none'; } }
+  if(off){ let b=row.querySelector('.conflict-msg'); if(!b){ b=document.createElement('div'); b.className='conflict-msg'; row.appendChild(b); }
+    b.textContent='⚠ '+(_lang==='ko'?why.ko:why.en); } }
 function applyArgDeps(){ (ARG_DEPS||[]).forEach(d=>{ try{ _setArgConflict(d.t, !d.ok(), d.why); }catch(e){} }); }
 
 // ---- manual dataset builder ----
@@ -1043,7 +1060,7 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   fill($('method'),o.methods,'lora'); fill($('preset'),o.presets,'default');
   fill($('optimizer_type'),o.optimizers,'AdamW'); fill($('lr_scheduler_type'),o.schedulers,'cosine');
   fill($('network_module'),o.network_modules,'networks.lora_anima'); fill($('algo'),o.lycoris_algos,'lokr');
-  fill($('lycoris_preset'),o.lycoris_presets,'anima-attn-mlp');
+  fill($('lycoris_preset'),o.lycoris_presets,'unet-transformer-only');
   // Speed/OOM bench panel reuses the same option lists (dropdowns, not free text).
   if($('ab_optimizer_type')) fill($('ab_optimizer_type'),o.optimizers,'CAME');
   if($('ab_network_module')) fill($('ab_network_module'),o.network_modules,'networks.lycoris_anima');

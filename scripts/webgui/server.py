@@ -407,13 +407,11 @@ def list_lycoris_presets() -> list[str]:
     networks/lycoris_anima.py::_register_anima_presets), so a LoRA_Easy/kohya config with
     preset=unet-transformer-only trains here unchanged. 'ia3' / 'unet-convblock-only' stay
     omitted (IA3 algo / conv layers — N/A to the conv-free Anima DiT)."""
-    return [
-        *_ANIMA_LYCORIS_PRESETS,
-        "unet-transformer-only",
-        "attn-mlp",
-        "attn-only",
-        "full",
-    ]
+    # Stock names only — they now target the Anima DiT natively (see the registration
+    # above), so there's no need for parallel "anima-*" duplicates. The anima-* names
+    # still RESOLVE (via _ANIMA_LYCORIS_PRESETS) for back-compat with old saved configs,
+    # they're just not offered in the dropdown.
+    return ["unet-transformer-only", "attn-mlp", "attn-only", "full", "full-lin"]
 
 
 def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
@@ -427,7 +425,7 @@ def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
     lycoris's own stock default, which may miss the Anima blocks — inject anima-attn-mlp."""
     if any(a.startswith("preset=") for a in nargs):
         return nargs
-    fixed = _ANIMA_LYCORIS_PRESETS["anima-attn-mlp"]
+    fixed = "unet-transformer-only"  # registered Anima target (attn+mlp+final, 197 modules)
     print(
         f"[webgui] lycoris_anima: no preset given → preset={fixed}",
         file=sys.stderr,
@@ -2163,14 +2161,14 @@ def import_config(path: str) -> dict:
         # full) now target the DiT — keep them (round-trips via the select). A *.toml path
         # is a custom target file — keep it as a free network_arg. Anything else (ia3 /
         # unet-convblock-only / unknown) can't wrap the conv-free Anima DiT → default.
-        if pv in list_lycoris_presets():
-            form["lycoris_preset"] = pv
+        if pv in list_lycoris_presets() or pv in _ANIMA_LYCORIS_PRESETS:
+            form["lycoris_preset"] = pv  # stock name (now works) or back-compat anima-* alias
         elif pv.endswith(".toml"):
             na_dict["preset"] = pv  # flows to network_args_extra; builder folds it through
         else:
-            form["lycoris_preset"] = "anima-attn-mlp"
+            form["lycoris_preset"] = "unet-transformer-only"
             notes.append(
-                f"preset {pv!r} → anima-attn-mlp (not an Anima-targeting preset)."
+                f"preset {pv!r} → unet-transformer-only (not an Anima-targeting preset)."
             )
     leftover_na = _flatten_kv(na_dict)
     if leftover_na:

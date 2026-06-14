@@ -28,11 +28,13 @@ network_dim = 100000
 network_alpha = 1
 network_train_unet_only = true
 
-# LyCORIS targets the Anima blocks via this preset file (197 modules: attention +
-# MLP, no adaln). Swap to anima_full.toml for the broad 314-module target.
+# LyCORIS targets the Anima blocks via the stock preset NAME — the bridge registers the
+# Anima block classes into lycoris' PRESET dict (networks/lycoris_anima.py), so
+# unet-transformer-only = attention + MLP + final (197 modules, no adaln), exactly like
+# LoRA_Easy. Use "full" for the broad 314-module target (+adaln/embeds).
 network_args = [
   "algo=lokr",
-  "preset=configs/lycoris_presets/anima_attn_mlp.toml",
+  "preset=unet-transformer-only",
   "factor=4",
   "full_matrix=True",
   "enable_conv=False",
