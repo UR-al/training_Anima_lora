@@ -1217,6 +1217,7 @@ def launch(form: dict) -> dict:
             # Real-time tqdm bar in the GUI's cmd window (LoRA_Easy-style \r live
             # gauge), unless the user turned it off. Default on.
             _STATE["live_cmd"] = form.get("live_cmd_progress", True) is not False
+            _STATE["run_name"] = (form.get("output_name") or "").strip() or "training"
             if _STATE["live_cmd"]:
                 _start_progress_stream(form.get("cmd_progress_interval") or 0.5)
             else:
@@ -1322,11 +1323,13 @@ def _report_and_tail(job, n: int = 40):
 
 
 def _extract_tqdm_line(stdout_path):
-    """The latest tqdm progress line in a job's stdout.log.
+    """The latest tqdm progress line — of ANY kind (training, sampling, loading) —
+    in a job's stdout.log, for the throttled new-line fallback used when the live
+    tail is off. Sampling is no longer filtered out, so a sample pass is visible.
 
-    The daemon runs train.py detached (stdout → file). tqdm rewrites its bar in
-    place with \\r, so scan from the end for the line carrying it/s or s/it +
-    an N/total fraction. ``None`` if there isn't one yet.
+    The daemon runs train.py detached (stdout → file); tqdm rewrites its bar in
+    place with \\r, so scan from the end for the most recent line carrying it/s or
+    s/it + an N/total fraction. ``None`` if there isn't one yet.
     """
     if not stdout_path:
         return None
@@ -1335,23 +1338,8 @@ def _extract_tqdm_line(stdout_path):
     except OSError:
         return None
     lines = [s.strip() for s in data.replace("\r", "\n").split("\n")]
-    # The TRAINING bar carries `avr_loss`; the sampling / validation / decode bars
-    # ("Sampling: …", "Decoding: …") don't. Prefer the training bar so a sample
-    # pass doesn't hijack the cmd gauge (and its in-place countdown isn't mistaken
-    # for the run going backwards).
     for seg in reversed(lines):
-        if "avr_loss" in seg and ("it/s" in seg or "s/it" in seg):
-            return seg
-    # Fallback: any progress bar that ISN'T a sampling/decoding/validation one.
-    for seg in reversed(lines):
-        if (
-            seg
-            and ("it/s" in seg or "s/it" in seg)
-            and "/" in seg
-            and "Sampling" not in seg
-            and "Decoding" not in seg
-            and "Validat" not in seg
-        ):
+        if seg and ("it/s" in seg or "s/it" in seg) and "/" in seg:
             return seg
     return None
 
@@ -1384,11 +1372,13 @@ def _stop_progress_stream():
 
 
 def _start_progress_stream(interval=0.5):
-    """Mirror the ACTIVE daemon job's tqdm bar to the webgui console in REAL TIME,
-    updating in place with \\r — the LoRA_Easy live-gauge feel. Runs in a daemon
-    thread that follows whichever job is active (so it shows both the preprocess
-    bars and training). A new run (or stop) bumps the generation → the old thread
-    exits; it also self-exits ~12s after nothing is running.
+    """Tail the ACTIVE daemon job's stdout.log to the webgui console in REAL TIME —
+    a full, auto-scrolling training log (loading, training, AND sampling / decode
+    lines, nothing filtered), the way a normal trainer's console reads. Replaces the
+    old single-line \\r gauge so a sample pass is visible instead of hidden. Prints a
+    header with the run's output_name so logs are identifiable. Runs in a daemon
+    thread that follows whichever job is active; a new run (or stop) bumps the
+    generation → the old tailer exits; it also self-exits ~12s after nothing runs.
     """
     global _progress_gen
     _progress_gen += 1
@@ -1398,7 +1388,9 @@ def _start_progress_stream(interval=0.5):
     def _loop():
         from scripts.daemon import client as _dc
 
-        last, width, idle, err_last = None, 0, 0.0, None
+        pos = {}  # stdout_path → byte offset already mirrored
+        header_for = None  # active job id we've printed a header for
+        idle, err_last = 0.0, None
         while gen == _progress_gen:
             try:
                 cl = _dc.DaemonClient()
@@ -1411,25 +1403,46 @@ def _start_progress_stream(interval=0.5):
                     time.sleep(interval)
                     continue
                 idle = 0.0
-                seg = _extract_tqdm_line((cl.get(active) or {}).get("stdout_path"))
-                if seg and seg != last:
-                    # Superseded by a newer stream (stop→relaunch) mid-iteration:
-                    # bail before writing so two threads don't fight over \r stdout.
-                    if gen != _progress_gen:
-                        break
-                    pad = " " * max(0, width - len(seg))  # clear leftover of a longer prior line
-                    width = len(seg)
-                    sys.stdout.write("\r" + seg + pad)
+                path = (cl.get(active) or {}).get("stdout_path")
+                if not path:
+                    time.sleep(interval)
+                    continue
+                if active != header_for:
+                    # New job: print a header + start tailing from the CURRENT end so
+                    # a reconnect doesn't replay the whole log (a fresh launch's log is
+                    # near-empty, so this still catches it from the top).
+                    header_for = active
+                    name = _STATE.get("run_name") or "training"
+                    sys.stdout.write(f"\n=== Real-time training logs — {name} ===\n")
                     sys.stdout.flush()
-                    last = seg
+                    try:
+                        pos[path] = os.path.getsize(path)
+                    except OSError:
+                        pos[path] = 0
+                try:
+                    with open(path, "rb") as f:
+                        f.seek(pos.get(path, 0))
+                        chunk = f.read()
+                        pos[path] = f.tell()
+                except OSError:
+                    time.sleep(interval)
+                    continue
+                if chunk:
+                    if gen != _progress_gen:  # superseded mid-iteration → stop writing
+                        break
+                    # tqdm rewrites its bar in place with \r; turn each refresh into a
+                    # scrolling line so loading / training / sampling bars are all
+                    # visible (matches a normal trainer's console).
+                    sys.stdout.write(chunk.decode("utf-8", "replace").replace("\r", "\n"))
+                    sys.stdout.flush()
             except Exception as exc:  # noqa: BLE001 — best-effort console mirror
                 # Never crash the GUI over a transient daemon hiccup, but surface it
-                # ONCE (deduped) so a frozen bar is debuggable instead of silent.
+                # ONCE (deduped) so a frozen tail is debuggable instead of silent.
                 msg = f"{type(exc).__name__}: {exc}"
                 if msg != err_last:
                     err_last = msg
                     try:
-                        sys.stderr.write(f"\n[progress stream] {msg}\n")
+                        sys.stderr.write(f"\n[log stream] {msg}\n")
                         sys.stderr.flush()
                     except Exception:  # noqa: BLE001
                         pass

@@ -794,7 +794,10 @@
                 labels: [],
                 datasets: [{ label: 'LR', data: [], borderColor: '#ff6b35', backgroundColor: 'rgba(255,107,53,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }]
             },
-            options: chartDefaults
+            // LR is ~1e-4; Chart.js' default tooltip formats with Intl.NumberFormat
+            // (3 fraction digits) so it rounds to "0" — the axis ticks use a different
+            // path, which is why the Y-axis looked right. Format the value explicitly.
+            options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: (ctx) => 'LR: ' + (ctx.parsed.y == null ? ctx.parsed.y : Number(ctx.parsed.y).toExponential(3)) } } } }
         });
 
         function calcEMA(data, alpha) {
