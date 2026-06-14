@@ -89,7 +89,8 @@ def _trial(args, res, batch, swap, out_json, extra):
         speed = f"{sit:.3f} s/it ({1 / sit:.2f} it/s)" if sit else "측정됨"
         line = f"  [성공] {cfg}  ->  {speed}, peak {gib:.1f} GiB"
     else:
-        line = f"  [OOM ] {cfg}  ->  이 설정으로 OOM 났습니다 (peak {gib:.1f} GiB)"
+        # peak isn't captured on a caught OOM (it dies mid-step) → don't show 0.0.
+        line = f"  [OOM ] {cfg}  ->  이 설정으로 OOM 났습니다"
     print(line, flush=True)
     _TRIAL_LOG.append(line)
     return fits, rec

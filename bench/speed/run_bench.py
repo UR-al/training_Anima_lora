@@ -33,13 +33,23 @@ envelope land under ``bench/speed/results/<ts>[-<label>]/``.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
+from pathlib import Path
 
-import torch
-import torch.nn.functional as F
+# Run as a script (python bench/speed/run_bench.py) puts bench/speed on sys.path[0],
+# NOT the repo root — so root-level packages like LoraEasyCustomOptimizer (the
+# optimizer zoo, not pip-installed) aren't importable and CAME/etc. would fall back
+# to torch.optim. Put the repo root first so the zoo resolves like it does in train.py.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from bench._anima import add_common_args
-from bench._common import make_run_dir, write_result
+import torch  # noqa: E402 — after the repo-root sys.path bootstrap above
+import torch.nn.functional as F  # noqa: E402
+
+from bench._anima import add_common_args  # noqa: E402
+from bench._common import make_run_dir, write_result  # noqa: E402
 
 
 # --------------------------------------------------------------------------

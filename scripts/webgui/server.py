@@ -1486,10 +1486,10 @@ def _start_progress_stream(interval=0.5):
                 if chunk:
                     if gen != _progress_gen:  # superseded mid-iteration → stop writing
                         break
-                    # tqdm rewrites its bar in place with \r; turn each refresh into a
-                    # scrolling line so loading / training / sampling bars are all
-                    # visible (matches a normal trainer's console).
-                    sys.stdout.write(chunk.decode("utf-8", "replace").replace("\r", "\n"))
+                    # Write raw (keep \r) so a tqdm bar updates IN PLACE (one climbing
+                    # line) while real log lines (\n) scroll — the native trainer
+                    # console look: loading/sampling bars don't pile up line-by-line.
+                    sys.stdout.write(chunk.decode("utf-8", "replace"))
                     sys.stdout.flush()
             except Exception as exc:  # noqa: BLE001 — best-effort console mirror
                 # Never crash the GUI over a transient daemon hiccup, but surface it
