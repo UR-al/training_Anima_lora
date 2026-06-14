@@ -1577,6 +1577,16 @@ class Anima(nn.Module):
         for block in self.blocks:
             block.disable_gradient_checkpointing()
 
+    def set_gradient_checkpointing(self, enabled: bool):
+        """Flip ONLY the per-block checkpointing gate, leaving the offload variant
+        (cpu / unsloth) as configured by ``enable_gradient_checkpointing``. Cheap
+        (a bool per block, read live by ``Block.forward``) so the trainer can turn
+        checkpointing on per-batch — e.g. only for high-resolution buckets that
+        would otherwise OOM — without re-placing any weights. Call
+        ``enable_gradient_checkpointing(...)`` once first to set the variant."""
+        for block in self.blocks:
+            block.gradient_checkpointing = enabled
+
     def compile_blocks(
         self,
         backend: str = "inductor",

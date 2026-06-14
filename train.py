@@ -176,6 +176,25 @@ def _normalize_sample_args(args):
     args.sample_prompts = prompt_path
 
 
+def _gc_min_tokens(args) -> int:
+    """Token-count threshold for per-resolution gradient checkpointing, or 0 (off).
+
+    ``--gradient_checkpointing_min_resolution`` is a pixel edge (e.g. 1536); map it
+    to its tier's MIN token count so the per-batch gate keys on the real
+    compute/memory driver (token count), not the pixel edge — a 1024-tier bucket
+    can have a 1536-long side yet only ~4032 tokens, so an edge comparison would
+    misfire. Returns 0 when unset or the edge isn't a known tier."""
+    edge = getattr(args, "gradient_checkpointing_min_resolution", None)
+    if not edge:
+        return 0
+    from library.datasets.buckets import CONSTANT_TOKEN_BUCKETS_BY_EDGE
+
+    table = CONSTANT_TOKEN_BUCKETS_BY_EDGE.get(int(edge))
+    if not table:
+        return 0
+    return min((w // 16) * (h // 16) for (w, h) in table)
+
+
 class AnimaTrainer:
     def __init__(self):
         self.sample_prompts_te_outputs = None
@@ -860,6 +879,15 @@ class AnimaTrainer:
             )
             self._padding_mask_cache[padding_mask_key] = padding_mask
 
+        # Per-resolution gradient checkpointing: flip the cheap per-block gate by
+        # THIS batch's token count, so only big-tier buckets pay the recompute and
+        # the small tiers that already fit run full-speed. token = (W//16)*(H//16)
+        # = (W_lat//2)*(H_lat//2). No-op unless --gradient_checkpointing_min_resolution.
+        gc_min = _gc_min_tokens(args)
+        if gc_min:
+            toks = (h_latent // 2) * (w_latent // 2)
+            accelerator.unwrap_model(unet).set_gradient_checkpointing(toks >= gc_min)
+
         # Call model
         noisy_model_input = noisy_model_input.unsqueeze(
             2
@@ -1046,7 +1074,9 @@ class AnimaTrainer:
         self, args: argparse.Namespace, accelerator: Accelerator, unet: torch.nn.Module
     ) -> torch.nn.Module:
         # Re-apply with unsloth_offload if needed (after base has already enabled it).
-        if self._use_unsloth_offload_checkpointing and args.gradient_checkpointing:
+        if self._use_unsloth_offload_checkpointing and (
+            args.gradient_checkpointing or _gc_min_tokens(args)
+        ):
             unet.enable_gradient_checkpointing(unsloth_offload=True)
 
         if not self.is_swapping_blocks:
@@ -1771,7 +1801,11 @@ class AnimaTrainer:
                 f"load network weights from {args.network_weights}: {info}"
             )
 
-        if args.gradient_checkpointing:
+        # Per-resolution checkpointing (gradient_checkpointing_min_resolution) also
+        # needs the machinery configured — the per-step gate then turns it on only
+        # for big-tier batches. So enable when EITHER the global flag or the
+        # per-resolution threshold is set.
+        if args.gradient_checkpointing or _gc_min_tokens(args):
             if args.cpu_offload_checkpointing:
                 unet.enable_gradient_checkpointing(cpu_offload=True)
             else:
@@ -1811,7 +1845,13 @@ class AnimaTrainer:
             # recomputed metadata mismatch, torch #166926). Ckpt already
             # minimizes saved activations, so the cap buys nothing there.
             budget = float(getattr(args, "activation_memory_budget", 1.0) or 1.0)
-            if budget < 1.0 and not getattr(args, "gradient_checkpointing", False):
+            # Also skip when per-resolution checkpointing is active: the big-tier
+            # batches WILL checkpoint, and a budget-partitioned graph + checkpoint
+            # recompute trips the same CheckpointError (torch #166926).
+            ckpt_active = bool(
+                getattr(args, "gradient_checkpointing", False) or _gc_min_tokens(args)
+            )
+            if budget < 1.0 and not ckpt_active:
                 import torch._functorch.config as _functorch_config
 
                 _functorch_config.activation_memory_budget = budget

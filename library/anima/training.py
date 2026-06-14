@@ -395,6 +395,19 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
         help="Timestep distribution shift for rectified flow training (default: 1.0)",
     )
     parser.add_argument(
+        "--gradient_checkpointing_min_resolution",
+        type=int,
+        default=None,
+        help="Per-resolution gradient checkpointing: enable checkpointing ONLY for "
+        "batches whose tier edge is >= this value, so a big tier (e.g. 1536) fits "
+        "while the smaller tiers (1024/512) keep running full-speed without the "
+        "recompute cost. Valid edges: 512 768 896 1024 1280 1536. Implies "
+        "checkpointing for those batches even without --gradient_checkpointing, and "
+        "lets you avoid a global block-swap / activation_memory_budget that would "
+        "slow every tier. The cheap per-block gate is toggled per batch (no weight "
+        "movement); compile-safe (the gate is outside the compiled Block._forward).",
+    )
+    parser.add_argument(
         "--timestep_sampling",
         type=str,
         default="sigmoid",
