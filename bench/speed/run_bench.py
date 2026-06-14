@@ -83,17 +83,20 @@ def _default_dit() -> str | None:
 
 
 def _build_model(args, device, dtype):
-    """Frozen DiT + fresh plain LoRA, placed/checkpointed/compiled per args.
+    """Frozen DiT + a fresh adapter (network_module + network_args), placed /
+    checkpointed / compiled per args. So you can bench the REAL adapter — LoKr /
+    LoHa via networks.lycoris_anima, the native LoRA family, … — not just plain LoRA.
 
     Mirrors the train.py / harness ordering: load → freeze → create_network →
     apply_to → place (block-swap) → grad-ckpt → train() → compile LAST.
     """
+    import importlib
+
     from library.anima import weights as anima_utils
     from library.runtime.harness import (
         compile_dit_blocks_for_pool,
         place_dit_for_training,
     )
-    from networks.lora_anima.factory import create_network
 
     # Block swap needs the DiT to start on CPU so placement can selectively move.
     loading_device = "cpu" if args.blocks_to_swap > 0 else device
@@ -107,9 +110,16 @@ def _build_model(args, device, dtype):
     anima.requires_grad_(False)
     anima.reset_mod_guidance()
 
-    # Fresh, untrained plain LoRA (empty kwargs → vanilla LoRA, no ortho/hydra/
-    # routing). Matches train.py's create_network call shape.
-    network = create_network(
+    # Fresh, untrained adapter from the chosen module + network_args (key=value
+    # strings the module parses: algo, factor, full_matrix, preset, …). Mirrors
+    # train.py's generic create_network call; empty args → plain LoRA.
+    network_module = importlib.import_module(args.network_module)
+    net_kwargs = {}
+    for na in args.network_args or []:
+        if "=" in na:
+            k, v = na.split("=", 1)
+            net_kwargs[k] = v
+    network = network_module.create_network(
         1.0,
         args.network_dim,
         args.network_alpha,
@@ -117,6 +127,7 @@ def _build_model(args, device, dtype):
         [None],  # text_encoders (unused — apply_text_encoder=False below)
         anima,
         neuron_dropout=0.0,
+        **net_kwargs,
     )
     network.apply_to([], anima, apply_text_encoder=False, apply_unet=True)
     network.to(device=device, dtype=dtype)
@@ -144,7 +155,7 @@ def _build_model(args, device, dtype):
 
     # Compile LAST. Size the dynamo budget + seq-range to exactly the tiers this
     # run touches (the union of their token counts), so each shape traces once.
-    token_counts = sorted({_tier_bucket(t)[4] for t in args.tiers})
+    token_counts = sorted({_tier_bucket(t)[4] for t in _active_tiers(args)})
     compile_dit_blocks_for_pool(
         anima,
         token_counts,
@@ -164,6 +175,70 @@ def _tier_ckpt(args, tier: int) -> bool:
         return True
     res = args.gradient_checkpointing_resolutions
     return bool(res) and tier in res
+
+
+def _active_tiers(args) -> list:
+    """The tier edges this run touches (sizes the compile token budget)."""
+    if args.plan:
+        return [int(p.split(":")[0]) for p in args.plan]
+    return list(args.tiers)
+
+
+def _plan_cells(args) -> list:
+    """The (tier, batch) cells to measure. --plan gives explicit per-tier batches
+    (e.g. 512:4 1024:2 1536:1); otherwise the tiers x batch cartesian."""
+    if args.plan:
+        return [(int(p.split(":")[0]), int(p.split(":")[1])) for p in args.plan]
+    return [(t, b) for t in args.tiers for b in args.batch]
+
+
+def _measure_cell(anima, network, optimizer, args, tier, batch, device, dtype, cuda, gc_on):
+    """Warmup + timed run for one (tier, batch); returns its result record (or an
+    oom record). Catches OOM so a sweep continues; always frees afterward."""
+    w, h, w_lat, h_lat, tokens = _tier_bucket(tier)
+    tag = f"{tier}@b{batch}"
+    try:
+        bat = _make_batch(batch, w_lat, h_lat, device, dtype)
+        for _ in range(args.warmup):  # warmup (compile + caches), untimed
+            _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
+        if cuda:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        times = []
+        for _ in range(args.steps):
+            if cuda:
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
+            if cuda:
+                torch.cuda.synchronize()
+            times.append(time.perf_counter() - t0)
+        times.sort()
+        median = times[len(times) // 2]
+        mean = sum(times) / len(times)
+        peak_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
+        peak_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+        print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  {median:6.3f} s/it  "
+              f"{1.0 / median:6.2f} it/s  peak {peak_resv / 1024:5.2f} GiB")
+        del bat
+        return {
+            "tier": tier, "w": w, "h": h, "tokens": tokens,
+            "latent_shape": [batch, 16, h_lat, w_lat], "batch": batch,
+            "mean_s_per_it": mean, "median_s_per_it": median,
+            "std_s_per_it": (sum((x - mean) ** 2 for x in times) / len(times)) ** 0.5,
+            "it_per_s": 1.0 / median if median > 0 else None,
+            "peak_alloc_mib": round(peak_alloc, 1),
+            "peak_reserved_mib": round(peak_resv, 1),
+            "grad_ckpt": gc_on, "oom": False,
+        }
+    except torch.cuda.OutOfMemoryError:
+        print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  OOM")
+        return {"tier": tier, "batch": batch, "tokens": tokens, "grad_ckpt": gc_on, "oom": True}
+    finally:
+        optimizer.zero_grad(set_to_none=True)
+        if cuda:
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
 
 
 # --------------------------------------------------------------------------
@@ -250,7 +325,10 @@ def main() -> None:
     p.add_argument("--tiers", type=int, nargs="+", default=[512, 1024, 1536],
                    help="Resolution edges to sweep (512 768 896 1024 1280 1536).")
     p.add_argument("--batch", type=int, nargs="+", default=[1],
-                   help="Batch size(s) to sweep per tier.")
+                   help="Batch size(s) swept across all --tiers (cartesian).")
+    p.add_argument("--plan", type=str, nargs="*", default=None,
+                   help="Per-tier batches as tier:batch pairs (e.g. 512:4 1024:2 1536:1), "
+                   "overriding the --tiers x --batch cartesian — matches a real multiscale run.")
     p.add_argument("--steps", type=int, default=8, help="Timed steps per (tier,batch).")
     p.add_argument("--warmup", type=int, default=3, help="Untimed warmup steps (covers compile).")
     p.add_argument("--blocks_to_swap", type=int, default=0, help="DiT blocks to CPU-swap (0=off, max num_blocks-2).")
@@ -265,8 +343,13 @@ def main() -> None:
                    help="torch.compile partitioner saved-activation fraction (<1.0; ignored under grad-ckpt).")
     p.add_argument("--compile_dynamic_seq", action="store_true",
                    help="Compile one symbolic-seq graph instead of one per token count.")
-    p.add_argument("--network_dim", type=int, default=16, help="Plain-LoRA rank for the stand-in adapter.")
-    p.add_argument("--network_alpha", type=float, default=8.0, help="Plain-LoRA alpha.")
+    p.add_argument("--network_dim", type=int, default=16,
+                   help="Adapter rank. LoKr idiom: 100000 (+ factor in --network_args).")
+    p.add_argument("--network_alpha", type=float, default=8.0, help="Adapter alpha.")
+    p.add_argument("--network_module", type=str, default="networks.lora_anima",
+                   help="Adapter module — e.g. networks.lycoris_anima for LoKr / LoHa.")
+    p.add_argument("--network_args", type=str, nargs="*", default=[],
+                   help="key=value adapter args, e.g. algo=lokr factor=4 full_matrix=True preset=<toml>.")
     p.add_argument("--optimizer_type", type=str, default="AdamW",
                    help="Optimizer (real factory; e.g. AdamW, AdamW8bit, CAME). Affects VRAM faithfully.")
     p.add_argument("--learning_rate", type=float, default=1e-4)
@@ -293,65 +376,15 @@ def main() -> None:
     anima, network = _build_model(args, device, dtype)
     optimizer = _build_optimizer(args, network)
     n_train = sum(p_.numel() for p_ in network.parameters() if p_.requires_grad)
-    print(f"  trainable LoRA params: {n_train:,}")
+    print(f"  trainable adapter params: {n_train:,} ({args.network_module})")
 
     runs = []
-    for tier in args.tiers:
-        w, h, w_lat, h_lat, tokens = _tier_bucket(tier)
-        # Per-resolution gradient checkpointing: gate ckpt for THIS tier (cheap
-        # per-block toggle) so a big tier checkpoints while small tiers stay
-        # full-speed — exactly the training-time per-resolution behavior.
+    for tier, batch in _plan_cells(args):
         gc_on = _tier_ckpt(args, tier)
-        anima.set_gradient_checkpointing(gc_on)
-        for batch in args.batch:
-            tag = f"{tier}@b{batch}"
-            try:
-                bat = _make_batch(batch, w_lat, h_lat, device, dtype)
-                for _ in range(args.warmup):  # warmup (compile + caches), untimed
-                    _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
-                if cuda:
-                    torch.cuda.synchronize()
-                    torch.cuda.reset_peak_memory_stats()
-
-                times = []
-                for _ in range(args.steps):
-                    if cuda:
-                        torch.cuda.synchronize()
-                    t0 = time.perf_counter()
-                    _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
-                    if cuda:
-                        torch.cuda.synchronize()
-                    times.append(time.perf_counter() - t0)
-
-                times.sort()
-                median = times[len(times) // 2]
-                mean = sum(times) / len(times)
-                peak_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
-                peak_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
-                rec = {
-                    "tier": tier, "w": w, "h": h, "tokens": tokens,
-                    "latent_shape": [batch, 16, h_lat, w_lat], "batch": batch,
-                    "mean_s_per_it": mean, "median_s_per_it": median,
-                    "std_s_per_it": (sum((x - mean) ** 2 for x in times) / len(times)) ** 0.5,
-                    "it_per_s": 1.0 / median if median > 0 else None,
-                    "peak_alloc_mib": round(peak_alloc, 1),
-                    "peak_reserved_mib": round(peak_resv, 1),
-                    "grad_ckpt": gc_on,
-                    "oom": False,
-                }
-                runs.append(rec)
-                print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  {median:6.3f} s/it  "
-                      f"{1.0/median:6.2f} it/s  peak {peak_resv/1024:5.2f} GiB")
-                del bat
-            except torch.cuda.OutOfMemoryError:
-                runs.append({"tier": tier, "batch": batch, "tokens": tokens,
-                             "grad_ckpt": gc_on, "oom": True})
-                print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  OOM")
-            finally:
-                optimizer.zero_grad(set_to_none=True)
-                if cuda:
-                    torch.cuda.empty_cache()
-                    torch.cuda.reset_peak_memory_stats()
+        anima.set_gradient_checkpointing(gc_on)  # per-resolution ckpt gate
+        runs.append(_measure_cell(
+            anima, network, optimizer, args, tier, batch, device, dtype, cuda, gc_on
+        ))
 
     metrics = {
         "config": {
