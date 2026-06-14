@@ -1164,7 +1164,7 @@ def _autobatch_argv(form: dict):
         argv += ["--max-swap", "26"]
     if form.get("ab_compile"):
         argv += ["--compile"]
-    dit = (form.get("pretrained_model_name_or_path") or form.get("dit") or "").strip()
+    dit = (form.get("ab_dit") or form.get("pretrained_model_name_or_path") or form.get("dit") or "").strip()
     if dit:
         argv += ["--dit", dit]
     return argv, None
