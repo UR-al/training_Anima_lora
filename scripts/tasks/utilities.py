@@ -1,5 +1,5 @@
 """Misc utility entry-points: merge, comfy-batch, distill-prep, distill-mod,
-test-unit, update, export-logs, print-config."""
+test-unit, update, export-logs, print-config, bench-speed."""
 
 from __future__ import annotations
 
@@ -137,3 +137,13 @@ def cmd_print_config(extra):
             *extra,
         ]
     )
+
+
+def cmd_bench_speed(extra):
+    """Multi-resolution training-step speed + VRAM bench (synthetic, no dataset).
+
+    Sweeps tiers x batch inside one model config; run a few times with different
+    --label to compare grad-ckpt / block-swap / compile. Needs a free GPU.
+    e.g. python tasks.py bench-speed --tiers 512 1024 1536 --batch 1 2 --label base
+    """
+    run([PY, "bench/speed/run_bench.py", *extra])

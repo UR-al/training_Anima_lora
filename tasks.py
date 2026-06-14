@@ -276,6 +276,11 @@ COMMANDS = {
         utilities.cmd_vendor_sync,
         "Refresh custom_nodes/*/_vendor/ from live library/* (run before publishing nodes)",
     ),
+    "bench-speed": (
+        utilities.cmd_bench_speed,
+        "Multi-res training-step speed + VRAM bench (synthetic, no dataset). "
+        "--tiers 512 1024 1536 --batch 1 2 [--gradient_checkpointing|--blocks_to_swap N|--compile] --label X",
+    ),
     # ── Experimental ──────────────────────────────────────────────────
     # Unstable methods kept under exp-* so they don't pollute the main command
     # surface. May produce broken output, change without notice, or be removed.
