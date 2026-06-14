@@ -593,7 +593,10 @@ function form(extra){
   // Capture EVERY auto-arg's full state (toggle + value), not just checked ones —
   // so save/load round-trips a typed-but-unchecked value too. `on` = the toggle;
   // launch only emits entries where on is truthy (see server _method_preset_extra).
-  const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en) return;
+  const adv=[]; (window._args||[]).forEach(a=>{
+    if(a.is_bool&&a.negatable){ const sel=$('advtri_'+a.dest); if(!sel) return;  // tri-state: launch emits --flag(on)/--no-flag(off)/nothing(default)
+      adv.push({flag:a.flag,dest:a.dest,is_bool:true,negatable:true,tri:sel.value||'default'}); return; }
+    const en=$('adv_'+a.dest); if(!en) return;
     const on=!!en.checked;
     if(a.is_bool){ adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:on,value:true}); }  // push even when off → unchecking a default-on flag round-trips (setForm restores it.on; launch skips on:false)
     else { const v=$('advv_'+a.dest); const val=v?v.value:'';
@@ -608,6 +611,7 @@ function setForm(f){ if(!f) return;
     // Match by dest (stable) first, then flag — so a saved toggle still restores
     // even if its flag spelling drifted (e.g. the --no-X → --X cache-toggle fix).
     const a=args.find(x=>x.dest===it.dest)||args.find(x=>x.flag===it.flag); if(!a) return;
+    if(a.is_bool&&a.negatable){ const sel=$('advtri_'+a.dest); if(sel) sel.value=it.tri||'default'; return; }  // tri-state restore
     const en=$('adv_'+a.dest); if(en) en.checked=(it.on!==false);  // missing on (import/old saves) ⇒ enabled
     const v=$('advv_'+a.dest); if(v&&!a.is_bool) v.value=(it.value==null?'':it.value); });
   // parse a loaded network_args string back into the structured controls (known
@@ -827,12 +831,14 @@ function renderArgs(groups){
       const ph=a.default!=null?esc(a.default):esc(a.type);
       // path-typed args get a 📁 browse button (folder for *_dir, file otherwise)
       const isPath=/(_dir|_path)$/.test(a.dest)||['resume','in_json','network_weights','base_weights','log_tracker_config','train_data_dir','progress_jsonl','console_log_file'].includes(a.dest);
-      if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
+      if(a.is_bool&&a.negatable) ctl=`<select class="av" id="advtri_${a.dest}"><option value="default">default (config)</option><option value="on">on</option><option value="off">off</option></select>`;  // tri-state: off ⇒ --no-flag (override a config-forced-true bool)
+      else if(a.is_bool) ctl='<span class="av" style="color:var(--mut)">flag</span>';
       else if(a.choices&&a.choices.length) ctl=`<select class="av" id="advv_${a.dest}">`+a.choices.map(c=>`<option>${esc(c)}</option>`).join('')+`</select>`;
       else if(isPath){ const dir=/_dir$/.test(a.dest);
         ctl=`<span class="avp"><input id="advv_${a.dest}" placeholder="${ph}"><button class="pickbtn" title="Browse" onclick="${dir?`pickFolder('advv_${a.dest}')`:`pickFile('advv_${a.dest}','')`}">📁</button></span>`; }
       else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${ph}">`;
-      return sub+`<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
+      const lead=(a.is_bool&&a.negatable)?'<span style="flex:0 0 13px"></span>':`<input type="checkbox" id="adv_${a.dest}">`;
+      return sub+`<div class="argrow" data-d="${a.dest}">${lead}<span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
     }).join('');
   });
   applyArgHelpLang();  // show the active language for the freshly-rendered rows
@@ -854,7 +860,8 @@ const CONFLICT_RULES=[
   {sel:'.s_random_crop', causes:['use_vae_cache'], force:'uncheck', extra:'.s_rc_pad'},
   {sel:'.s_caption_dropout_rate', causes:['use_text_cache'], force:'zero'},
 ];
-function cacheOn(dest){ const c=$('adv_'+dest); return c?!!c.checked:false; }
+function cacheOn(dest){ const sel=$('advtri_'+dest); if(sel) return sel.value!=='off';  // tri-state: default/on ⇒ cache on (base.toml true), off ⇒ off
+  const c=$('adv_'+dest); return c?!!c.checked:false; }
 function conflictMsg(causes){ const ko=(_lang==='ko');
   const names=causes.map(c=>(CACHE_LABEL[c]?CACHE_LABEL[c][ko?'ko':'en']:c)).join(', ');
   return ko?(names+' 옵션으로 인해 강제로 비활성화되었습니다'):(names+' — force-disabled by this option'); }
@@ -1011,10 +1018,13 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   if(o.sam3_available) sn.textContent='SAM3 weights present at the default location.'; else sn.innerHTML='⚠ No SAM3 weights at the default <code>models/sam3/</code> — set the SAM3 checkpoint path above, or run <code>hf auth login</code> then <code>make download-sam3</code> (gated repo). MIT works without SAM3.';
   if(!o.mit_available) sn.innerHTML+=' ⚠ MIT model also missing (<code>make download-mit</code>).';
   renderArgs(o.arg_groups);
-  // use_vae_cache / use_text_cache are BooleanOptionalAction default-TRUE: reflect
-  // that (check them) so caching shows as on and its conflicts engage by default;
-  // re-evaluate conflicts whenever either toggles.
-  ['use_vae_cache','use_text_cache'].forEach(d=>{ const c=$('adv_'+d); if(c){ c.checked=true; c.addEventListener('change', applyConflicts); } });
+  // use_vae_cache / use_text_cache are BooleanOptionalAction default-TRUE → they now
+  // render as a tri-state select (default/on/off); "default" already means cache on
+  // (base.toml), so conflicts engage by default. Re-evaluate conflicts when either
+  // changes. (Fallback to the old checkbox if a build still renders one.)
+  ['use_vae_cache','use_text_cache'].forEach(d=>{ const sel=$('advtri_'+d);
+    if(sel){ sel.addEventListener('change', applyConflicts); }
+    else { const c=$('adv_'+d); if(c){ c.checked=true; c.addEventListener('change', applyConflicts); } } });
   addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
   applyConflicts();

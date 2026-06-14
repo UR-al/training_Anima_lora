@@ -322,8 +322,10 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     )
     parser.add_argument(
         "--torch_compile",
-        action="store_true",
-        help="use torch.compile (requires PyTorch 2.0)",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="use torch.compile (requires PyTorch 2.0). ON by default via base.toml; "
+        "pass --no-torch_compile to fall back to eager.",
     )
     parser.add_argument(
         "--target_res",
@@ -381,7 +383,8 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     )
     parser.add_argument(
         "--compile_dynamic_seq",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Marks the sequence-length axis dynamic (torch._dynamo.mark_dynamic), "
         "keeping all other dims static, instead of one static graph per "
         "token-count family. Under native_flatten the only varying in-block dim "
@@ -663,7 +666,11 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
 
 def add_masked_loss_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "--masked_loss", action="store_true", help="apply mask for calculating loss."
+        "--masked_loss",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="apply mask for calculating loss. ON by default via base.toml; pass "
+        "--no-masked_loss for a maskless run (or set masked_loss=false in the method).",
     )
 
 
@@ -1102,8 +1109,10 @@ def add_dataset_arguments(
     )
     parser.add_argument(
         "--skip_cache_check",
-        action="store_true",
-        help="skip the content validation of cache",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="skip the content validation of cache. ON by default via base.toml; pass "
+        "--no-skip_cache_check to re-enable cache validation.",
     )
     parser.add_argument(
         "--resize_interpolation",

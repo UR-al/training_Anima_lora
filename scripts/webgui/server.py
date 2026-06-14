@@ -354,6 +354,9 @@ def list_arg_groups() -> list:
             "flag": flag,
             "type": _arg_type(a),
             "is_bool": is_bool,
+            # BooleanOptionalAction → the GUI shows a tri-state (default/on/off) so a
+            # config-chain-forced-true flag can be turned OFF via --no-<flag>.
+            "negatable": a.__class__.__name__ == "BooleanOptionalAction",
             "cluster": _arg_cluster(dest)[1],  # sub-group header within the section
             "default": _jsonable(a.default),
             "help": (a.help or "").strip(),
@@ -877,6 +880,17 @@ def _method_preset_extra(form: dict):
     for item in form.get("adv") or []:
         flag = item.get("flag")
         if not flag:
+            continue
+        # Negatable bool (BooleanOptionalAction) → tri-state. "default" defers to the
+        # config chain (emit nothing); "on" emits the affirmative; "off" emits
+        # --no-<flag> to force it false even when base.toml/preset set it true (the
+        # stuck-on-bool fix — e.g. --no-compile_dynamic_seq for static compile).
+        if item.get("negatable"):
+            tri = item.get("tri") or "default"
+            if tri == "on":
+                extra.append(flag)
+            elif tri == "off":
+                extra.append("--no-" + flag[2:])  # --torch_compile → --no-torch_compile
             continue
         # `on` is the toggle: the GUI now saves typed-but-unchecked auto-args too
         # (for round-trip), so skip any explicitly toggled OFF. Missing `on`
@@ -2256,7 +2270,13 @@ def import_config(path: str) -> dict:
         if meta is None:  # not an anima arg (or curated → handled above)
             continue
         if meta["is_bool"]:
-            if v is True or str(v).strip().lower() in ("true", "1", "yes"):
+            truthy = v is True or str(v).strip().lower() in ("true", "1", "yes")
+            if meta.get("negatable"):
+                # tri-state: preserve an explicit false as "off" so a config that turns
+                # a base.toml-true flag back off round-trips (was silently dropped).
+                adv.append({"flag": meta["flag"], "is_bool": True, "negatable": True,
+                            "tri": "on" if truthy else "off"})
+            elif truthy:
                 adv.append({"flag": meta["flag"], "is_bool": True, "value": True})
         elif v not in (None, "", []):
             val = (
