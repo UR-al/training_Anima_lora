@@ -33,6 +33,18 @@ MONITOR_DIR.mkdir(exist_ok=True)
 # restore_monitor_state call save_state() while already holding the lock.
 _LOCK = threading.RLock()
 
+# Disk-write throttle: update_monitor() fires every logged step, and save_state()
+# json.dumps()-es the WHOLE state (up to 50k loss + 50k lr points) under the lock.
+# At every-step cadence that grows O(n) and the long lock-hold starves the HTTP
+# poll thread → the dashboard flips to "Offline" mid-run. Throttle the per-step
+# disk writes to ~1/s (loss/lr only); samples/config/resume force an immediate
+# write so nothing important is lost. Bounded by the in-memory 50k cap either way.
+_SAVE_MIN_INTERVAL = 1.0
+_LAST_SAVE_T = 0.0
+# Cap the points handed to /api/state so the per-poll copy + json.dumps stays O(1)
+# in wall-clock regardless of run length (the chart can't resolve more anyway).
+_STATE_MAX_POINTS = 5000
+
 
 def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, speed=None, sample_path=None, config=None):
     """更新监控状态"""
@@ -68,17 +80,26 @@ def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, 
         if MONITOR_STATE["start_time"] is None:
             MONITOR_STATE["start_time"] = time.time()
 
-        # 写入 JSON 文件
-        save_state()
+        # 写入 JSON 文件 — per-step writes are throttled; a new sample or config
+        # change forces an immediate persist (infrequent + worth not losing).
+        save_state(force=(sample_path is not None or config is not None))
 
 
-def save_state():
-    """保存状态到 JSON"""
+def save_state(force=False):
+    """保存状态到 JSON. ``force`` bypasses the per-step throttle (resume / sample /
+    config writes); the hot per-step path is throttled to ~1/s so json.dumps of the
+    growing history doesn't run every step under the lock."""
+    global _LAST_SAVE_T
     state_file = MONITOR_DIR / "state.json"
     try:
-        # Serialize under the lock for a consistent snapshot, then do the file
-        # write outside it to keep the lock-hold time short.
+        # Snapshot under the lock for consistency (and to guard _LAST_SAVE_T); the
+        # file write happens outside it to keep the lock-hold time short. When the
+        # throttle skips a write we never reach json.dumps at all — that's the win.
         with _LOCK:
+            now = time.time()
+            if not force and (now - _LAST_SAVE_T) < _SAVE_MIN_INTERVAL:
+                return
+            _LAST_SAVE_T = now
             payload = json.dumps(MONITOR_STATE)
         with open(state_file, "w", encoding="utf-8") as f:
             f.write(payload)
@@ -86,14 +107,25 @@ def save_state():
         pass
 
 
-def get_state():
-    """获取当前状态（线程安全快照：复制顶层列表，避免读取时被并发追加）"""
+def get_state(max_points: int = _STATE_MAX_POINTS):
+    """获取当前状态（线程安全快照：复制顶层列表，避免读取时被并发追加）.
+
+    Copies the top-level lists under the lock (cheap ref-copy), then downsamples
+    the loss/lr curves to ``max_points`` OUTSIDE the lock so a /api/state poll on a
+    long run can't hold the lock through a 50k-element json.dumps. Resume reads the
+    full on-disk state.json instead, so capping the live view loses no history."""
     with _LOCK:
         snapshot = MONITOR_STATE.copy()
-        snapshot["losses"] = list(MONITOR_STATE["losses"])
-        snapshot["lr_history"] = list(MONITOR_STATE["lr_history"])
+        losses = list(MONITOR_STATE["losses"])
+        lr_history = list(MONITOR_STATE["lr_history"])
         snapshot["samples"] = list(MONITOR_STATE["samples"])
-        return snapshot
+    if max_points and len(losses) > max_points:
+        losses = _downsample_uniform(losses, max_points)
+    if max_points and len(lr_history) > max_points:
+        lr_history = _downsample_uniform(lr_history, max_points)
+    snapshot["losses"] = losses
+    snapshot["lr_history"] = lr_history
+    return snapshot
 
 
 def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, total_steps=None, start_time=None, config=None):
@@ -121,7 +153,7 @@ def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, t
             MONITOR_STATE["start_time"] = start_time
         if config is not None:
             MONITOR_STATE["config"] = config
-        save_state()
+        save_state(force=True)  # resume rehydrate — persist immediately
 
 
 def load_persisted_state(run_name=None):

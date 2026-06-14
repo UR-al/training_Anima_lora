@@ -554,7 +554,7 @@ function form(extra){
   // launch only emits entries where on is truthy (see server _method_preset_extra).
   const adv=[]; (window._args||[]).forEach(a=>{ const en=$('adv_'+a.dest); if(!en) return;
     const on=!!en.checked;
-    if(a.is_bool){ if(on) adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:true,value:true}); }
+    if(a.is_bool){ adv.push({flag:a.flag,dest:a.dest,is_bool:true,on:on,value:true}); }  // push even when off → unchecking a default-on flag round-trips (setForm restores it.on; launch skips on:false)
     else { const v=$('advv_'+a.dest); const val=v?v.value:'';
       if(on||val!=='') adv.push({flag:a.flag,dest:a.dest,is_bool:false,nargs:a.nargs,on,value:val}); } });
   f.adv=adv; return Object.assign(f,extra||{});

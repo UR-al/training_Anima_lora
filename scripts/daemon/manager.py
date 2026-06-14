@@ -111,6 +111,13 @@ class JobManager:
             self._kill_job_tree(current)
         self._run_gate.set()  # release a worker parked on a paused queue
         self._queue.put(_SENTINEL)  # wake the worker so it can exit
+        # Give the worker a bounded moment to drain the sentinel and finalize the
+        # current job to disk before the process exits — otherwise the daemon thread
+        # can be killed mid-monitor. Bounded so a Ctrl-C while a job is actively
+        # monitored still returns promptly (the job is detached + atomically
+        # persisted, so reconcile re-attaches a live one on the next boot).
+        if self._worker.is_alive():
+            self._worker.join(timeout=3.0)
 
     # ----- submission / query -----
 

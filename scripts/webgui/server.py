@@ -1075,7 +1075,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     # cache root) containing `sig` on full success; a later launch with the SAME
     # sig (settings + source files unchanged) skips preprocess and trains directly.
     sig = _dataset_fingerprint(entries)
-    marker = f"{base_cache}/.anima_preprocess.json"
+    # Absolute so the daemon (which writes it from its OWN cwd) and the GUI (which
+    # reads it via _caches_ready) resolve to the SAME file even across checkouts —
+    # a relative path silently diverges and forces a needless re-preprocess.
+    marker = str(ROOT / base_cache / ".anima_preprocess.json")
     env = {
         "MANIFEST_FILE": str(mf_path),
         "PREPROCESS_MARKER": marker,
@@ -1366,11 +1369,12 @@ def _start_progress_stream(interval=0.5):
     def _loop():
         from scripts.daemon import client as _dc
 
-        last, width, idle = None, 0, 0.0
+        last, width, idle, err_last = None, 0, 0.0, None
         while gen == _progress_gen:
             try:
                 cl = _dc.DaemonClient()
                 active = (cl.health() or {}).get("active_job")
+                err_last = None  # daemon reachable → clear any prior error note
                 if not active:
                     idle += interval
                     if idle > 12.0:  # nothing running for a while → run finished
@@ -1380,13 +1384,26 @@ def _start_progress_stream(interval=0.5):
                 idle = 0.0
                 seg = _extract_tqdm_line((cl.get(active) or {}).get("stdout_path"))
                 if seg and seg != last:
+                    # Superseded by a newer stream (stop→relaunch) mid-iteration:
+                    # bail before writing so two threads don't fight over \r stdout.
+                    if gen != _progress_gen:
+                        break
                     pad = " " * max(0, width - len(seg))  # clear leftover of a longer prior line
                     width = len(seg)
                     sys.stdout.write("\r" + seg + pad)
                     sys.stdout.flush()
                     last = seg
-            except Exception:  # noqa: BLE001 — best-effort console mirror
-                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort console mirror
+                # Never crash the GUI over a transient daemon hiccup, but surface it
+                # ONCE (deduped) so a frozen bar is debuggable instead of silent.
+                msg = f"{type(exc).__name__}: {exc}"
+                if msg != err_last:
+                    err_last = msg
+                    try:
+                        sys.stderr.write(f"\n[progress stream] {msg}\n")
+                        sys.stderr.flush()
+                    except Exception:  # noqa: BLE001
+                        pass
             time.sleep(interval)
         try:
             sys.stdout.write("\n")
