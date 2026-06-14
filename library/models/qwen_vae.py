@@ -1836,6 +1836,20 @@ def convert_comfyui_state_dict(sd):
     return new_state_dict
 
 
+def load_vae_2d_or_3d(vae_path: str, use_2d: bool = False, **kwargs):
+    """Dispatch the Qwen-Image VAE load: image-only 2D (``--qwen_image_vae_2d``) or the
+    default 3D causal VAE. Both share ``load_vae``'s signature + the same
+    ``encode_pixels_to_latents`` / ``decode_to_pixels`` API, so callers swap transparently.
+    The 2D path is ~2x faster / ~1/3 peak VRAM for image latent caching and yields
+    numerically-equivalent latents for single frames (no re-caching needed). Lazy import of
+    the 2D module avoids a circular import (it imports building blocks from here)."""
+    if use_2d:
+        from library.models import qwen_vae_2d
+
+        return qwen_vae_2d.load_vae(vae_path, **kwargs)
+    return load_vae(vae_path, **kwargs)
+
+
 def load_vae(
     vae_path: str,
     input_channels: int = 3,

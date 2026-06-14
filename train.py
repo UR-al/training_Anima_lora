@@ -558,8 +558,9 @@ class AnimaTrainer:
         # (which decodes latents) is configured.
         if load_vae:
             logger.info("Loading Anima VAE...")
-            vae = qwen_image_autoencoder_kl.load_vae(
+            vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
                 args.vae,
+                use_2d=getattr(args, "qwen_image_vae_2d", False),
                 device="cpu",
                 disable_mmap=True,
                 spatial_chunk_size=args.vae_chunk_size,

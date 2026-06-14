@@ -41,6 +41,13 @@ def main() -> None:
         help="Disable VAE internal cache (default: True)",
     )
     parser.add_argument(
+        "--qwen_image_vae_2d",
+        action="store_true",
+        help="Use the image-only 2D Qwen-Image VAE for encoding (~2x faster, ~1/3 VRAM; "
+        "latents numerically equivalent to the 3D VAE for single images, so caches stay "
+        "valid). Recommended for this caching step.",
+    )
+    parser.add_argument(
         "--path_pattern",
         "--path-pattern",
         dest="path_pattern",
@@ -60,8 +67,9 @@ def main() -> None:
     dtype = torch.bfloat16
 
     print(f"Loading VAE from {args.vae} ...")
-    vae = qwen_image_autoencoder_kl.load_vae(
+    vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
         args.vae,
+        use_2d=args.qwen_image_vae_2d,
         device="cpu",
         disable_mmap=True,
         spatial_chunk_size=args.chunk_size,

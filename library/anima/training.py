@@ -480,6 +480,16 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
         help="Disable internal VAE caching mechanism to reduce memory usage. Encoding / decoding will also be faster, but this differs from official behavior."
         + "",
     )
+    parser.add_argument(
+        "--qwen_image_vae_2d",
+        action="store_true",
+        help="Use an image-only 2D reimplementation of the Qwen-Image VAE: the official "
+        "3D causal Conv3d weights are converted to equivalent 2D convs on load (last "
+        "temporal kernel slice), so no separate weight file and — for single images — the "
+        "latents are NUMERICALLY EQUIVALENT to the 3D VAE (no re-caching needed). ~2x "
+        "faster and ~1/3 the peak VRAM for latent caching / decode. Recommended for "
+        "preprocess. (Ported from sd-scripts 2a81265.)",
+    )
 
     # EMA arguments
     parser.add_argument(

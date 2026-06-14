@@ -206,6 +206,7 @@ _ROLE_RULES = [
             "blocks_to_swap", "block_swap", "channel_scal",
             "persistent_data", "pin_memory", "prefetch", "dataloader",
             "split_attn", "vae_chunk", "vae_disable_cache", "vae_batch_size",
+            "qwen_image_vae",  # --qwen_image_vae_2d (image-only 2D VAE, faster/lower-VRAM caching)
             "text_encoder_batch",  # sibling of vae_batch_size/train_batch_size (was falling to EXTRA)
             "unsloth", "cpu_offload", "fused_backward", "skip_until", "initial_",
         ],
@@ -289,7 +290,7 @@ _ARG_CLUSTERS = [
     ("Memory · checkpointing · offload", ["gradient_checkpointing", "blocks_to_swap", "block_swap", "cpu_offload", "unsloth", "fused_backward", "lowram", "highvram", "channel_scal"]),
     ("Attention", ["attn_mode", "attn_softmax", "flash", "sdpa", "sageattn", "flex", "split_attn"]),
     ("Dataloader", ["max_data_loader", "persistent_data", "pin_memory", "prefetch", "dataloader"]),
-    ("VAE / TE encode & cache", ["vae_chunk", "vae_batch", "vae_disable", "vae_encode", "text_encoder_batch"]),
+    ("VAE / TE encode & cache", ["vae_chunk", "vae_batch", "vae_disable", "vae_encode", "qwen_image_vae", "text_encoder_batch"]),
     ("Resume position", ["initial_epoch", "initial_step", "skip_until"]),
     ("Learning rate & schedule", ["unet_lr", "text_encoder_lr", "lr_scheduler", "lr_warmup", "lr_decay", "constantcosine"]),
     ("Loss", ["loss_type", "huber", "min_snr", "debiased", "masked_loss", "multiscale_loss", "max_grad_norm"]),
