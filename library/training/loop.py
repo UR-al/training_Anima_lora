@@ -38,6 +38,11 @@ from library.training.validation import run_validation
 
 logger = logging.getLogger(__name__)
 
+# Liveness early check: late enough that warmups / partial sidecar coverage have
+# fired at least once, early enough that a silently-dead feature aborts a strict
+# run in minutes instead of hours.
+LIVENESS_EARLY_CHECK_STEP = 25
+
 
 @dataclass
 class LoopState:
@@ -355,6 +360,8 @@ def run_training_loop(trainer, state: LoopState) -> None:
         )
         state.optimizer_train_fn()
 
+    _audit_liveness(trainer, state, where="run end")
+
     state.metadata["ss_training_finished_at"] = str(time.time())
 
 
@@ -388,6 +395,10 @@ def _run_epoch_steps(trainer, state: LoopState, epoch: int) -> None:
         if accelerator.sync_gradients:
             state.progress_bar.update(1)
             state.global_step += 1
+            if state.global_step == LIVENESS_EARLY_CHECK_STEP:
+                _audit_liveness(
+                    trainer, state, where=f"step {state.global_step} early check"
+                )
             _sample_at_step(trainer, state)
             state.saver.maybe_save_step(state.network, state.global_step, epoch)
             state.optimizer_train_fn()
@@ -714,3 +725,25 @@ def _run_adapter_epoch_hooks(trainer, state: LoopState) -> None:
     )
     for adapter in trainer._adapters:
         adapter.on_epoch_end(epoch_end_ctx)
+
+
+def _audit_liveness(trainer, state: LoopState, *, where: str) -> None:
+    """Flag a configured-ON aux loss that never consumed its aux input.
+
+    Reads the trainer-owned ``LivenessLedger`` that the per-step composer feeds.
+    Dead features ERROR-log with the greppable ``LIVENESS:`` prefix (main process
+    only); ``--liveness_strict`` escalates to a hard abort, evaluated on each
+    rank's own ledger so distributed runs fail together instead of hanging.
+    """
+    ledger = getattr(trainer, "_liveness", None)
+    if ledger is None:
+        return
+    if state.accelerator.is_main_process:
+        dead = ledger.audit(where=where)
+    else:
+        dead = ledger.dead_features()
+    if dead and bool(getattr(state.args, "liveness_strict", False)):
+        raise RuntimeError(
+            f"LIVENESS: configured-but-dead feature(s) at {where}: "
+            f"{', '.join(dead)} — aborting (--liveness_strict)"
+        )

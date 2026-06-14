@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import threading
@@ -729,7 +730,12 @@ def _method_preset_extra(form: dict):
     na = str(form.get("network_alpha", "")).strip()
     if na:
         extra += ["--network_alpha", na]
-    nargs = (form.get("network_args") or "").split()
+    _na = form.get("network_args") or ""
+    # Honor shell-style quotes so a value with spaces survives as one token
+    # (e.g. caption="a b"), but only when quotes are actually present — the plain
+    # `key=val key=val` case stays byte-identical to .split(), and Windows
+    # backslash paths (never quoted) are left untouched.
+    nargs = shlex.split(_na, posix=True) if ('"' in _na or "'" in _na) else _na.split()
     if "lycoris" in nm:  # lycoris.kohya OR networks.lycoris_anima (the Anima bridge)
         lp = (form.get("lycoris_preset") or "").strip()
         if lp:

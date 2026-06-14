@@ -72,6 +72,7 @@ from library.training import (
     AcceleratedBundle,
     CheckpointSaver,
     DatasetBundle,
+    LivenessLedger,
     LossContext,
     NetworkBundle,
     OptimizerBundle,
@@ -184,6 +185,10 @@ class AnimaTrainer:
         self._adapters: list[MethodAdapter] = []
         # Feature-specific per-run state — see ``RuntimeState``.
         self._state = RuntimeState()
+        # Liveness ledger: counts aux consumption per skip-if-missing loss; the
+        # loop audits it (step-25 early check + run end) and flags any
+        # configured-but-dead feature with a greppable ``LIVENESS:`` log line.
+        self._liveness = LivenessLedger()
 
     # region logging helpers
 
@@ -1240,7 +1245,9 @@ class AnimaTrainer:
         if func_loss is not None:
             loss_aux["func_loss"] = func_loss
 
-        composer = build_loss_composer(args, getattr(self, "_network", network))
+        composer = build_loss_composer(
+            args, getattr(self, "_network", network), ledger=self._liveness
+        )
 
         def _build_loss_ctx(aux: dict) -> LossContext:
             return LossContext(

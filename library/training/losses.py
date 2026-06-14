@@ -24,11 +24,14 @@ composer consumes them.
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 def add_custom_train_arguments(
@@ -39,6 +42,14 @@ def add_custom_train_arguments(
         type=float,
         default=None,
         help="gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by paper.",
+    )
+    parser.add_argument(
+        "--liveness_strict",
+        action="store_true",
+        help="Abort training if a skip-if-missing aux loss (repa / fera_fecl / "
+        "soft_tokens_contrastive / functional / flow_matching_vr) is configured ON "
+        "but never consumed its aux input (a silently-dead feature). Off by default: "
+        "the liveness audit only logs (LIVENESS:) at step 25 + run end.",
     )
     parser.add_argument(
         "--debiased_estimation_loss",
@@ -570,7 +581,90 @@ _STAGE_SCALAR_POST = ("multiscale",)
 # _STAGE_SCALAR_POST is consulted by LossComposer.compose via the hard-coded
 # multiscale branch; kept as a named constant for documentation / future
 # extensibility.
+
+
+# ---------------------------------------------------------------------------
+# Liveness ledger
+# ---------------------------------------------------------------------------
+#
+# Every handler that consumes a trainer/adapter-supplied aux key skips silently
+# when the key is missing — by design (partial sidecar coverage, validation
+# steps). The cost: "configured ON and 100% skipped" is indistinguishable from
+# "working" in the loss curve. The composer records, per active skip-if-missing
+# loss, whether its aux input was present on each train batch, and the loop
+# audits the counts (step-25 early check + run end) with a greppable
+# ``LIVENESS:`` prefix. Every LOSS_REGISTRY entry that reads ``ctx.aux`` should
+# have a probe here mirroring its aux gate.
+_LIVENESS_PROBES: dict[str, Callable[[dict], bool]] = {
+    "flow_matching_vr": lambda aux: (aux.get("vr") or {}).get("z") is not None,
+    "functional": lambda aux: aux.get("func_loss") is not None,
+    "fera_fecl": lambda aux: (aux.get("fera") or {}).get("z_base") is not None,
+    "soft_tokens_contrastive": lambda aux: (
+        aux.get("soft_tokens_contrastive") is not None
+    ),
+    "repa": lambda aux: aux.get("repa") is not None,
+}
+
+
+@dataclass
+class LivenessLedger:
+    """Per-run consumption counts for skip-if-missing aux losses.
+
+    Owned by the trainer (one per run), threaded into each per-step
+    ``build_loss_composer`` call. ``seen[name]`` counts train batches composed
+    while ``name`` was configured ON; ``live[name]`` counts those where its aux
+    input was actually consumed.
+    """
+
+    seen: dict[str, int] = field(default_factory=dict)
+    live: dict[str, int] = field(default_factory=dict)
+
+    def record(self, name: str, is_live: bool) -> None:
+        self.seen[name] = self.seen.get(name, 0) + 1
+        if is_live:
+            self.live[name] = self.live.get(name, 0) + 1
+
+    def dead_features(self) -> list[str]:
+        """Names configured ON for at least one train batch that never fired."""
+        return [
+            name
+            for name, seen in self.seen.items()
+            if seen > 0 and self.live.get(name, 0) == 0
+        ]
+
+    def audit(self, *, where: str) -> list[str]:
+        """Log one ``LIVENESS:`` line per not-fully-live feature; return the dead."""
+        dead: list[str] = []
+        for name, seen in self.seen.items():
+            if seen <= 0:
+                continue
+            live = self.live.get(name, 0)
+            if live == 0:
+                dead.append(name)
+                logger.error(
+                    "LIVENESS: loss '%s' is configured ON but consumed its aux "
+                    "input on 0/%d train batches (%s) — the producing forward/"
+                    "dispatch never ran; the run is training as if the feature "
+                    "were off.",
+                    name,
+                    seen,
+                    where,
+                )
+            elif live < seen:
+                logger.warning(
+                    "LIVENESS: loss '%s' active on %d/%d train batches "
+                    "(%.1f%%, %s) — partial aux coverage.",
+                    name,
+                    live,
+                    seen,
+                    100.0 * live / seen,
+                    where,
+                )
+        return dead
+
+
 __all__ = [
+    "LivenessLedger",
     "LossContext",
     "LossComposer",
     "LossFn",
@@ -599,8 +693,20 @@ class LossComposer:
     """
 
     active_losses: list[str]
+    # Liveness ledger — trainer-owned, survives across the per-step composer
+    # rebuilds. None (benches / tests) disables recording.
+    ledger: Optional[LivenessLedger] = None
 
     def compose(self, ctx: LossContext) -> torch.Tensor:
+        # Liveness recording (train batches only): note whether each active
+        # skip-if-missing loss actually had its aux input present. Pure
+        # bookkeeping — no effect on the composed loss / gradients.
+        if self.ledger is not None and ctx.is_train:
+            for name in self.active_losses:
+                probe = _LIVENESS_PROBES.get(name)
+                if probe is not None:
+                    self.ledger.record(name, bool(probe(ctx.aux)))
+
         per_sample = ctx.model_pred.new_zeros(ctx.model_pred.shape[0])
 
         # Stage 1: per-sample losses.
@@ -646,7 +752,12 @@ class LossComposer:
         return scalar
 
 
-def build_loss_composer(args: argparse.Namespace, network: object) -> LossComposer:
+def build_loss_composer(
+    args: argparse.Namespace,
+    network: object,
+    *,
+    ledger: Optional[LivenessLedger] = None,
+) -> LossComposer:
     """Inspect args + network and return the active LossComposer.
 
     Rules:
@@ -704,4 +815,4 @@ def build_loss_composer(args: argparse.Namespace, network: object) -> LossCompos
     if float(getattr(network, "_repa_weight", 0.0) or 0.0) > 0.0:
         active.append("repa")
 
-    return LossComposer(active_losses=active)
+    return LossComposer(active_losses=active, ledger=ledger)
