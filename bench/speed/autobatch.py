@@ -290,6 +290,14 @@ def main() -> None:
         speed = f"  {sit:.3f} s/it, {imgs:.2f} img/s  peak {gib:.1f} GiB" if sit else ""
         print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}{sw}{bd}{speed}")
 
+    if len([f for f in frontier if not f.get("oom")]) > 1:
+        print("\n  ⚠ these are PER-RESOLUTION maxes measured IN ISOLATION. A real run trains "
+              "all tiers in ONE process (their compiled graphs co-reside + the allocator "
+              "fragments across tier switches), so the COMBINED plan can OOM even though each "
+              "tier fits alone. Validate the actual plan with:\n"
+              "      run_bench --multiscale --plan " + " ".join(
+                  f"{f['res']}:{f['max_batch']}" for f in frontier if not f.get("oom")))
+
     out = write_result(run_dir, script=__file__, args=args,
                        metrics={"frontier": frontier, "max_batch": args.max_batch},
                        label=args.label, device=args.device)
