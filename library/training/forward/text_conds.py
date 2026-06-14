@@ -50,16 +50,18 @@ def prepare_text_conds(
     else:
         prompt_embeds, attn_mask, t5_input_ids, t5_attn_mask = text_encoder_conds
 
-    # H2D move
+    # H2D move. non_blocking lets these per-step copies overlap with compute when
+    # the dataloader pins memory (--dataloader_pin_memory); a safe no-op otherwise.
+    # H2D + same-stream consumer, so ordering is preserved (unlike D2H non_blocking).
     if crossattn_emb is None:
-        prompt_embeds = prompt_embeds.to(device, dtype=weight_dtype)
-        attn_mask = attn_mask.to(device)
-        t5_input_ids = t5_input_ids.to(device, dtype=torch.long)
-        t5_attn_mask = t5_attn_mask.to(device)
+        prompt_embeds = prompt_embeds.to(device, dtype=weight_dtype, non_blocking=True)
+        attn_mask = attn_mask.to(device, non_blocking=True)
+        t5_input_ids = t5_input_ids.to(device, dtype=torch.long, non_blocking=True)
+        t5_attn_mask = t5_attn_mask.to(device, non_blocking=True)
     else:
-        crossattn_emb = crossattn_emb.to(device, dtype=weight_dtype)
+        crossattn_emb = crossattn_emb.to(device, dtype=weight_dtype, non_blocking=True)
         if hasattr(network, "append_postfix"):
-            t5_attn_mask = t5_attn_mask.to(device)
+            t5_attn_mask = t5_attn_mask.to(device, non_blocking=True)
 
     # On-device caption dropout. The freshly-transferred GPU tensors are
     # not aliased to the dataloader's CPU copies, so we can write in-place

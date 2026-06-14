@@ -76,6 +76,15 @@ def get_optimizer(args, trainable_params) -> tuple[str, str, object]:
         assert args.gradient_accumulation_steps == 1, (
             "fused_backward_pass does not work with gradient_accumulation_steps > 1"
         )
+        # Honesty: the flag is validated but NOT wired into the per-step loop (no
+        # post_accumulate_grad_hook registration), so it currently has no effect.
+        # Anima's torch.compile + block-swap already cover the optimizer-step memory
+        # it would save; kept as a stub for sd-scripts parity. Don't fail silently.
+        logger.warning(
+            "fused_backward_pass is accepted but not yet implemented in this trainer "
+            "— it has NO effect. Remove the flag (its memory win is already covered "
+            "by torch.compile + block-swap)."
+        )
 
     optimizer_kwargs = {}
     if args.optimizer_args is not None and len(args.optimizer_args) > 0:

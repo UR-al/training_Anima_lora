@@ -1123,7 +1123,8 @@ class AnimaTrainer:
         with torch.no_grad():
             if "latents" in batch and batch["latents"] is not None:
                 latents = typing.cast(
-                    torch.FloatTensor, batch["latents"].to(accelerator.device)
+                    torch.FloatTensor,
+                    batch["latents"].to(accelerator.device, non_blocking=True),
                 )
             else:
                 if (
