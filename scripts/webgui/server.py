@@ -183,10 +183,14 @@ _ROLE_RULES = [
         "GENERAL",  # precision · seed · batch/grad · dataloader · all speed/VRAM/compile knobs
         [
             "mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8",
-            # gradient_checkpointing is per-SUBSET now (the subset builder's toggle →
-            # --gradient_checkpointing_resolutions); gradient_accumulation moved to the
-            # EXTRA catch-all (rarely needed once per-resolution ckpt lets you raise
-            # the batch). Both fall through to EXTRA if set there manually.
+            # Global gradient_checkpointing (checkpoint EVERY block, every tier) is a
+            # VRAM/speed knob, so it belongs HERE next to compile/swap/budget — NOT in
+            # SAVE, whose "checkpointing" keyword used to swallow it (it landed under
+            # "Save settings", which is nonsense). The subset builder's per-tier toggle
+            # (--gradient_checkpointing_resolutions) is the finer-grained alternative;
+            # this flag is the simple "checkpoint everything" escape hatch.
+            # gradient_accumulation stays in the EXTRA catch-all (rarely needed).
+            "gradient_checkpointing",
             "max_data_loader", "train_batch_size", "max_train_epochs",
             "max_train_steps", "prior_loss_weight", "lowram", "highvram",
             "compile", "dynamo", "cudagraph", "activation_memory",
