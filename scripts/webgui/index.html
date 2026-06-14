@@ -381,7 +381,8 @@
           <span class="chk"><input type="checkbox" class="ab_gc" value="1024"><label>1024</label></span>
           <span class="chk"><input type="checkbox" class="ab_gc" value="1536" checked><label>1536</label></span>
         </div>
-        <div><label>blocks_to_swap</label><input id="ab_blocks_to_swap" type="number" value="0"></div>
+        <div><label>blocks_to_swap <span class="hint">base</span></label><input id="ab_blocks_to_swap" type="number" value="0"></div>
+        <div class="chk"><input id="ab_auto_swap" type="checkbox"><label title="OOM이면 fit되는 최소 blocks_to_swap을 자동 탐색 (≤26). swap은 느리니 최소만 사용.">swap 자동 탐색</label></div>
       </div>
       <div class="row3">
         <div><label>network_module</label><input id="ab_network_module" value="networks.lycoris_anima"></div>
@@ -657,7 +658,7 @@ function runAutobatch(){
   const f={ ab_res:res,
     ab_gradckpt_res:[...document.querySelectorAll('.ab_gc:checked')].map(c=>c.value),
     ab_max_batch:$('ab_max_batch').value, ab_compile:$('ab_compile').checked,
-    ab_blocks_to_swap:$('ab_blocks_to_swap').value,
+    ab_blocks_to_swap:$('ab_blocks_to_swap').value, ab_auto_swap:$('ab_auto_swap').checked,
     ab_network_module:$('ab_network_module').value, ab_network_dim:$('ab_network_dim').value,
     ab_network_alpha:$('ab_network_alpha').value, ab_network_args:$('ab_network_args').value,
     ab_optimizer_type:$('ab_optimizer_type').value };

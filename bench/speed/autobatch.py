@@ -37,8 +37,8 @@ from bench._common import REPO_ROOT, make_run_dir, write_result
 RUN_BENCH = Path(__file__).resolve().parent / "run_bench.py"
 
 
-def _trial(args, res, batch, out_json, extra):
-    """Run one (res, batch) trial via run_bench; return (fits: bool, rec: dict).
+def _trial(args, res, batch, swap, out_json, extra):
+    """Run one (res, batch, swap) trial via run_bench; return (fits: bool, rec: dict).
 
     rec carries median_s_per_it / peak_reserved_mib / grad_ckpt when it fit. A
     missing out_json (fatal/uncatchable OOM crash) counts as not-fit.
@@ -49,7 +49,7 @@ def _trial(args, res, batch, out_json, extra):
         "--seed", str(args.seed),
         "--plan", f"{res}:{batch}",
         "--steps", str(args.steps), "--warmup", str(args.warmup),
-        "--blocks_to_swap", str(args.blocks_to_swap),
+        "--blocks_to_swap", str(swap),
         "--network_module", args.network_module,
         "--network_dim", str(args.network_dim), "--network_alpha", str(args.network_alpha),
         "--optimizer_type", args.optimizer_type, "--learning_rate", str(args.learning_rate),
@@ -78,15 +78,17 @@ def _trial(args, res, batch, out_json, extra):
     return (not rec.get("oom")), rec
 
 
-def _max_batch(args, res, cell_dir, extra):
-    """Binary-search the largest batch in [1, --max-batch] that fits at ``res``.
-    Returns (batch, rec) of the best fit, or None if even batch 1 OOMs."""
+def _max_batch(args, res, swap, cell_dir, extra):
+    """Binary-search the largest batch in [1, --max-batch] that fits at ``res`` with
+    ``swap`` blocks swapped. Returns (batch, rec) of the best fit, or None if even
+    batch 1 OOMs."""
     lo, hi, best = 1, args.max_batch, None
     while lo <= hi:
         mid = (lo + hi) // 2
-        fits, rec = _trial(args, res, mid, cell_dir / f"r{res}_b{mid}.json", extra)
+        fits, rec = _trial(args, res, mid, swap, cell_dir / f"r{res}_s{swap}_b{mid}.json", extra)
         gib = (rec.get("peak_reserved_mib") or 0) / 1024 if rec else 0.0
-        print(f"  res {res:>4} batch {mid}: {'fits' if fits else 'OOM '}"
+        sw = f" swap {swap}" if swap else ""
+        print(f"  res {res:>4} batch {mid}{sw}: {'fits' if fits else 'OOM '}"
               f"  peak {gib:5.2f} GiB", flush=True)
         if fits:
             best = (mid, rec)
@@ -94,6 +96,37 @@ def _max_batch(args, res, cell_dir, extra):
         else:
             hi = mid - 1
     return best
+
+
+def _search(args, res, cell_dir, extra):
+    """Find (batch, swap, rec) for this resolution. Max batch at the BASE swap
+    (--blocks_to_swap); if even batch 1 OOMs there and --max-swap permits it,
+    binary-search the MINIMAL blocks_to_swap that fits batch 1 (swap is slow → use
+    the least needed; fit is monotonic in swap), then the max batch at that swap.
+    Returns None if infeasible even at --max-swap."""
+    base = args.blocks_to_swap
+    best = _max_batch(args, res, base, cell_dir, extra)
+    if best is not None:
+        return best[0], base, best[1]
+    if args.max_swap <= base:
+        return None
+    lo, hi, fit_swap, fit_rec = base + 1, args.max_swap, None, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        fits, rec = _trial(args, res, 1, mid, cell_dir / f"r{res}_s{mid}_b1.json", extra)
+        gib = (rec.get("peak_reserved_mib") or 0) / 1024 if rec else 0.0
+        print(f"  res {res:>4} batch 1 swap {mid}: {'fits' if fits else 'OOM '}"
+              f"  peak {gib:5.2f} GiB", flush=True)
+        if fits:
+            fit_swap, fit_rec = mid, rec
+            hi = mid - 1
+        else:
+            lo = mid + 1
+    if fit_swap is None:
+        return None
+    # b1 fits at fit_swap, so this never returns None.
+    best = _max_batch(args, res, fit_swap, cell_dir, extra)
+    return (best[0], fit_swap, best[1]) if best else (1, fit_swap, fit_rec)
 
 
 def main() -> None:
@@ -112,7 +145,12 @@ def main() -> None:
                    help="Upper bound of the per-resolution batch search.")
     p.add_argument("--gradient_checkpointing_resolutions", type=int, nargs="*", default=None,
                    help="Resolutions that use gradient checkpointing during the search.")
-    p.add_argument("--blocks_to_swap", type=int, default=0)
+    p.add_argument("--blocks_to_swap", type=int, default=0,
+                   help="Base blocks_to_swap for every trial (0 = none).")
+    p.add_argument("--max-swap", dest="max_swap", type=int, default=0,
+                   help="If >0, when a resolution OOMs at --blocks_to_swap, AUTO-escalate "
+                   "blocks_to_swap up to this (<=26) to find the minimal swap that fits batch "
+                   "1, then the max batch at that swap. 0 = don't auto-search swap.")
     p.add_argument("--compile", action="store_true")
     # adapter + optimizer (forwarded to each run_bench trial)
     p.add_argument("--network_module", default="networks.lora_anima")
@@ -137,35 +175,36 @@ def main() -> None:
     cell_dir.mkdir(exist_ok=True)
     print(f"auto-batch search: res={args.res} max_batch={args.max_batch} "
           f"grad_ckpt_res={args.gradient_checkpointing_resolutions or []} "
+          f"base_swap={args.blocks_to_swap} max_swap={args.max_swap} "
           f"net={args.network_module} opt={args.optimizer_type}", flush=True)
 
     frontier = []
     for res in args.res:
-        best = _max_batch(args, res, cell_dir, extra)
-        if best is None:
-            print(f"res {res}: OOM even at batch 1", flush=True)
+        found = _search(args, res, cell_dir, extra)
+        if found is None:
+            print(f"res {res}: OOM even at batch 1 (max swap {args.max_swap})", flush=True)
             frontier.append({"res": res, "max_batch": 0, "oom": True})
         else:
-            b, rec = best
+            b, swap, rec = found
             frontier.append({
-                "res": res, "max_batch": b,
+                "res": res, "max_batch": b, "blocks_to_swap": swap,
                 "median_s_per_it": rec.get("median_s_per_it"),
                 "it_per_s": rec.get("it_per_s"),
                 "peak_reserved_mib": rec.get("peak_reserved_mib"),
                 "grad_ckpt": rec.get("grad_ckpt"),
             })
 
-    print(f"\n{'=' * 52}\nMAX FEASIBLE BATCH PER RESOLUTION\n{'=' * 52}")
+    print(f"\n{'=' * 56}\nMAX FEASIBLE BATCH PER RESOLUTION\n{'=' * 56}")
     for f in frontier:
         if f.get("oom"):
             print(f"  {f['res']:>4}:  OOM even at batch 1")
-        else:
-            sit = f.get("median_s_per_it") or 0.0
-            gib = (f.get("peak_reserved_mib") or 0) / 1024
-            gc = " +gc" if f.get("grad_ckpt") else ""
-            print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}  "
-                  f"{sit:.3f} s/it ({1 / sit:.2f} it/s)  peak {gib:.1f} GiB"
-                  if sit else f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}")
+            continue
+        sit = f.get("median_s_per_it") or 0.0
+        gib = (f.get("peak_reserved_mib") or 0) / 1024
+        gc = " +gc" if f.get("grad_ckpt") else ""
+        sw = f" swap{f['blocks_to_swap']}" if f.get("blocks_to_swap") else ""
+        speed = f"  {sit:.3f} s/it ({1 / sit:.2f} it/s)  peak {gib:.1f} GiB" if sit else ""
+        print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}{sw}{speed}")
 
     out = write_result(run_dir, script=__file__, args=args,
                        metrics={"frontier": frontier, "max_batch": args.max_batch},
