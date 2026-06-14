@@ -88,6 +88,7 @@
   details.argroup>summary:before{content:'▸ ';color:var(--mut)}details.argroup[open]>summary:before{content:'▾ '}
   .arggrid{display:block;padding:4px 12px 12px}
   .argrow{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid #23262e}
+  .argsub{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--txt);opacity:.7;margin:9px 0 1px;padding-top:5px;border-top:1px dashed var(--line)}
   .argrow input[type=checkbox]{width:auto;flex:0 0 auto;margin-top:3px}
   .argrow .an{flex:0 0 220px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-top:2px}
   .argrow .av{flex:0 0 150px;padding:5px 8px;font-size:12px}
@@ -814,7 +815,11 @@ function renderArgs(groups){
   document.querySelectorAll('.secargs > div[id^="args_"]').forEach(c=>c.innerHTML='');
   (groups||[]).forEach(g=>{
     const box=$('args_'+g.role); if(!box) return;  // EXTRA == server's "Other" relabel
+    let lastCl=null;
     box.innerHTML=g.args.map(a=>{ window._args.push(a);
+      // Sub-group header when the cluster changes (server clusters related flags —
+      // torch.compile / memory / dataloader / … — and orders them adjacently).
+      const cl=a.cluster||''; const sub=(cl&&cl!==lastCl)?`<div class="argsub">${esc(cl)}</div>`:''; lastCl=cl;
       const def=(a.default!=null?' (default: '+a.default+')':'');
       const descEn=(a.help||'')+def;
       const descKo=(ARG_HELP_KO[a.dest]||a.help||'')+def;  // Korean overlay, fall back to English
@@ -827,13 +832,14 @@ function renderArgs(groups){
       else if(isPath){ const dir=/_dir$/.test(a.dest);
         ctl=`<span class="avp"><input id="advv_${a.dest}" placeholder="${ph}"><button class="pickbtn" title="Browse" onclick="${dir?`pickFolder('advv_${a.dest}')`:`pickFile('advv_${a.dest}','')`}">📁</button></span>`; }
       else ctl=`<input class="av" id="advv_${a.dest}" placeholder="${ph}">`;
-      return `<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
+      return sub+`<div class="argrow" data-d="${a.dest}"><input type="checkbox" id="adv_${a.dest}"><span class="an">${esc(a.dest)}</span>${ctl}<span class="adesc" data-en="${esc(descEn)}" data-ko="${esc(descKo)}" title="${esc(descEn)}">${esc(descEn)}</span></div>`;
     }).join('');
   });
   applyArgHelpLang();  // show the active language for the freshly-rendered rows
 }
 function filterArgs(q){ q=(q||'').toLowerCase();
   document.querySelectorAll('.argrow').forEach(r=>{ r.style.display=(!q||r.dataset.d.includes(q))?'flex':'none'; });
+  document.querySelectorAll('.argsub').forEach(h=>{ h.style.display=q?'none':'block'; });  // sub-headers only make sense unfiltered
   if(q) document.querySelectorAll('details.section').forEach(d=>{
     if([...d.querySelectorAll('.argrow')].some(r=>r.dataset.d.includes(q))) d.open=true; });
 }

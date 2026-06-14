@@ -155,6 +155,9 @@ _CURATED_ARGS = {
     # it doesn't ALSO surface as a GENERAL auto-arg and emit a SECOND time — under
     # nargs="*" the later occurrence would silently clobber the per-subset union.
     "gradient_checkpointing_resolutions",
+    # Preprocess-only + driven by the curated tier checkboxes (which emit --target_res);
+    # inert at train time. Curate out so it doesn't also render as a BUCKET auto-arg.
+    "target_res",
     "dataset_config",
     "max_train_epochs",
     "output_name",
@@ -203,6 +206,7 @@ _ROLE_RULES = [
             "blocks_to_swap", "block_swap", "channel_scal",
             "persistent_data", "pin_memory", "prefetch", "dataloader",
             "split_attn", "vae_chunk", "vae_disable_cache", "vae_batch_size",
+            "text_encoder_batch",  # sibling of vae_batch_size/train_batch_size (was falling to EXTRA)
             "unsloth", "cpu_offload", "fused_backward", "skip_until", "initial_",
         ],
     ),
@@ -271,6 +275,40 @@ def _arg_role(dest: str) -> str:
     return "Other"
 
 
+# Within a section the auto-args used to sort alphabetically by dest, which scatters
+# related knobs (torch_compile sorts at 't', activation_memory_budget at 'a',
+# dynamo_backend at 'd'...). _ARG_CLUSTERS gives each arg a SUB-GROUP label + a stable
+# order, so the GUI renders related flags adjacently under a small sub-header. List
+# order == display order; first keyword substring-match wins. Unmatched → no header,
+# sorted last (alphabetical). Clusters are global but only surface in whatever section
+# actually holds their args (the "torch.compile" cluster never shows under OPTIMIZER).
+_ARG_CLUSTERS = [
+    ("Precision", ["mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8"]),
+    ("Batch & steps", ["train_batch_size", "max_train_epochs", "max_train_steps", "prior_loss_weight", "gradient_accumulation"]),
+    ("torch.compile", ["torch_compile", "compile_dynamic_seq", "compile_inductor_mode", "dynamo_backend", "cudagraph", "activation_memory"]),
+    ("Memory · checkpointing · offload", ["gradient_checkpointing", "blocks_to_swap", "block_swap", "cpu_offload", "unsloth", "fused_backward", "lowram", "highvram", "channel_scal"]),
+    ("Attention", ["attn_mode", "attn_softmax", "flash", "sdpa", "sageattn", "flex", "split_attn"]),
+    ("Dataloader", ["max_data_loader", "persistent_data", "pin_memory", "prefetch", "dataloader"]),
+    ("VAE / TE encode & cache", ["vae_chunk", "vae_batch", "vae_disable", "vae_encode", "text_encoder_batch"]),
+    ("Resume position", ["initial_epoch", "initial_step", "skip_until"]),
+    ("Learning rate & schedule", ["unet_lr", "text_encoder_lr", "lr_scheduler", "lr_warmup", "lr_decay", "constantcosine"]),
+    ("Loss", ["loss_type", "huber", "min_snr", "debiased", "masked_loss", "multiscale_loss", "max_grad_norm"]),
+    ("Timestep / flow-matching", ["timestep", "sigmoid", "weighting", "discrete_flow", "logit", "mode_scale", "t_min", "t_max"]),
+    ("Validation", ["validation", "validate", "cmmd", "max_validation"]),
+    ("Sampling", ["sample"]),
+    ("EMA", ["ema"]),
+]
+
+
+def _arg_cluster(dest: str) -> tuple:
+    """(rank, label) sub-group for an auto-arg. Unmatched → (high rank, "") so it
+    sorts last with no sub-header. See _ARG_CLUSTERS."""
+    for i, (label, kws) in enumerate(_ARG_CLUSTERS):
+        if any(k in dest for k in kws):
+            return (i, label)
+    return (len(_ARG_CLUSTERS), "")
+
+
 def _arg_type(action) -> str:
     cls = action.__class__.__name__
     if cls in ("_StoreTrueAction", "_StoreFalseAction", "BooleanOptionalAction"):
@@ -316,6 +354,7 @@ def list_arg_groups() -> list:
             "flag": flag,
             "type": _arg_type(a),
             "is_bool": is_bool,
+            "cluster": _arg_cluster(dest)[1],  # sub-group header within the section
             "default": _jsonable(a.default),
             "help": (a.help or "").strip(),
             "choices": [str(c) for c in a.choices] if a.choices else [],
@@ -329,7 +368,12 @@ def list_arg_groups() -> list:
     # plus anything unmatched) — the GUI's "add any --flag" bucket.
     label = {"Other": "EXTRA"}
     return [
-        {"role": label.get(r, r), "args": sorted(buckets[r], key=lambda x: x["dest"])}
+        {
+            "role": label.get(r, r),
+            "args": sorted(
+                buckets[r], key=lambda x: (_arg_cluster(x["dest"])[0], x["dest"])
+            ),
+        }
         for r in order
         if r in buckets
     ]
@@ -345,21 +389,16 @@ _ANIMA_LYCORIS_PRESETS = {
 
 
 def list_lycoris_presets() -> list[str]:
-    """LyCORIS target presets (network_args preset=...).
+    """LyCORIS target presets (network_args preset=...) offered in the GUI.
 
-    The ``anima-*`` entries are the ones that actually wrap the Anima DiT
-    (anima-attn-mlp → 197 modules, attention+MLP; anima-full → 314, +adaln/embeds).
-    The stock built-ins target standard diffusers class names and are kept only
-    for non-Anima base models."""
-    return [
-        *_ANIMA_LYCORIS_PRESETS,
-        "full",
-        "full-lin",
-        "attn-mlp",
-        "attn-only",
-        "unet-transformer-only",
-        "unet-convblock-only",
-    ]
+    Anima-only: ``anima-attn-mlp`` (197 modules, attention+MLP) and ``anima-full``
+    (314, +adaln/embeds) are the presets that actually wrap the Anima DiT. The stock
+    LyCORIS built-ins (full / attn-only / unet-transformer-only / …) target standard
+    diffusers class names absent from the Anima blocks — they wrap ~3 modules (a no-op
+    run), so they're NOT offered here. _force_anima_lycoris_preset still remaps any
+    stock name that arrives via import / the free network_args field, and the importer
+    treats any name not in this list as "remap to anima-attn-mlp"."""
+    return list(_ANIMA_LYCORIS_PRESETS)
 
 
 def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
