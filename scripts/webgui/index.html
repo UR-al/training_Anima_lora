@@ -622,6 +622,7 @@ function collectSubsets(){ return [...document.querySelectorAll('#subsets .subse
     num_repeats:g('.s_num_repeats'), keep_tokens:g('.s_keep_tokens'), caption_extension:g('.s_caption_extension'),
     caption_dropout_rate:g('.s_caption_dropout_rate'), batch_size:g('.s_batch'), tiers:(g('.s_tiers')||'').trim(),
     flip_aug:g('.s_flip_aug'), random_crop:g('.s_random_crop'),
+    gradient_checkpointing:g('.s_gradckpt'),
     random_crop_padding_percent:g('.s_rc_pad'), recursive:g('.s_recursive')};
   }).filter(s=>s.image_dir); }
 function updateMask(){ $('maskblock').style.display=$('mask_enable').checked?'block':'none'; }
@@ -833,6 +834,7 @@ function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.cla
       <div><label>batch_size <span class="hint">blank = dataset default</span></label><input class="s_batch" type="number" value="${esc(s.batch_size||'')}"></div>
       <div style="grid-column:span 2"><label>tiers <span class="hint">multi-scale: which tiers this subset trains at — e.g. <code>512</code> or <code>512,1024</code> · blank = all. Give one tier per subset for per-resolution batch/repeat (kohya per-block).</span></label><input class="s_tiers" value="${esc(Array.isArray(s.tiers)?s.tiers.join(','):(s.tiers||''))}" placeholder="all"></div>
     </div>
+    <div class="chk"><input type="checkbox" class="s_gradckpt" ${s.gradient_checkpointing?'checked':''}><label title="Gradient checkpointing ONLY for this subset's resolution tier(s). Use it on a big tier (e.g. 1536) so it fits — then raise its batch_size — while the smaller tiers keep running full-speed (no recompute). Emits --gradient_checkpointing_resolutions for the checked subsets' tiers; no global gradient_checkpointing / block-swap / budget needed.">gradient checkpointing (this subset's tier only)</label></div>
     <div class="chk"><input type="checkbox" class="s_recursive" ${s.recursive?'checked':''}><label>recursive (walk subfolders)</label></div>`;
   $('subsets').appendChild(div);
   applyConflicts();  // a fresh subset row inherits the active cache conflicts

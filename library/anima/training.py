@@ -408,6 +408,17 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
         "movement); compile-safe (the gate is outside the compiled Block._forward).",
     )
     parser.add_argument(
+        "--gradient_checkpointing_resolutions",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Explicit per-resolution gradient checkpointing: enable checkpointing "
+        "ONLY for batches in these tier edges (e.g. 1536, or 1280 1536). The GUI's "
+        "per-subset checkpointing toggles emit this. Keys on token count, so a "
+        "resolution checkpoints if ANY enabled subset uses that tier. Unions with "
+        "--gradient_checkpointing_min_resolution.",
+    )
+    parser.add_argument(
         "--timestep_sampling",
         type=str,
         default="sigmoid",

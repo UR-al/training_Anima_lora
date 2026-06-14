@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -182,7 +183,10 @@ _ROLE_RULES = [
         "GENERAL",  # precision · seed · batch/grad · dataloader · all speed/VRAM/compile knobs
         [
             "mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8",
-            "gradient_checkpoint", "gradient_accumulation",
+            # gradient_checkpointing is per-SUBSET now (the subset builder's toggle →
+            # --gradient_checkpointing_resolutions); gradient_accumulation moved to the
+            # EXTRA catch-all (rarely needed once per-resolution ckpt lets you raise
+            # the batch). Both fall through to EXTRA if set there manually.
             "max_data_loader", "train_batch_size", "max_train_epochs",
             "max_train_steps", "prior_loss_weight", "lowram", "highvram",
             "compile", "dynamo", "cudagraph", "activation_memory",
@@ -747,6 +751,25 @@ def _method_preset_extra(form: dict):
             nargs = [f"algo={algo}"] + nargs
     if nargs:
         extra += ["--network_args", *nargs]
+
+    # Per-subset gradient checkpointing → --gradient_checkpointing_resolutions: the
+    # union of tier edges of subsets whose checkpointing toggle is on (a tier
+    # checkpoints if ANY subset using it has it checked). Blank tiers on a checked
+    # subset = "all", so fall back to the globally-enabled target_res tiers. Lets a
+    # big tier (e.g. 1536) fit via checkpointing while the smaller tiers stay
+    # full-speed — no global gradient_checkpointing / block-swap / budget needed.
+    _global_tiers = [int(t) for t in (form.get("target_res") or []) if str(t).strip()]
+    _gc_edges: set = set()
+    for s in form.get("subsets") or []:
+        if not s.get("gradient_checkpointing"):
+            continue
+        ts = [int(x) for x in re.findall(r"\d+", str(s.get("tiers") or ""))]
+        _gc_edges.update(ts or _global_tiers)
+    if _gc_edges:
+        extra += [
+            "--gradient_checkpointing_resolutions",
+            *[str(e) for e in sorted(_gc_edges)],
+        ]
 
     # Auto-generated "all arguments" section: each enabled item is
     # {flag, value, is_bool, nargs}. Only enabled args are emitted (the rest fall
