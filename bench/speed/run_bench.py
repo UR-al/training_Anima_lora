@@ -125,7 +125,11 @@ def _build_model(args, device, dtype):
     # Place on device (+ arm forward/backward block swap when requested).
     place_dit_for_training(anima, device, blocks_to_swap=args.blocks_to_swap)
 
-    if args.gradient_checkpointing:
+    # Configure the checkpointing machinery (offload variant) if grad-ckpt is on
+    # globally OR per-resolution; the per-tier toggle in the measure loop then turns
+    # the gate on/off so a tier checkpoints only when it should — exactly the
+    # training-time per-resolution behavior.
+    if args.gradient_checkpointing or args.gradient_checkpointing_resolutions:
         gc_kwargs = {}
         if args.unsloth_offload_checkpointing:
             gc_kwargs["unsloth_offload"] = True
@@ -148,9 +152,18 @@ def _build_model(args, device, dtype):
         dynamic_seq=args.compile_dynamic_seq,
         mode=args.compile_mode,
         activation_memory_budget=args.activation_memory_budget,
-        grad_ckpt=args.gradient_checkpointing,
+        grad_ckpt=bool(args.gradient_checkpointing or args.gradient_checkpointing_resolutions),
     )
     return anima, network
+
+
+def _tier_ckpt(args, tier: int) -> bool:
+    """Whether THIS tier should gradient-checkpoint: the global flag checkpoints
+    every tier; otherwise only the edges in --gradient_checkpointing_resolutions."""
+    if args.gradient_checkpointing:
+        return True
+    res = args.gradient_checkpointing_resolutions
+    return bool(res) and tier in res
 
 
 # --------------------------------------------------------------------------
@@ -241,8 +254,13 @@ def main() -> None:
     p.add_argument("--steps", type=int, default=8, help="Timed steps per (tier,batch).")
     p.add_argument("--warmup", type=int, default=3, help="Untimed warmup steps (covers compile).")
     p.add_argument("--blocks_to_swap", type=int, default=0, help="DiT blocks to CPU-swap (0=off, max num_blocks-2).")
+    p.add_argument("--gradient_checkpointing_resolutions", type=int, nargs="*", default=None,
+                   help="Per-resolution gradient checkpointing (matches training): checkpoint ONLY "
+                   "these tier edges (e.g. 1536), so the big tier fits while the smaller tiers stay "
+                   "full-speed. The per-tier gate is toggled in the measure loop. --gradient_checkpointing "
+                   "(global) still checkpoints every tier.")
     p.add_argument("--unsloth_offload_checkpointing", action="store_true",
-                   help="With --gradient_checkpointing, use the Unsloth async CPU-offload variant.")
+                   help="With gradient checkpointing, use the Unsloth async CPU-offload variant.")
     p.add_argument("--activation_memory_budget", type=float, default=1.0,
                    help="torch.compile partitioner saved-activation fraction (<1.0; ignored under grad-ckpt).")
     p.add_argument("--compile_dynamic_seq", action="store_true",
@@ -269,8 +287,9 @@ def main() -> None:
     cuda = device.type == "cuda"
 
     run_dir = make_run_dir("speed", label=args.label)
+    gc_desc = (args.gradient_checkpointing_resolutions or args.gradient_checkpointing)
     print(f"building model (dit={args.dit}, dim={args.network_dim}, swap={args.blocks_to_swap}, "
-          f"grad_ckpt={args.gradient_checkpointing}, compile={args.compile})…")
+          f"grad_ckpt={gc_desc}, compile={args.compile})…")
     anima, network = _build_model(args, device, dtype)
     optimizer = _build_optimizer(args, network)
     n_train = sum(p_.numel() for p_ in network.parameters() if p_.requires_grad)
@@ -279,6 +298,11 @@ def main() -> None:
     runs = []
     for tier in args.tiers:
         w, h, w_lat, h_lat, tokens = _tier_bucket(tier)
+        # Per-resolution gradient checkpointing: gate ckpt for THIS tier (cheap
+        # per-block toggle) so a big tier checkpoints while small tiers stay
+        # full-speed — exactly the training-time per-resolution behavior.
+        gc_on = _tier_ckpt(args, tier)
+        anima.set_gradient_checkpointing(gc_on)
         for batch in args.batch:
             tag = f"{tier}@b{batch}"
             try:
@@ -312,15 +336,17 @@ def main() -> None:
                     "it_per_s": 1.0 / median if median > 0 else None,
                     "peak_alloc_mib": round(peak_alloc, 1),
                     "peak_reserved_mib": round(peak_resv, 1),
+                    "grad_ckpt": gc_on,
                     "oom": False,
                 }
                 runs.append(rec)
-                print(f"  {tag:>12}  {tokens:>5} tok  {median:6.3f} s/it  "
+                print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  {median:6.3f} s/it  "
                       f"{1.0/median:6.2f} it/s  peak {peak_resv/1024:5.2f} GiB")
                 del bat
             except torch.cuda.OutOfMemoryError:
-                runs.append({"tier": tier, "batch": batch, "tokens": tokens, "oom": True})
-                print(f"  {tag:>12}  {tokens:>5} tok  OOM")
+                runs.append({"tier": tier, "batch": batch, "tokens": tokens,
+                             "grad_ckpt": gc_on, "oom": True})
+                print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  OOM")
             finally:
                 optimizer.zero_grad(set_to_none=True)
                 if cuda:
@@ -331,6 +357,7 @@ def main() -> None:
         "config": {
             "dtype": args.dtype, "attn_mode": args.attn_mode,
             "gradient_checkpointing": args.gradient_checkpointing,
+            "gradient_checkpointing_resolutions": args.gradient_checkpointing_resolutions,
             "cpu_offload_checkpointing": args.cpu_offload_checkpointing,
             "unsloth_offload_checkpointing": args.unsloth_offload_checkpointing,
             "blocks_to_swap": args.blocks_to_swap,
