@@ -51,6 +51,7 @@ def _trial(args, res, batch, swap, out_json, extra):
         "--plan", f"{res}:{batch}",
         "--steps", str(args.steps), "--warmup", str(args.warmup),
         "--blocks_to_swap", str(swap),
+        "--activation_memory_budget", str(args.activation_memory_budget),
         "--network_module", args.network_module,
         "--network_dim", str(args.network_dim), "--network_alpha", str(args.network_alpha),
         "--optimizer_type", args.optimizer_type, "--learning_rate", str(args.learning_rate),
@@ -81,7 +82,9 @@ def _trial(args, res, batch, swap, out_json, extra):
     # Human-readable per-trial line: the exact config + OOM-or-success-with-speed.
     gc = res in (args.gradient_checkpointing_resolutions or [])
     net = args.network_module.split(".")[-1]
-    cfg = (f"res={res} batch={batch} swap={swap}" + (" +gc" if gc else "")
+    bud = f" bud={args.activation_memory_budget}" if args.activation_memory_budget < 1.0 else ""
+    cmp = " +compile" if args.compile else ""
+    cfg = (f"res={res} batch={batch} swap={swap}" + (" +gc" if gc else "") + bud + cmp
            + f"  [{net} / {args.optimizer_type}]")
     gib = (rec.get("peak_reserved_mib") or 0) / 1024
     if fits:
@@ -162,7 +165,14 @@ def main() -> None:
                    help="If >0, when a resolution OOMs at --blocks_to_swap, AUTO-escalate "
                    "blocks_to_swap up to this (<=26) to find the minimal swap that fits batch "
                    "1, then the max batch at that swap. 0 = don't auto-search swap.")
-    p.add_argument("--compile", action="store_true")
+    p.add_argument("--compile", action="store_true",
+                   help="torch.compile the blocks (needed for --activation_memory_budget; "
+                   "matches real training).")
+    p.add_argument("--activation_memory_budget", type=float, default=1.0,
+                   help="torch.compile partitioner activation fraction (<1.0 recomputes cheap "
+                   "intermediates → less VRAM, mild slowdown). Needs --compile, ignored under "
+                   "grad-ckpt. THIS is the lever base anima_lora uses to fit big batches eager "
+                   "OOMs — pass e.g. 0.4 + --compile to match real training.")
     # adapter + optimizer (forwarded to each run_bench trial)
     p.add_argument("--network_module", default="networks.lora_anima")
     p.add_argument("--network_dim", type=int, default=16)
