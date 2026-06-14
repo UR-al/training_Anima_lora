@@ -349,6 +349,34 @@ def list_lycoris_presets() -> list[str]:
     ]
 
 
+def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
+    """Guarantee the ``networks.lycoris_anima`` bridge targets an Anima preset.
+
+    Stock LyCORIS presets (``unet-transformer-only`` …) list standard diffusers
+    class names that match **nothing** in the Anima DiT, so the network wraps 0
+    modules and ``get_optimizer`` dies with "optimizer got an empty parameter
+    list". A *missing* preset is just as bad (lycoris.kohya falls back to its own
+    stock default). Normalize the **effective** ``preset=`` (the last one wins
+    once train.py folds network_args into a kwargs dict) so the structured select,
+    a stray ``preset=`` typed into the extra field, and the no-preset case are all
+    covered. An explicit ``*.toml`` path (an Anima or user-supplied target file) is
+    trusted and passed through.
+    """
+    presets = [a for a in nargs if a.startswith("preset=")]
+    effective = presets[-1].split("=", 1)[1].strip() if presets else ""
+    if effective.endswith(".toml"):
+        return nargs
+    fixed = _ANIMA_LYCORIS_PRESETS["anima-attn-mlp"]
+    rest = [a for a in nargs if not a.startswith("preset=")]
+    why = f"stock preset {effective!r}" if effective else "no preset"
+    print(
+        f"[webgui] lycoris_anima: {why} wraps no Anima modules → preset={fixed}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return [f"preset={fixed}", *rest]
+
+
 # kohya built-in optimizer aliases -> the real class get_optimizer constructs.
 _BUILTIN_OPT_MAP = {
     "adamw8bit": "bitsandbytes.optim.AdamW8bit",
@@ -749,6 +777,11 @@ def _method_preset_extra(form: dict):
         algo = (form.get("algo") or "").strip()
         if algo:
             nargs = [f"algo={algo}"] + nargs
+        # The Anima bridge MUST target an Anima preset (a stock built-in name — or
+        # no preset — wraps 0 DiT modules → "optimizer got an empty parameter
+        # list"). Normalize whatever rode in from the select / extra field.
+        if "lycoris_anima" in nm:
+            nargs = _force_anima_lycoris_preset(nargs)
     if nargs:
         extra += ["--network_args", *nargs]
 
