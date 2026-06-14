@@ -35,6 +35,7 @@ from pathlib import Path
 from bench._common import REPO_ROOT, make_run_dir, write_result
 
 RUN_BENCH = Path(__file__).resolve().parent / "run_bench.py"
+_TRIAL_LOG: list = []  # every trial's one-line result, replayed as a summary at the end
 
 
 def _trial(args, res, batch, swap, out_json, extra):
@@ -86,9 +87,11 @@ def _trial(args, res, batch, swap, out_json, extra):
     if fits:
         sit = rec.get("median_s_per_it") or 0.0
         speed = f"{sit:.3f} s/it ({1 / sit:.2f} it/s)" if sit else "측정됨"
-        print(f"  [성공] {cfg}  ->  {speed}, peak {gib:.1f} GiB", flush=True)
+        line = f"  [성공] {cfg}  ->  {speed}, peak {gib:.1f} GiB"
     else:
-        print(f"  [OOM ] {cfg}  ->  이 설정으로 OOM 났습니다 (peak {gib:.1f} GiB)", flush=True)
+        line = f"  [OOM ] {cfg}  ->  이 설정으로 OOM 났습니다 (peak {gib:.1f} GiB)"
+    print(line, flush=True)
+    _TRIAL_LOG.append(line)
     return fits, rec
 
 
@@ -200,6 +203,14 @@ def main() -> None:
                 "peak_reserved_mib": rec.get("peak_reserved_mib"),
                 "grad_ckpt": rec.get("grad_ckpt"),
             })
+
+    # All trials gathered in one place (success / OOM), so you don't scroll back.
+    if _TRIAL_LOG:
+        ok = sum(1 for line in _TRIAL_LOG if "[성공]" in line)
+        print(f"\n{'=' * 56}\n전체 시도 요약 — 성공 {ok} / OOM {len(_TRIAL_LOG) - ok} "
+              f"(총 {len(_TRIAL_LOG)})\n{'=' * 56}")
+        for line in _TRIAL_LOG:
+            print(line)
 
     print(f"\n{'=' * 56}\nMAX FEASIBLE BATCH PER RESOLUTION\n{'=' * 56}")
     for f in frontier:

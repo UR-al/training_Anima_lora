@@ -267,11 +267,22 @@ def _build_optimizer(args, network):
     don't populate. Optimizer state is second-order for LoRA, so the fallback is
     a safe representative."""
     import argparse as _ap
+    import ast as _ast
 
     params = [p_ for p_ in network.parameters() if p_.requires_grad]
     otype = (args.optimizer_type or "AdamW").strip()
-    if otype.lower() == "adamw" and not args.optimizer_args:
+    okw = {}
+    for a in args.optimizer_args or []:
+        if "=" in a:
+            k, v = a.split("=", 1)
+            try:
+                okw[k] = _ast.literal_eval(v)
+            except (ValueError, SyntaxError):
+                okw[k] = v
+    if otype.lower() == "adamw" and not okw:
         return torch.optim.AdamW(params, lr=args.learning_rate)
+
+    # 1) the real kohya factory (friendly-name resolution through the optimizer zoo).
     try:
         from library.training.optimizers import get_optimizer
 
@@ -284,11 +295,27 @@ def _build_optimizer(args, network):
             gradient_accumulation_steps=1,
             max_grad_norm=0.0,
         )
-        _, _, opt = get_optimizer(ns, params)
-        return opt
-    except Exception as exc:  # noqa: BLE001 — best-effort; fall back to AdamW
-        print(f"  [optimizer] get_optimizer({otype}) failed ({exc}); using AdamW")
-        return torch.optim.AdamW(params, lr=args.learning_rate)
+        return get_optimizer(ns, params)[2]
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [optimizer] get_optimizer({otype}) failed ({exc})", flush=True)
+
+    # 2) resolve the class straight from the zoo — covers the case where the factory
+    #    fell through to torch.optim because the zoo registry was momentarily empty.
+    try:
+        from LoraEasyCustomOptimizer import OPTIMIZERS
+
+        cls = OPTIMIZERS.get(otype.lower())
+        if cls is not None:
+            print(f"  [optimizer] resolved {otype} directly from the optimizer zoo", flush=True)
+            return cls(params, lr=args.learning_rate, **okw)
+        print(f"  [optimizer] '{otype}' not in the zoo ({len(OPTIMIZERS)} available)", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [optimizer] optimizer-zoo import failed: {exc}", flush=True)
+
+    # 3) AdamW fallback — for LoRA the optimizer state is tiny, so the VRAM frontier
+    #    is ~unchanged vs CAME/etc.; only the per-step optimizer cost differs slightly.
+    print(f"  [optimizer] using AdamW instead of {otype} (VRAM ~ same for LoRA)", flush=True)
+    return torch.optim.AdamW(params, lr=args.learning_rate)
 
 
 def _step(anima, network, optimizer, batch, device, dtype, blocks_to_swap):
