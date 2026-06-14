@@ -91,7 +91,8 @@ def _trial(args, res, batch, swap, out_json, extra, budget=None):
     gib = (rec.get("peak_reserved_mib") or 0) / 1024
     if fits:
         sit = rec.get("median_s_per_it") or 0.0
-        speed = f"{sit:.3f} s/it ({1 / sit:.2f} it/s)" if sit else "측정됨"
+        # throughput (img/s = batch / s_it) is THE metric for "fastest multiscale".
+        speed = f"{sit:.3f} s/it, {batch / sit:.2f} img/s" if sit else "측정됨"
         line = f"  [성공] {cfg}  ->  {speed}, peak {gib:.1f} GiB"
     else:
         # peak isn't captured on a caught OOM (it dies mid-step) → don't show 0.0.
@@ -285,7 +286,8 @@ def main() -> None:
         gc = " +gc" if f.get("grad_ckpt") else ""
         sw = f" swap{f['blocks_to_swap']}" if f.get("blocks_to_swap") else ""
         bd = f" budget{f['budget']}" if (f.get("budget") or 1.0) < 1.0 else ""
-        speed = f"  {sit:.3f} s/it ({1 / sit:.2f} it/s)  peak {gib:.1f} GiB" if sit else ""
+        imgs = (f['max_batch'] / sit) if sit else 0.0
+        speed = f"  {sit:.3f} s/it, {imgs:.2f} img/s  peak {gib:.1f} GiB" if sit else ""
         print(f"  {f['res']:>4}:  max batch {f['max_batch']}{gc}{sw}{bd}{speed}")
 
     out = write_result(run_dir, script=__file__, args=args,
