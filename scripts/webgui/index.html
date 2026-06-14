@@ -385,14 +385,14 @@
         <div class="chk"><input id="ab_auto_swap" type="checkbox"><label title="OOM이면 fit되는 최소 blocks_to_swap을 자동 탐색 (≤26). swap은 느리니 최소만 사용.">swap 자동 탐색</label></div>
       </div>
       <div class="row3">
-        <div><label>network_module</label><input id="ab_network_module" value="networks.lycoris_anima"></div>
+        <div><label>network_module</label><select id="ab_network_module"></select></div>
         <div><label>network_dim <span class="hint">LoKr=100000</span></label><input id="ab_network_dim" type="number" value="100000"></div>
         <div><label>network_alpha</label><input id="ab_network_alpha" value="1"></div>
       </div>
       <label>network_args <span class="hint">key=value … (LoKr: algo=lokr factor=4 full_matrix=True preset=…)</span></label>
       <input id="ab_network_args" value="algo=lokr factor=4 full_matrix=True preset=configs/lycoris_presets/anima_attn_mlp.toml">
       <div class="row">
-        <div><label>optimizer_type</label><input id="ab_optimizer_type" value="CAME"></div>
+        <div><label>optimizer_type</label><select id="ab_optimizer_type"></select></div>
         <button type="button" onclick="runAutobatch()" style="align-self:flex-end">최대 배치 찾기</button>
       </div>
     </div>
@@ -981,6 +981,9 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   fill($('optimizer_type'),o.optimizers,'AdamW'); fill($('lr_scheduler_type'),o.schedulers,'cosine');
   fill($('network_module'),o.network_modules,'networks.lora_anima'); fill($('algo'),o.lycoris_algos,'lokr');
   fill($('lycoris_preset'),o.lycoris_presets,'anima-attn-mlp');
+  // Speed/OOM bench panel reuses the same option lists (dropdowns, not free text).
+  if($('ab_optimizer_type')) fill($('ab_optimizer_type'),o.optimizers,'CAME');
+  if($('ab_network_module')) fill($('ab_network_module'),o.network_modules,'networks.lycoris_anima');
   // resolution tiers (default-check 1024 + 896 = preprocess.toml default)
   const defTiers=['1024','896'];
   $('tiers').innerHTML=(o.target_res_tiers||[]).map(t=>`<label class="tier-lab"><input type="checkbox" class="tier" value="${t}" onchange="updateMultiscale()" ${defTiers.includes(String(t))?'checked':''}>${t}</label>`).join('');

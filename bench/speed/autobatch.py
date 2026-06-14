@@ -74,8 +74,22 @@ def _trial(args, res, batch, swap, out_json, extra):
         except Exception:  # noqa: BLE001
             rec = None
     if rec is None:  # crash / fatal OOM before a record was written
-        return False, {"tier": res, "batch": batch, "oom": True, "crashed": proc.returncode != 0}
-    return (not rec.get("oom")), rec
+        rec = {"tier": res, "batch": batch, "oom": True, "crashed": proc.returncode != 0}
+    fits = not rec.get("oom")
+
+    # Human-readable per-trial line: the exact config + OOM-or-success-with-speed.
+    gc = res in (args.gradient_checkpointing_resolutions or [])
+    net = args.network_module.split(".")[-1]
+    cfg = (f"res={res} batch={batch} swap={swap}" + (" +gc" if gc else "")
+           + f"  [{net} / {args.optimizer_type}]")
+    gib = (rec.get("peak_reserved_mib") or 0) / 1024
+    if fits:
+        sit = rec.get("median_s_per_it") or 0.0
+        speed = f"{sit:.3f} s/it ({1 / sit:.2f} it/s)" if sit else "측정됨"
+        print(f"  [성공] {cfg}  ->  {speed}, peak {gib:.1f} GiB", flush=True)
+    else:
+        print(f"  [OOM ] {cfg}  ->  이 설정으로 OOM 났습니다 (peak {gib:.1f} GiB)", flush=True)
+    return fits, rec
 
 
 def _max_batch(args, res, swap, cell_dir, extra):
@@ -86,10 +100,6 @@ def _max_batch(args, res, swap, cell_dir, extra):
     while lo <= hi:
         mid = (lo + hi) // 2
         fits, rec = _trial(args, res, mid, swap, cell_dir / f"r{res}_s{swap}_b{mid}.json", extra)
-        gib = (rec.get("peak_reserved_mib") or 0) / 1024 if rec else 0.0
-        sw = f" swap {swap}" if swap else ""
-        print(f"  res {res:>4} batch {mid}{sw}: {'fits' if fits else 'OOM '}"
-              f"  peak {gib:5.2f} GiB", flush=True)
         if fits:
             best = (mid, rec)
             lo = mid + 1
@@ -114,9 +124,6 @@ def _search(args, res, cell_dir, extra):
     while lo <= hi:
         mid = (lo + hi) // 2
         fits, rec = _trial(args, res, 1, mid, cell_dir / f"r{res}_s{mid}_b1.json", extra)
-        gib = (rec.get("peak_reserved_mib") or 0) / 1024 if rec else 0.0
-        print(f"  res {res:>4} batch 1 swap {mid}: {'fits' if fits else 'OOM '}"
-              f"  peak {gib:5.2f} GiB", flush=True)
         if fits:
             fit_swap, fit_rec = mid, rec
             hi = mid - 1
