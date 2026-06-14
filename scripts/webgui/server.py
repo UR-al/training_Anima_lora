@@ -1135,6 +1135,59 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     }
 
 
+def _autobatch_argv(form: dict):
+    """Build the ``tasks.py bench-autobatch`` argv from the self-contained ab_* GUI
+    fields. Returns (argv, error): error is non-None when nothing to search."""
+    res = [str(int(r)) for r in (form.get("ab_res") or []) if str(r).strip()]
+    if not res:
+        return None, "체크된 해상도가 없습니다 — search할 해상도를 고르세요."
+    gc_res = [str(int(r)) for r in (form.get("ab_gradckpt_res") or []) if str(r).strip()]
+    argv = ["tasks.py", "bench-autobatch", "--res", *res,
+            "--max-batch", str(int(form.get("ab_max_batch") or 8))]
+    if gc_res:
+        argv += ["--gradient_checkpointing_resolutions", *gc_res]
+    nm = (form.get("ab_network_module") or "networks.lora_anima").strip()
+    argv += ["--network_module", nm,
+             "--network_dim", str(int(form.get("ab_network_dim") or 16)),
+             "--network_alpha", str(form.get("ab_network_alpha") or 8.0)]
+    na = str(form.get("ab_network_args") or "").strip()
+    if na:
+        # quote-aware split (same as the training network_args path)
+        nargs = shlex.split(na, posix=True) if ('"' in na or "'" in na) else na.split()
+        argv += ["--network_args", *nargs]
+    argv += ["--optimizer_type", (form.get("ab_optimizer_type") or "AdamW").strip()]
+    bts = str(form.get("ab_blocks_to_swap") or "0").strip()
+    if bts and bts != "0":
+        argv += ["--blocks_to_swap", bts]
+    if form.get("ab_compile"):
+        argv += ["--compile"]
+    dit = (form.get("pretrained_model_name_or_path") or form.get("dit") or "").strip()
+    if dit:
+        argv += ["--dit", dit]
+    return argv, None
+
+
+def bench_autobatch(form: dict) -> dict:
+    """Submit a daemon ``bench-autobatch`` command job — auto-find the max feasible
+    batch per resolution for the given network / optimizer / grad-ckpt. Streams to
+    the cmd log like a run; the frontier table prints at the end. Daemon-queued so
+    it doesn't collide with a training job."""
+    argv, err = _autobatch_argv(form)
+    if err:
+        return {"error": err}
+    from scripts.daemon import client as _dc
+
+    try:
+        cl = _dc.ensure_daemon(expected_root=str(ROOT))
+        resp = cl.submit_command(label="bench-autobatch", argv=argv)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"daemon submit failed: {exc}"}
+    _STATE["live_cmd"] = True
+    _STATE["run_name"] = "bench-autobatch"
+    _start_progress_stream(0.5)
+    return {"ok": True, "job_id": resp.get("job_id"), "argv": argv}
+
+
 def launch(form: dict) -> dict:
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
@@ -2333,6 +2386,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(import_config(body.get("path", "")))
         elif path == "/api/sample_prompts/save":
             self._json(save_sample_prompts(body.get("name", ""), body.get("text", "")))
+        elif path == "/api/bench_autobatch":
+            self._json(bench_autobatch(body))
         else:
             self._json({"error": "not found"}, 404)
 
