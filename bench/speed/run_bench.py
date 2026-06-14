@@ -209,11 +209,21 @@ def _measure_cell(anima, network, optimizer, args, tier, batch, device, dtype, c
     tag = f"{tier}@b{batch}"
     try:
         bat = _make_batch(batch, w_lat, h_lat, device, dtype)
+        # Reset BEFORE warmup so the reported peak captures the first-step compile /
+        # inductor-autotune / partitioner spike — that transient is the real OOM point
+        # in a fresh run, and resetting AFTER warmup (the old behavior) hid it, making
+        # the bench under-report by GiB vs an actual training launch.
+        if cuda:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
         for _ in range(args.warmup):  # warmup (compile + caches), untimed
             _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
         if cuda:
             torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
+        warmup_peak_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
+        warmup_peak_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+        if cuda:
+            torch.cuda.reset_peak_memory_stats()  # steady-state window (post-compile)
         times = []
         for _ in range(args.steps):
             if cuda:
@@ -226,10 +236,15 @@ def _measure_cell(anima, network, optimizer, args, tier, batch, device, dtype, c
         times.sort()
         median = times[len(times) // 2]
         mean = sum(times) / len(times)
-        peak_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
-        peak_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+        steady_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
+        steady_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+        # Report the TRUE high-water (compile spike OR steady), the OOM predictor.
+        peak_alloc = max(warmup_peak_alloc, steady_alloc)
+        peak_resv = max(warmup_peak_resv, steady_resv)
+        spike = warmup_peak_resv > steady_resv + 50  # compile transient dominates
         print(f"  {tag:>12}  {tokens:>5} tok{' +gc' if gc_on else '    '}  {median:6.3f} s/it  "
-              f"{1.0 / median:6.2f} it/s  peak {peak_resv / 1024:5.2f} GiB")
+              f"{1.0 / median:6.2f} it/s  peak {peak_resv / 1024:5.2f} GiB"
+              f"{'  (compile spike)' if spike else ''}")
         del bat
         return {
             "tier": tier, "w": w, "h": h, "tokens": tokens,
@@ -237,8 +252,10 @@ def _measure_cell(anima, network, optimizer, args, tier, batch, device, dtype, c
             "mean_s_per_it": mean, "median_s_per_it": median,
             "std_s_per_it": (sum((x - mean) ** 2 for x in times) / len(times)) ** 0.5,
             "it_per_s": 1.0 / median if median > 0 else None,
-            "peak_alloc_mib": round(peak_alloc, 1),
+            "peak_alloc_mib": round(peak_alloc, 1),  # high-water: compile spike OR steady
             "peak_reserved_mib": round(peak_resv, 1),
+            "steady_peak_reserved_mib": round(steady_resv, 1),  # post-compile per-step
+            "warmup_peak_reserved_mib": round(warmup_peak_resv, 1),  # first-compile spike
             "grad_ckpt": gc_on, "oom": False,
         }
     except torch.cuda.OutOfMemoryError:
@@ -353,6 +370,58 @@ def _step(anima, network, optimizer, batch, device, dtype, blocks_to_swap):
 # --------------------------------------------------------------------------
 
 
+def _measure_multiscale(anima, network, optimizer, args, cells, device, dtype, cuda):
+    """Run EVERY (tier,batch) cell back-to-back in ONE process WITHOUT freeing between
+    them, tracking the global high-water. This is the co-resident peak a real multiscale
+    training run pays (all token-count graphs warmed + allocator fragmentation across the
+    tier transitions) — exactly what the isolated per-cell numbers miss. One combined
+    record; OOM-caught so the isolated results are still written."""
+    if cuda:
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+    per = []
+    try:
+        for tier, batch in cells:
+            gc_on = _tier_ckpt(args, tier)
+            anima.set_gradient_checkpointing(gc_on)
+            w, h, w_lat, h_lat, tokens = _tier_bucket(tier)
+            bat = _make_batch(batch, w_lat, h_lat, device, dtype)
+            for _ in range(max(1, args.warmup)):
+                _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
+            t = []
+            for _ in range(args.steps):
+                if cuda:
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+                _step(anima, network, optimizer, bat, device, dtype, args.blocks_to_swap)
+                if cuda:
+                    torch.cuda.synchronize()
+                t.append(time.perf_counter() - t0)
+            del bat  # free the batch, but NOT the cache (graphs/workspace stay resident)
+            t.sort()
+            running = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+            per.append({"tier": tier, "batch": batch, "tokens": tokens,
+                        "median_s_per_it": t[len(t) // 2], "grad_ckpt": gc_on})
+            print(f"  multiscale +{tier}@b{batch}{' +gc' if gc_on else ''}: "
+                  f"running peak {running / 1024:5.2f} GiB")
+        peak_resv = torch.cuda.max_memory_reserved() / 1024**2 if cuda else 0.0
+        peak_alloc = torch.cuda.max_memory_allocated() / 1024**2 if cuda else 0.0
+        print(f"  ► CO-RESIDENT multiscale peak: {peak_resv / 1024:.2f} GiB "
+              f"({len(cells)} tiers in one process) — the realistic OOM ceiling")
+        return {"multiscale": True, "cells": per, "oom": False,
+                "peak_alloc_mib": round(peak_alloc, 1), "peak_reserved_mib": round(peak_resv, 1)}
+    except torch.cuda.OutOfMemoryError:
+        print(f"  ► CO-RESIDENT multiscale: OOM after {len(per)}/{len(cells)} tiers "
+              "(the isolated cells each fit, but together they don't)")
+        return {"multiscale": True, "cells": per, "oom": True,
+                "oom_after_tiers": len(per)}
+    finally:
+        optimizer.zero_grad(set_to_none=True)
+        if cuda:
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     # --label/--seed/--device/--dtype/--attn_mode/--gradient_checkpointing/
@@ -368,6 +437,11 @@ def main() -> None:
                    "overriding the --tiers x --batch cartesian — matches a real multiscale run.")
     p.add_argument("--steps", type=int, default=8, help="Timed steps per (tier,batch).")
     p.add_argument("--warmup", type=int, default=3, help="Untimed warmup steps (covers compile).")
+    p.add_argument("--multiscale", action="store_true",
+                   help="After the isolated per-cell sweep, also run EVERY cell back-to-back in "
+                   "ONE process WITHOUT freeing — so the reported peak reflects the real multiscale "
+                   "co-residency (all token-count graphs + fragmentation) an actual training run "
+                   "pays. The isolated per-cell peaks under-report this; this is the honest number.")
     p.add_argument("--blocks_to_swap", type=int, default=0, help="DiT blocks to CPU-swap (0=off, max num_blocks-2).")
     p.add_argument("--gradient_checkpointing_resolutions", type=int, nargs="*", default=None,
                    help="Per-resolution gradient checkpointing (matches training): checkpoint ONLY "
@@ -378,8 +452,10 @@ def main() -> None:
                    help="With gradient checkpointing, use the Unsloth async CPU-offload variant.")
     p.add_argument("--activation_memory_budget", type=float, default=1.0,
                    help="torch.compile partitioner saved-activation fraction (<1.0; ignored under grad-ckpt).")
-    p.add_argument("--compile_dynamic_seq", action="store_true",
-                   help="Compile one symbolic-seq graph instead of one per token count.")
+    p.add_argument("--compile_dynamic_seq", action=argparse.BooleanOptionalAction, default=True,
+                   help="Compile ONE symbolic-seq graph (matches base.toml / a real training "
+                   "launch) instead of one static graph per token count. ON by default so the "
+                   "isolated bench reflects training; pass --no-compile_dynamic_seq for the static path.")
     p.add_argument("--network_dim", type=int, default=16,
                    help="Adapter rank. LoKr idiom: 100000 (+ factor in --network_args).")
     p.add_argument("--network_alpha", type=float, default=8.0, help="Adapter alpha.")
@@ -423,6 +499,13 @@ def main() -> None:
             anima, network, optimizer, args, tier, batch, device, dtype, cuda, gc_on
         ))
 
+    multiscale_rec = None
+    if args.multiscale and len(_plan_cells(args)) > 1:
+        print("\nmultiscale co-residency pass (all tiers back-to-back, no free)…")
+        multiscale_rec = _measure_multiscale(
+            anima, network, optimizer, args, _plan_cells(args), device, dtype, cuda
+        )
+
     metrics = {
         "config": {
             "dtype": args.dtype, "attn_mode": args.attn_mode,
@@ -438,7 +521,15 @@ def main() -> None:
             "steps": args.steps, "warmup": args.warmup,
         },
         "runs": runs,
+        "multiscale": multiscale_rec,
     }
+    # Honesty caveat: the per-cell peaks above are ISOLATED — each tier in its own
+    # warmed state. A real multiscale run co-resides every token-count graph in one
+    # process and fragments the allocator across tier transitions, so it uses MORE.
+    if not args.multiscale and len(_plan_cells(args)) > 1:
+        print("\n  ⚠ per-cell peaks are ISOLATED — a real multiscale run co-resides all "
+              "tiers' graphs and will peak HIGHER. Re-run with --multiscale for the true "
+              "co-resident ceiling, or leave headroom.")
     out = write_result(run_dir, script=__file__, args=args, metrics=metrics,
                        label=args.label, device=device)
     if args.out_json:
