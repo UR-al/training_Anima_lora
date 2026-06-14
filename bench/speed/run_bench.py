@@ -173,6 +173,36 @@ def _make_batch(batch, w_lat, h_lat, device, dtype):
     }
 
 
+def _build_optimizer(args, network):
+    """Real optimizer factory so the choice (AdamW / 8-bit / CAME …) shows up in
+    VRAM faithfully; falls back to torch AdamW if the factory needs a field we
+    don't populate. Optimizer state is second-order for LoRA, so the fallback is
+    a safe representative."""
+    import argparse as _ap
+
+    params = [p_ for p_ in network.parameters() if p_.requires_grad]
+    otype = (args.optimizer_type or "AdamW").strip()
+    if otype.lower() == "adamw" and not args.optimizer_args:
+        return torch.optim.AdamW(params, lr=args.learning_rate)
+    try:
+        from library.training.optimizers import get_optimizer
+
+        ns = _ap.Namespace(
+            optimizer_type=otype,
+            optimizer_args=list(args.optimizer_args or []),
+            learning_rate=args.learning_rate,
+            lr=args.learning_rate,
+            fused_backward_pass=False,
+            gradient_accumulation_steps=1,
+            max_grad_norm=0.0,
+        )
+        _, _, opt = get_optimizer(ns, params)
+        return opt
+    except Exception as exc:  # noqa: BLE001 — best-effort; fall back to AdamW
+        print(f"  [optimizer] get_optimizer({otype}) failed ({exc}); using AdamW")
+        return torch.optim.AdamW(params, lr=args.learning_rate)
+
+
 def _step(anima, network, optimizer, batch, device, dtype, blocks_to_swap):
     """forward → squeeze → MSE(flow target) → backward → opt.step. Matches the
     real cached-TE call: anima(noisy_5d, timesteps, crossattn_emb, padding_mask=…)."""
@@ -219,6 +249,13 @@ def main() -> None:
                    help="Compile one symbolic-seq graph instead of one per token count.")
     p.add_argument("--network_dim", type=int, default=16, help="Plain-LoRA rank for the stand-in adapter.")
     p.add_argument("--network_alpha", type=float, default=8.0, help="Plain-LoRA alpha.")
+    p.add_argument("--optimizer_type", type=str, default="AdamW",
+                   help="Optimizer (real factory; e.g. AdamW, AdamW8bit, CAME). Affects VRAM faithfully.")
+    p.add_argument("--learning_rate", type=float, default=1e-4)
+    p.add_argument("--optimizer_args", type=str, nargs="*", default=[],
+                   help="key=value optimizer args forwarded to the factory.")
+    p.add_argument("--out_json", type=str, default=None,
+                   help="Also write the metrics record to this exact path (for the sweep orchestrator).")
     args = p.parse_args()
 
     if not args.dit:
@@ -235,7 +272,7 @@ def main() -> None:
     print(f"building model (dit={args.dit}, dim={args.network_dim}, swap={args.blocks_to_swap}, "
           f"grad_ckpt={args.gradient_checkpointing}, compile={args.compile})…")
     anima, network = _build_model(args, device, dtype)
-    optimizer = torch.optim.AdamW([p_ for p_ in network.parameters() if p_.requires_grad], lr=1e-4)
+    optimizer = _build_optimizer(args, network)
     n_train = sum(p_.numel() for p_ in network.parameters() if p_.requires_grad)
     print(f"  trainable LoRA params: {n_train:,}")
 
@@ -307,6 +344,13 @@ def main() -> None:
     }
     out = write_result(run_dir, script=__file__, args=args, metrics=metrics,
                        label=args.label, device=device)
+    if args.out_json:
+        import json as _json
+        import os as _os
+
+        _os.makedirs(_os.path.dirname(_os.path.abspath(args.out_json)), exist_ok=True)
+        with open(args.out_json, "w", encoding="utf-8") as _f:
+            _json.dump(metrics, _f, indent=2)
     print(f"\nresult → {out}")
 
 

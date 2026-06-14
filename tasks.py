@@ -281,6 +281,12 @@ COMMANDS = {
         "Multi-res training-step speed + VRAM bench (synthetic, no dataset). "
         "--tiers 512 1024 1536 --batch 1 2 [--gradient_checkpointing|--blocks_to_swap N|--compile] --label X",
     ),
+    "bench-sweep": (
+        utilities.cmd_bench_sweep,
+        "XYZ-grid OOM+speed explorer: find the max feasible config by sweeping "
+        "budget/blocks_to_swap/batch/grad-ckpt/compile per resolution (isolated cells). "
+        "--res 1024 1536 --batch 1 2 --grad-ckpt on off --blocks-to-swap range:0-26:4 [--dry-run]",
+    ),
     # ── Experimental ──────────────────────────────────────────────────
     # Unstable methods kept under exp-* so they don't pollute the main command
     # surface. May produce broken output, change without notice, or be removed.

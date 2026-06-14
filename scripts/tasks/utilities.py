@@ -1,5 +1,5 @@
 """Misc utility entry-points: merge, comfy-batch, distill-prep, distill-mod,
-test-unit, update, export-logs, print-config, bench-speed."""
+test-unit, update, export-logs, print-config, bench-speed, bench-sweep."""
 
 from __future__ import annotations
 
@@ -147,3 +147,13 @@ def cmd_bench_speed(extra):
     e.g. python tasks.py bench-speed --tiers 512 1024 1536 --batch 1 2 --label base
     """
     run([PY, "bench/speed/run_bench.py", *extra])
+
+
+def cmd_bench_sweep(extra):
+    """XYZ-grid OOM + speed explorer: sweep budget / blocks_to_swap / batch /
+    grad-ckpt / compile to find the max feasible config per resolution. Each cell
+    runs isolated (fresh CUDA allocator → clean OOM frontier). Needs a free GPU.
+    e.g. python tasks.py bench-sweep --res 1024 1536 --batch 1 2 --grad-ckpt on off
+    --blocks-to-swap range:0-26:4 [--dry-run]. EXTRA after -- forwards to each cell.
+    """
+    run([PY, "bench/speed/sweep.py", *extra])
