@@ -757,6 +757,21 @@ def _method_preset_extra(form: dict):
     # algos — LoRA/LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT — or networks.lora_anima
     # for the native adapters) + algo (folded into network_args) + alpha + free args.
     nm = (form.get("network_module") or "").strip()
+    # Stock lycoris.kohya wraps almost nothing on the Anima DiT — its presets list
+    # diffusers class names, so the Anima blocks miss and only ~3 FinalLayer modules
+    # get wrapped (a no-op run) — and it crashes on Anima's [None] TE slot. Any
+    # LyCORIS module must ride the Anima bridge, which sanitizes the TE and pairs
+    # with the anima_* presets that actually wrap the blocks. Mirror the config
+    # importer's routing so a stale form / non-anima default can't ship a 3-module
+    # run. (Also makes the preset guard below fire — it keys on "lycoris_anima".)
+    if nm and "lycoris" in nm and nm != "networks.lycoris_anima":
+        print(
+            f"[webgui] network_module {nm!r} → networks.lycoris_anima "
+            "(stock LyCORIS wraps ~3 Anima modules; the bridge wraps the blocks).",
+            file=sys.stderr,
+            flush=True,
+        )
+        nm = "networks.lycoris_anima"
     if nm:
         extra += ["--network_module", nm]
     na = str(form.get("network_alpha", "")).strip()

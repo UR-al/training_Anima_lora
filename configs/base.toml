@@ -53,17 +53,15 @@ vae_disable_cache = true
 masked_loss = true
 torch_compile = true
 attn_mode = "flash"
-# Static per-token-family compile by default — this is the flag's own documented
-# off-by-default (it ships with a "bench before trusting it" warning). dynamic_seq
-# collapses the N-graph compile cascade to one symbolic-seq graph, BUT a symbolic
-# seq defeats inductor's buffer-reuse/in-place planning and sizes workspace to the
-# tier max, inflating the per-step activation peak ~2x at a given shape — fatal for
-# multiscale on 16 GB (it OOMs the 1024@b2 forward where static fits ~7.3 GiB; see
-# bench/speed). Opt back in with --compile_dynamic_seq / the GUI toggle only when
-# the N-graph cold-compile CUDA-context transient (many tiers + big VRAM) outweighs
-# the per-step cost. base.toml is overwritten on `make update`, so this is the
-# shipped default, not a user override.
-compile_dynamic_seq = false
+# dynamic_seq=true is the right multiscale default: it collapses the per-token
+# graphs to ONE symbolic-seq graph, so the resident inductor footprint stays flat
+# as you add tiers. The N static graphs alternative is the real 16 GB killer —
+# empirically, static (5 graphs: 512×2 / 1024×2 / 1536) OOMs the 1024@b2 forward
+# even with a near-empty 3-module adapter, while this single-graph dynamic path
+# fits a full 197-module LoKr at the same batches. (Tried static here 2026-06-14;
+# the isolated bench's lower static peak did NOT carry to the real co-resident
+# multiscale run — the N-graph residency dominated. Reverted.)
+compile_dynamic_seq = true
 # Partitioner recompute cap — restores the pre-2026-06-10 no-grad-ckpt VRAM
 # footprint after the custom-autograd removal (which had implicitly pinned the
 # saved-for-backward set). 0.85 ≈ old peak at identical step time. Auto-skipped
