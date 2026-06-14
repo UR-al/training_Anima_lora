@@ -635,6 +635,7 @@ function setForm(f){ if(!f) return;
       const el=document.querySelector('#ms_skip_inputs .skipin[data-t="'+t+'"]'); if(el) el.value=e; });
   }
   applyConflicts();  // re-evaluate cache conflicts against the just-loaded toggles
+  applyArgDeps();    // re-evaluate auto-arg dependency greying after a config load
 }
 
 function updateWarmup(){ const s=$('lr_scheduler_type').value||'',w=$('lr_warmup_steps'),no=(s==='constant')||s.includes('.');
@@ -842,6 +843,7 @@ function renderArgs(groups){
     }).join('');
   });
   applyArgHelpLang();  // show the active language for the freshly-rendered rows
+  applyArgDeps();      // grey incompatible / no-op rows (e.g. discrete_flow_shift under sigmoid)
 }
 function filterArgs(q){ q=(q||'').toLowerCase();
   document.querySelectorAll('.argrow').forEach(r=>{ r.style.display=(!q||r.dataset.d.includes(q))?'flex':'none'; });
@@ -887,6 +889,41 @@ function applyConflicts(){
     });
   });
 }
+
+// ---- auto-arg dependency greying: when a driver arg makes another a no-op /
+// incompatible, disable + grey the dependent "all arguments" row with a reason.
+// Effective value = the user's typed value, else the arg's argparse default. ----
+function _argDefault(d){ const a=(window._args||[]).find(x=>x.dest===d); return a?a.default:null; }
+function _argStr(d){ const v=$('advv_'+d); const s=v?(v.value||'').trim():''; return s!==''?s:(_argDefault(d)??''); }
+function _argBool(d){ const sel=$('advtri_'+d); if(sel){ if(sel.value==='on')return true; if(sel.value==='off')return false; return _argDefault(d)===true; }
+  const c=$('adv_'+d); if(c) return !!c.checked; return _argDefault(d)===true; }
+function _gcActive(){ return [...document.querySelectorAll('#subsets .s_gradckpt')].some(c=>c.checked) || _argBool('gradient_checkpointing'); }
+const _SIGMOID_FAMILY=['sigmoid','shift','flux_shift'];
+const ARG_DEPS=[
+  {t:'discrete_flow_shift', ok:()=>['shift','flux_shift'].includes(_argStr('timestep_sampling')),
+    why:{en:'used only when timestep_sampling is shift/flux_shift (no-op for sigmoid/logit/uniform)', ko:'timestep_sampling이 shift/flux_shift일 때만 적용 (sigmoid/logit/uniform에선 무시됨)'}},
+  {t:'sigmoid_scale', ok:()=>_SIGMOID_FAMILY.includes(_argStr('timestep_sampling')), why:{en:'only under sigmoid-family timestep_sampling', ko:'sigmoid 계열 timestep_sampling에서만 적용'}},
+  {t:'sigmoid_bias', ok:()=>_SIGMOID_FAMILY.includes(_argStr('timestep_sampling')), why:{en:'only under sigmoid-family timestep_sampling', ko:'sigmoid 계열 timestep_sampling에서만 적용'}},
+  {t:'logit_mean', ok:()=>_argStr('weighting_scheme')==='logit_normal', why:{en:'only when weighting_scheme=logit_normal', ko:'weighting_scheme=logit_normal에서만 적용'}},
+  {t:'logit_std', ok:()=>_argStr('weighting_scheme')==='logit_normal', why:{en:'only when weighting_scheme=logit_normal', ko:'weighting_scheme=logit_normal에서만 적용'}},
+  {t:'mode_scale', ok:()=>_argStr('weighting_scheme')==='mode', why:{en:'only when weighting_scheme=mode', ko:'weighting_scheme=mode에서만 적용'}},
+  {t:'compile_dynamic_seq', ok:()=>_argBool('torch_compile'), why:{en:'only when torch_compile is on', ko:'torch_compile ON일 때만 적용'}},
+  {t:'compile_inductor_mode', ok:()=>_argBool('torch_compile'), why:{en:'only when torch_compile is on', ko:'torch_compile ON일 때만 적용'}},
+  {t:'dynamo_backend', ok:()=>_argBool('torch_compile'), why:{en:'only when torch_compile is on', ko:'torch_compile ON일 때만 적용'}},
+  {t:'activation_memory_budget', ok:()=>_argBool('torch_compile')&&!_gcActive(),
+    why:{en:'needs torch_compile ON and gradient checkpointing OFF (conflicts with ckpt, torch #166926)', ko:'torch_compile ON + gradient checkpointing OFF에서만 적용 (gc와 충돌, torch #166926)'}},
+  {t:'cpu_offload_checkpointing', ok:()=>!(parseInt(_argStr('blocks_to_swap')||'0',10)>0)&&!_argBool('unsloth_offload_checkpointing'),
+    why:{en:'mutually exclusive with blocks_to_swap and unsloth offload checkpointing', ko:'blocks_to_swap / unsloth 오프로드 체크포인팅과 상호 배타'}},
+  {t:'unsloth_offload_checkpointing', ok:()=>!(parseInt(_argStr('blocks_to_swap')||'0',10)>0)&&!_argBool('cpu_offload_checkpointing'),
+    why:{en:'mutually exclusive with blocks_to_swap and cpu offload checkpointing', ko:'blocks_to_swap / cpu 오프로드 체크포인팅과 상호 배타'}},
+];
+function _setArgConflict(dest, off, why){ const row=document.querySelector('.argrow[data-d="'+dest+'"]'); if(!row) return;
+  row.classList.toggle('conflict-off', off);
+  row.querySelectorAll('input,select').forEach(e=>{ e.disabled=off; });
+  let b=row.querySelector('.conflict-msg');
+  if(off){ if(!b){ b=document.createElement('div'); b.className='conflict-msg'; row.appendChild(b); } b.textContent='⚠ '+(_lang==='ko'?why.ko:why.en); b.style.display='block'; }
+  else if(b){ b.style.display='none'; } }
+function applyArgDeps(){ (ARG_DEPS||[]).forEach(d=>{ try{ _setArgConflict(d.t, !d.ok(), d.why); }catch(e){} }); }
 
 // ---- manual dataset builder ----
 function addSubset(s){ s=s||{}; const div=document.createElement('div'); div.className='subset';
@@ -1025,6 +1062,11 @@ async function poll(){ try{ const s=await(await fetch('/api/status')).json();
   ['use_vae_cache','use_text_cache'].forEach(d=>{ const sel=$('advtri_'+d);
     if(sel){ sel.addEventListener('change', applyConflicts); }
     else { const c=$('adv_'+d); if(c){ c.checked=true; c.addEventListener('change', applyConflicts); } } });
+  // re-grey auto-arg dependencies whenever a driver arg changes (timestep_sampling /
+  // weighting_scheme / torch_compile / gradient_checkpointing / per-subset gc).
+  document.addEventListener('change', e=>{ const id=(e.target&&e.target.id)||'';
+    if(/^(adv_|advv_|advtri_)/.test(id) || (e.target&&e.target.classList&&e.target.classList.contains('s_gradckpt'))) applyArgDeps(); });
+  document.addEventListener('input', e=>{ if(/^advv_/.test((e.target&&e.target.id)||'')) applyArgDeps(); });
   addSubset();
   updateWarmup(); updateAlgo(); updatePrep(); updateMask(); updateMultiscale(); refreshConfigs(); refreshQueue();
   applyConflicts();
