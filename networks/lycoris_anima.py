@@ -83,13 +83,37 @@ def _apply_exclusions(network, exclude_patterns, train_llm_adapter):
         name = getattr(m, "lora_name", "") or ""
         return any(r.search(name) for r in regs)
 
-    removed = 0
-    for attr in ("unet_loras", "text_encoder_loras"):
-        lst = getattr(network, attr, None)
-        if isinstance(lst, list):
-            kept = [m for m in lst if not _excluded(m)]
-            removed += len(lst) - len(kept)
-            setattr(network, attr, kept)
+    lists = {
+        attr: getattr(network, attr, None)
+        for attr in ("unet_loras", "text_encoder_loras")
+    }
+    total = sum(len(v) for v in lists.values() if isinstance(v, list))
+    would_keep = {
+        attr: [m for m in v if not _excluded(m)]
+        for attr, v in lists.items()
+        if isinstance(v, list)
+    }
+    kept_total = sum(len(v) for v in would_keep.values())
+
+    # Safety net: a pattern that nukes EVERY module is almost always malformed
+    # (classically an unquoted bracket list — exclude_patterns=[a,b] — collapsing
+    # to a catch-all character-class regex). Refuse it: keep the modules and
+    # surface the mistake loudly, rather than handing the optimizer an empty
+    # parameter list (a confusing "optimizer got an empty parameter list" crash
+    # three layers downstream).
+    if total and kept_total == 0:
+        logger.error(
+            "lycoris_anima: exclude_patterns %s would exclude ALL %d modules — "
+            "ignoring the exclusion and training the full set. Check the pattern "
+            "(an unquoted bracket list like [a,b] becomes a catch-all regex).",
+            patterns,
+            total,
+        )
+        return network
+
+    removed = total - kept_total
+    for attr, kept in would_keep.items():
+        setattr(network, attr, kept)
     network.loras = list(getattr(network, "text_encoder_loras", []) or []) + list(
         getattr(network, "unet_loras", []) or []
     )

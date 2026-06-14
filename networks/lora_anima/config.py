@@ -85,7 +85,21 @@ def _as_str_list(value: Any) -> Optional[List[str]]:
     try:
         parsed = ast.literal_eval(value) if isinstance(value, str) else value
     except (ValueError, SyntaxError):
-        return [value] if isinstance(value, str) else None
+        # Not a valid python literal. Users routinely write an UNQUOTED bracket
+        # list for regex kwargs, e.g. exclude_patterns=[.*_te_layers_.*,.*_b_.*]
+        # — ast can't parse the bare regexes, and the old fallback ("the whole
+        # string is one pattern") turned it into a catch-all character class
+        # ([...] in regex), which silently excluded EVERY module → "optimizer got
+        # an empty parameter list". So split a bracket-wrapped string on its
+        # top-level commas into a real list of patterns (quotes/space stripped).
+        if isinstance(value, str):
+            s = value.strip()
+            if s.startswith("[") and s.endswith("]"):
+                items = [p.strip().strip("'\"") for p in s[1:-1].split(",")]
+                items = [p for p in items if p]
+                return items or None
+            return [value]
+        return None
     if isinstance(parsed, list):
         return parsed
     return [parsed]
