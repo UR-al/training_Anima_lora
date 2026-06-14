@@ -81,9 +81,13 @@ gradient_accumulation_steps=1
 [[datasets]]
 batch_size = 1
 
-# validation_split = 0.025
-validation_split_num = 0
-validation_seed = 42
+# Validation split is driven by the CLI / method args (--validation_split /
+# --validation_split_num / --validation_seed). NOT pinned here: a value in this
+# [[datasets]] block wins over the CLI flag via the blueprint fallback chain
+# (search order subset → dataset → general → argparse), so setting it here would
+# silently shadow those flags. validation_split_num default 0 = off; validation_seed
+# defaults to the train --seed.
+# validation_split = 0.025   # ← or set via --validation_split / a method TOML
 
 # Kohya-style folder repeats: when true, images under a subfolder named
 # {n}_... (e.g. image_dataset/5_mychar/) are repeated n times per epoch

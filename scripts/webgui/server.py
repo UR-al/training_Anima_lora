@@ -796,7 +796,7 @@ def _method_preset_extra(form: dict):
     ):
         v = (form.get(key) or "").strip()
         if v:
-            extra += [flag, *v.split()]
+            extra += [flag, *_arg_split(v)]
 
     if str(form.get("lr_warmup_steps", "")).strip() != "":
         extra += ["--lr_warmup_steps", str(form["lr_warmup_steps"])]
@@ -833,11 +833,7 @@ def _method_preset_extra(form: dict):
     if na:
         extra += ["--network_alpha", na]
     _na = form.get("network_args") or ""
-    # Honor shell-style quotes so a value with spaces survives as one token
-    # (e.g. caption="a b"), but only when quotes are actually present — the plain
-    # `key=val key=val` case stays byte-identical to .split(), and Windows
-    # backslash paths (never quoted) are left untouched.
-    nargs = shlex.split(_na, posix=True) if ('"' in _na or "'" in _na) else _na.split()
+    nargs = _arg_split(_na)  # quote-aware (caption="a b" survives); plain k=v unchanged
     if "lycoris" in nm:  # lycoris.kohya OR networks.lycoris_anima (the Anima bridge)
         lp = (form.get("lycoris_preset") or "").strip()
         if lp:
@@ -911,13 +907,13 @@ def _method_preset_extra(form: dict):
             val = item.get("value")
             if val not in (None, "", []):
                 if item.get("nargs") in ("*", "+"):
-                    extra += [flag, *str(val).split()]
+                    extra += [flag, *_arg_split(str(val))]
                 else:
                     extra += [flag, str(val)]
 
     extra_flags = (form.get("extra_flags") or "").strip()
     if extra_flags:
-        extra += extra_flags.split()
+        extra += _arg_split(extra_flags)
 
     return method, preset, extra
 
@@ -1269,8 +1265,7 @@ def _autobatch_argv(form: dict):
              "--network_dim", str(int(form.get("ab_network_dim") or 16)),
              "--network_alpha", str(form.get("ab_network_alpha") or 8.0)]
     na = str(form.get("ab_network_args") or "").strip()
-    # quote-aware split (same as the training network_args path)
-    nargs = (shlex.split(na, posix=True) if ('"' in na or "'" in na) else na.split()) if na else []
+    nargs = _arg_split(na) if na else []  # quote-aware (same as the training path)
     if "lycoris_anima" in nm:
         # ensure an Anima preset even if ab_network_args is blank / has a stock preset
         nargs = _force_anima_lycoris_preset(nargs)
@@ -1938,6 +1933,16 @@ _SUBSET_KEYS = {
     "caption_prefix": str,
     "caption_suffix": str,
 }
+
+
+def _arg_split(s: str) -> list:
+    """Whitespace-split, but honor shell quotes when present so a value with a space
+    survives as one token (e.g. a path with a space, or caption="a b"). The plain
+    `key=val key=val` case and Windows backslash paths (never quoted) stay
+    byte-identical to str.split(). Used for every free-text arg list the GUI emits
+    (network_args / optimizer_args / lr_scheduler_args / extra_flags / nargs)."""
+    s = s or ""
+    return shlex.split(s, posix=True) if ('"' in s or "'" in s) else s.split()
 
 
 def _flatten_kv(v) -> str:
