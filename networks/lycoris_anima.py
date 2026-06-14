@@ -62,6 +62,69 @@ from networks.lora_anima.config import _as_bool, _as_str_list
 
 logger = logging.getLogger(__name__)
 
+# Anima DiT block class names. Stock lycoris presets list only diffusers/Qwen class
+# names (Transformer2DModel, QwenImageTransformerBlock, …) — NONE of which exist in
+# the Anima DiT except FinalLayer, so a stock preset wraps ~3 modules. LoRA_Easy ships
+# a hand-patched lycoris whose preset dict includes the Anima "Block" class; we
+# reproduce that WITHOUT forking the package by injecting these into the installed
+# lycoris PRESET dict at import (see _register_anima_presets).
+_ANIMA_ATTN = ["Attention"]  # self + cross attention projections
+_ANIMA_MLP = ["GPT2FeedForward"]  # the two MLP linears
+_ANIMA_FINAL = ["FinalLayer"]  # final projection
+# attn+mlp+final = the proven 197-module target (== configs/lycoris_presets/anima_attn_mlp.toml)
+_ANIMA_ATTN_MLP = _ANIMA_ATTN + _ANIMA_MLP + _ANIMA_FINAL
+# whole transformer block (incl adaln/embeds) = the 314-module target (== anima_full.toml)
+_ANIMA_FULL = ["Block"] + _ANIMA_FINAL
+
+
+def _register_anima_presets() -> None:
+    """Inject the Anima block classes into the installed lycoris built-in PRESET dict so
+    the STOCK preset NAMES (unet-transformer-only / attn-mlp / attn-only / full / …) target
+    the Anima DiT — matching what LoRA_Easy's patched lycoris does, so a config written
+    for LoRA_Easy (network_module=lycoris.kohya, preset=unet-transformer-only) trains here
+    unchanged. Idempotent; safe if lycoris internals shift (guarded)."""
+    try:
+        import lycoris.config as _cfg
+
+        preset = getattr(_cfg, "PRESET", None)
+        if not isinstance(preset, dict):
+            return
+
+        def _extend(name, classes):
+            p = preset.get(name)
+            if not isinstance(p, dict):
+                return
+            tm = p.setdefault("unet_target_module", [])
+            for c in classes:
+                if c not in tm:
+                    tm.append(c)
+
+        def _make(classes):
+            return {
+                "enable_conv": False,
+                "unet_target_module": list(classes),
+                "unet_target_name": [],
+                "text_encoder_target_module": [],
+                "text_encoder_target_name": [],
+            }
+
+        # transformer = attn + mlp (+ final). adaln/embeds stay frozen.
+        _extend("unet-transformer-only", _ANIMA_ATTN_MLP)
+        _extend("attn-mlp", _ANIMA_ATTN + _ANIMA_MLP)
+        _extend("attn-only", _ANIMA_ATTN)
+        # broad targets get the whole Block (incl adaln/embeds).
+        for n in ("full", "full-lin", "unet-only"):
+            _extend(n, _ANIMA_FULL)
+        # friendly names mirroring our shipped .toml presets.
+        preset.setdefault("anima", _make(_ANIMA_ATTN_MLP))
+        preset.setdefault("anima-attn-mlp", _make(_ANIMA_ATTN_MLP))
+        preset.setdefault("anima-full", _make(_ANIMA_FULL))
+    except Exception as e:  # noqa: BLE001 — never break import over a preset registration
+        logger.warning("lycoris_anima: could not register Anima presets: %s", e)
+
+
+_register_anima_presets()
+
 
 def _apply_exclusions(network, exclude_patterns, train_llm_adapter):
     """Drop wrapped LoRA modules matching ``exclude_patterns`` (+ the LLM-adapter

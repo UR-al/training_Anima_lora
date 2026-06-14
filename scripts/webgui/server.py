@@ -400,36 +400,40 @@ def list_lycoris_presets() -> list[str]:
     diffusers class names absent from the Anima blocks — they wrap ~3 modules (a no-op
     run), so they're NOT offered here. _force_anima_lycoris_preset still remaps any
     stock name that arrives via import / the free network_args field, and the importer
-    treats any name not in this list as "remap to anima-attn-mlp"."""
-    return list(_ANIMA_LYCORIS_PRESETS)
+    treats any name not in this list as "remap to anima-attn-mlp".
+
+    The stock names below NOW target the Anima DiT natively — the bridge registers the
+    Anima block classes into the lycoris PRESET dict at import (see
+    networks/lycoris_anima.py::_register_anima_presets), so a LoRA_Easy/kohya config with
+    preset=unet-transformer-only trains here unchanged. 'ia3' / 'unet-convblock-only' stay
+    omitted (IA3 algo / conv layers — N/A to the conv-free Anima DiT)."""
+    return [
+        *_ANIMA_LYCORIS_PRESETS,
+        "unet-transformer-only",
+        "attn-mlp",
+        "attn-only",
+        "full",
+    ]
 
 
 def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
-    """Guarantee the ``networks.lycoris_anima`` bridge targets an Anima preset.
+    """Ensure the ``networks.lycoris_anima`` bridge has SOME preset.
 
-    Stock LyCORIS presets (``unet-transformer-only`` …) list standard diffusers
-    class names that match **nothing** in the Anima DiT, so the network wraps 0
-    modules and ``get_optimizer`` dies with "optimizer got an empty parameter
-    list". A *missing* preset is just as bad (lycoris.kohya falls back to its own
-    stock default). Normalize the **effective** ``preset=`` (the last one wins
-    once train.py folds network_args into a kwargs dict) so the structured select,
-    a stray ``preset=`` typed into the extra field, and the no-preset case are all
-    covered. An explicit ``*.toml`` path (an Anima or user-supplied target file) is
-    trusted and passed through.
-    """
-    presets = [a for a in nargs if a.startswith("preset=")]
-    effective = presets[-1].split("=", 1)[1].strip() if presets else ""
-    if effective.endswith(".toml"):
+    The bridge registers the Anima block classes into the lycoris PRESET dict at import
+    (``_register_anima_presets``), so stock preset NAMES (``unet-transformer-only`` /
+    ``attn-mlp`` / ``full`` / …) AND ``*.toml`` paths now target the DiT — trust whatever
+    the user gave (this matches LoRA_Easy, where exactly that combo works). Only the
+    no-preset case still needs a default: a bare bridge with no preset falls back to
+    lycoris's own stock default, which may miss the Anima blocks — inject anima-attn-mlp."""
+    if any(a.startswith("preset=") for a in nargs):
         return nargs
     fixed = _ANIMA_LYCORIS_PRESETS["anima-attn-mlp"]
-    rest = [a for a in nargs if not a.startswith("preset=")]
-    why = f"stock preset {effective!r}" if effective else "no preset"
     print(
-        f"[webgui] lycoris_anima: {why} wraps no Anima modules → preset={fixed}",
+        f"[webgui] lycoris_anima: no preset given → preset={fixed}",
         file=sys.stderr,
         flush=True,
     )
-    return [f"preset={fixed}", *rest]
+    return [f"preset={fixed}", *nargs]
 
 
 # kohya built-in optimizer aliases -> the real class get_optimizer constructs.
@@ -812,17 +816,15 @@ def _method_preset_extra(form: dict):
     # algos — LoRA/LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT — or networks.lora_anima
     # for the native adapters) + algo (folded into network_args) + alpha + free args.
     nm = (form.get("network_module") or "").strip()
-    # Stock lycoris.kohya wraps almost nothing on the Anima DiT — its presets list
-    # diffusers class names, so the Anima blocks miss and only ~3 FinalLayer modules
-    # get wrapped (a no-op run) — and it crashes on Anima's [None] TE slot. Any
-    # LyCORIS module must ride the Anima bridge, which sanitizes the TE and pairs
-    # with the anima_* presets that actually wrap the blocks. Mirror the config
-    # importer's routing so a stale form / non-anima default can't ship a 3-module
-    # run. (Also makes the preset guard below fire — it keys on "lycoris_anima".)
+    # Any LyCORIS module must ride the Anima bridge: stock lycoris.kohya crashes on
+    # Anima's cached-TE [None] slot, and the bridge's import registers the Anima block
+    # classes into the lycoris PRESET dict so stock preset names (unet-transformer-only
+    # …) target the DiT. Routing here lets a LoRA_Easy/kohya config (lycoris.kohya +
+    # unet-transformer-only) train unchanged. (Also makes the preset guard below fire.)
     if nm and "lycoris" in nm and nm != "networks.lycoris_anima":
         print(
             f"[webgui] network_module {nm!r} → networks.lycoris_anima "
-            "(stock LyCORIS wraps ~3 Anima modules; the bridge wraps the blocks).",
+            "(Anima bridge: sanitizes the [None] TE + registers the Anima presets).",
             file=sys.stderr,
             flush=True,
         )
@@ -2155,26 +2157,21 @@ def import_config(path: str) -> dict:
             form["network_module"] = "networks.lycoris_anima"
             notes.append("network_module → networks.lycoris_anima (algo present).")
     if "preset" in na_dict:
-        pv = str(na_dict.pop("preset"))
-        # Stock LyCORIS presets target diffusers class names absent from the Anima
-        # DiT — remap to the Anima preset that actually wraps its blocks.
-        _stock = {
-            "full",
-            "full-lin",
-            "attn-mlp",
-            "attn-only",
-            "unet-only",
-            "unet-transformer-only",
-            "unet-convblock-only",
-            "ia3",
-        }
-        if pv in _stock or pv not in list_lycoris_presets():
+        pv = str(na_dict.pop("preset")).strip()
+        # The bridge registers Anima block classes into the lycoris PRESET dict, so the
+        # stock names the dropdown offers (unet-transformer-only / attn-mlp / attn-only /
+        # full) now target the DiT — keep them (round-trips via the select). A *.toml path
+        # is a custom target file — keep it as a free network_arg. Anything else (ia3 /
+        # unet-convblock-only / unknown) can't wrap the conv-free Anima DiT → default.
+        if pv in list_lycoris_presets():
+            form["lycoris_preset"] = pv
+        elif pv.endswith(".toml"):
+            na_dict["preset"] = pv  # flows to network_args_extra; builder folds it through
+        else:
             form["lycoris_preset"] = "anima-attn-mlp"
             notes.append(
-                f"preset {pv!r} → anima-attn-mlp (stock presets don't wrap the Anima DiT)."
+                f"preset {pv!r} → anima-attn-mlp (not an Anima-targeting preset)."
             )
-        else:
-            form["lycoris_preset"] = pv
     leftover_na = _flatten_kv(na_dict)
     if leftover_na:
         form["network_args_extra"] = leftover_na
