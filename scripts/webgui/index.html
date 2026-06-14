@@ -622,6 +622,13 @@ function setForm(f){ if(!f) return;
     if($('network_args_extra')) $('network_args_extra').value=leftover.join(' ');
   }
   updateWarmup(); updateAlgo(); updateRepa(); updatePrep(); updateMask(); updateMultiscale();
+  // Restore per-tier multi-scale skip edges: updateMultiscale() just regenerated the
+  // skip inputs with AUTO defaults, discarding any saved values. f.ms_skip='tier:edge,...'
+  if(typeof f.ms_skip==='string' && f.ms_skip){
+    f.ms_skip.split(',').forEach(pair=>{ const c=pair.indexOf(':'); if(c<0) return;
+      const t=pair.slice(0,c), e=pair.slice(c+1);
+      const el=document.querySelector('#ms_skip_inputs .skipin[data-t="'+t+'"]'); if(el) el.value=e; });
+  }
   applyConflicts();  // re-evaluate cache conflicts against the just-loaded toggles
 }
 

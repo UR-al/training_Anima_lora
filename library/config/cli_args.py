@@ -332,12 +332,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         default=None,
         metavar="EDGE",
         help=(
-            "Multi-scale constant-token tiers the dataset was preprocessed with "
-            "(512 768 896 1024 1280 1536). Drives BOTH the training bucket table "
-            "(union of these tiers — list every tier on disk or its caches get "
-            "AR-snapped into a 1024 bucket and never loaded) and the torch.compile "
-            "dynamo cache budget so multi-tier training does not recompile-storm. "
-            "Default (unset) = single 1024 tier."
+            "Preprocess-only knob: the multi-scale constant-token tiers each image "
+            "is resized to (512 768 896 1024 1280 1536). INERT at train time — the "
+            "on-disk caches are the source of truth for which tiers are present, and "
+            "the torch.compile dynamo budget is derived from the buckets the cached "
+            "latents actually populate, not from this arg. Seeded into the run "
+            "snapshot for the record only. Default (unset) = single 1024 tier."
         ),
     )
     parser.add_argument(
@@ -388,9 +388,11 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         "is seq_len (x dim 2 + the RoPE cos/sin), so a single graph symbolic in "
         "seq_len alone covers every token bucket (4032/4200/3024/3000/...) — "
         "tighter than blanket dynamic=True. Collapses the N-graph compile cascade "
-        "— and its CUDA-context VRAM peak — to one graph. Off by default; bench "
-        "graph-count / mem_get_info peak / step-time / bit-exactness before "
-        "trusting it on a new config.",
+        "— and its CUDA-context VRAM peak — to one graph. ON by default "
+        "(configs/base.toml sets it true): it's the right multiscale default, since "
+        "the N static per-token graphs co-reside in one process and OOM 16 GB. Set "
+        "compile_dynamic_seq=false in a config to fall back to the static graphs "
+        "(faster per step, but only safe with few tiers / large VRAM).",
     )
     parser.add_argument(
         "--vae", type=str, default=None, help="path to checkpoint of vae to replace"

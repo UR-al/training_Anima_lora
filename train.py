@@ -902,7 +902,15 @@ class AnimaTrainer:
         gc_tokens = _gc_ckpt_tokens(args)
         if gc_tokens:
             toks = (h_latent // 2) * (w_latent // 2)
-            accelerator.unwrap_model(unet).set_gradient_checkpointing(toks in gc_tokens)
+            # The global --gradient_checkpointing flag means "checkpoint EVERY block,
+            # every tier". The per-resolution set only NARROWS which tiers checkpoint;
+            # it must never turn gc OFF for a tier the global flag already requested.
+            # OR them — otherwise a tier absent from gc_tokens runs un-checkpointed
+            # despite global gc=true (silently contradicting the user).
+            gc_on = bool(getattr(args, "gradient_checkpointing", False)) or (
+                toks in gc_tokens
+            )
+            accelerator.unwrap_model(unet).set_gradient_checkpointing(gc_on)
 
         # Call model
         noisy_model_input = noisy_model_input.unsqueeze(

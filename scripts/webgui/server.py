@@ -150,6 +150,11 @@ _CURATED_ARGS = {
     "network_args",
     "network_alpha",
     "network_dim",
+    # Owned by the per-subset gradient-checkpointing toggles (the per-subset path in
+    # _method_preset_extra emits --gradient_checkpointing_resolutions). Curated out so
+    # it doesn't ALSO surface as a GENERAL auto-arg and emit a SECOND time — under
+    # nargs="*" the later occurrence would silently clobber the per-subset union.
+    "gradient_checkpointing_resolutions",
     "dataset_config",
     "max_train_epochs",
     "output_name",
@@ -223,7 +228,11 @@ _ROLE_RULES = [
             "constantcosine",  # use_constantcosine + constantcosine_tail_epochs
         ],
     ),
-    ("SAVE", ["save", "resume", "state", "config_snapshot", "output_dir", "output_config", "metadata", "checkpointing"]),
+    # NOTE: bare "resume" was dropped — it substring-swallowed ema_resume_path (an
+    # EMA knob) into SAVE, the same over-match class as the gradient_checkpointing
+    # bug. --resume (the real train-state resume) is curated; resume_from_huggingface
+    # is kept here via "huggingface". ema_resume_path now reaches ANIMA's "ema".
+    ("SAVE", ["save", "state", "config_snapshot", "output_dir", "output_config", "metadata", "checkpointing", "huggingface"]),
     (
         "BUCKET",  # preprocessing / resolution / dataset-shape / caching toggles
         [
@@ -1199,13 +1208,20 @@ def _autobatch_argv(form: dict):
     if gc_res:
         argv += ["--gradient_checkpointing_resolutions", *gc_res]
     nm = (form.get("ab_network_module") or "networks.lora_anima").strip()
+    # Same routing as the training builder: stock lycoris.kohya wraps ~3 Anima
+    # modules, so the bench would measure a no-op. Force the Anima bridge.
+    if nm and "lycoris" in nm and nm != "networks.lycoris_anima":
+        nm = "networks.lycoris_anima"
     argv += ["--network_module", nm,
              "--network_dim", str(int(form.get("ab_network_dim") or 16)),
              "--network_alpha", str(form.get("ab_network_alpha") or 8.0)]
     na = str(form.get("ab_network_args") or "").strip()
-    if na:
-        # quote-aware split (same as the training network_args path)
-        nargs = shlex.split(na, posix=True) if ('"' in na or "'" in na) else na.split()
+    # quote-aware split (same as the training network_args path)
+    nargs = (shlex.split(na, posix=True) if ('"' in na or "'" in na) else na.split()) if na else []
+    if "lycoris_anima" in nm:
+        # ensure an Anima preset even if ab_network_args is blank / has a stock preset
+        nargs = _force_anima_lycoris_preset(nargs)
+    if nargs:
         argv += ["--network_args", *nargs]
     argv += ["--optimizer_type", (form.get("ab_optimizer_type") or "AdamW").strip()]
     bts = str(form.get("ab_blocks_to_swap") or "0").strip()
@@ -1873,8 +1889,17 @@ _SUBSET_KEYS = {
 
 def _flatten_kv(v) -> str:
     """A dict {k:val} / list ['k=v'] / 'k=v k=v' string → a 'k=v k=v' string."""
+
+    def _val(x):
+        # List/tuple values must render WITHOUT internal spaces — the result is
+        # space-split downstream (optimizer_args / network_args), so "betas=[0.9, 0.999]"
+        # would shatter into "betas=[0.9," + "0.999]". Compact to "betas=[0.9,0.999]".
+        if isinstance(x, (list, tuple)):
+            return "[" + ",".join(str(e) for e in x) + "]"
+        return str(x)
+
     if isinstance(v, dict):
-        return " ".join(f"{k}={vv}" for k, vv in v.items())
+        return " ".join(f"{k}={_val(vv)}" for k, vv in v.items())
     if isinstance(v, (list, tuple)):
         return " ".join(str(x) for x in v)
     return str(v or "").strip()
