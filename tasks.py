@@ -287,6 +287,12 @@ COMMANDS = {
         "budget/blocks_to_swap/batch/grad-ckpt/compile per resolution (isolated cells). "
         "--res 1024 1536 --batch 1 2 --grad-ckpt on off --blocks-to-swap range:0-26:4 [--dry-run]",
     ),
+    "bench-autobatch": (
+        utilities.cmd_bench_autobatch,
+        "Auto-find the MAX feasible batch per resolution (binary search, OOM-isolated). "
+        "Give --res / --gradient_checkpointing_resolutions / --network_* / --optimizer_type; "
+        "reports the largest non-OOM batch per resolution + s/it. Free GPU.",
+    ),
     # ── Experimental ──────────────────────────────────────────────────
     # Unstable methods kept under exp-* so they don't pollute the main command
     # surface. May produce broken output, change without notice, or be removed.

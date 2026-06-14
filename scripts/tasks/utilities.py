@@ -1,5 +1,6 @@
 """Misc utility entry-points: merge, comfy-batch, distill-prep, distill-mod,
-test-unit, update, export-logs, print-config, bench-speed, bench-sweep."""
+test-unit, update, export-logs, print-config, bench-speed, bench-sweep,
+bench-autobatch."""
 
 from __future__ import annotations
 
@@ -157,3 +158,16 @@ def cmd_bench_sweep(extra):
     --blocks-to-swap range:0-26:4 [--dry-run]. EXTRA after -- forwards to each cell.
     """
     run([PY, "bench/speed/sweep.py", *extra])
+
+
+def cmd_bench_autobatch(extra):
+    """Auto-find the MAX feasible batch per resolution (binary search, OOM-isolated).
+    Give --res / --gradient_checkpointing_resolutions / --network_module / --network_args
+    / --optimizer_type and it reports the largest batch each resolution holds without
+    OOM + the s/it. Each trial is its own subprocess (clean OOM boundary). Free GPU.
+    e.g. python tasks.py bench-autobatch --res 512 1024 1536 --max-batch 8
+    --gradient_checkpointing_resolutions 1536 --network_module networks.lycoris_anima
+    --network_dim 100000 --network_alpha 1 --network_args algo=lokr factor=4
+    full_matrix=True preset=configs/lycoris_presets/anima_attn_mlp.toml --optimizer_type CAME
+    """
+    run([PY, "bench/speed/autobatch.py", *extra])
