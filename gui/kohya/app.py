@@ -11,6 +11,7 @@ code path is involved — the GUI is a front-end re-skin over our own backend.
 
 from __future__ import annotations
 
+from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 from gui.webgui import server
 
 # --------------------------------------------------------------------------- #
@@ -283,6 +284,23 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
+            # ── Config file (load / save) — sd-scripts/LETS --config_file ───
+            with gr.Accordion("Config file (load / save)", open=False):
+                gr.Markdown(
+                    "Load a LETS / kohya_ss / anima_lora ``--config_file`` TOML into "
+                    "the form (key renames applied; unmapped keys fold into *Extra "
+                    "CLI flags*), or save the current form as a runnable config."
+                )
+                with gr.Row():
+                    config_path = gr.Textbox(
+                        label="Config TOML path",
+                        placeholder="configs/examples/lokr_came.toml",
+                        scale=4,
+                    )
+                    load_cfg_btn = gr.Button("Load → form", variant="secondary")
+                    save_cfg_btn = gr.Button("Save form →", variant="secondary")
+                config_status = gr.Markdown("")
+
             # ── Actions ─────────────────────────────────────────────────────
             with gr.Row():
                 print_btn = gr.Button("Print training command", variant="secondary")
@@ -345,6 +363,48 @@ def build_app(default_port: int = 7860):
             if not lines and res.get("note"):
                 return res["note"]
             return "\n".join(lines)
+
+        def on_load_config(path):
+            """Read a config TOML → push values into the matching form fields."""
+            p = (path or "").strip()
+            if not p:
+                return [gr.update() for _ in keys] + ["⚠ enter a config file path"]
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    form = load_toml_to_form(fh.read())
+            except Exception as exc:  # noqa: BLE001
+                return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
+            updates = [
+                gr.update(value=form[k]) if k in form else gr.update() for k in keys
+            ]
+            note = (
+                f"✓ loaded {len(form)} field(s) from `{p}`"
+                + (" — unmapped keys are in *Extra CLI flags*"
+                   if form.get("extra_flags") else "")
+            )
+            return updates + [note]
+
+        def on_save_config(path, *vals):
+            """Current form → a runnable --config_file TOML on disk."""
+            import os
+
+            form = _collect(keys, vals)
+            p = (path or "").strip() or "output/gui_config.toml"
+            try:
+                text = save_form_to_toml(form)
+                os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            except Exception as exc:  # noqa: BLE001
+                return f"❌ save error: {exc}"
+            return f"✓ saved → `{p}` (run: `python train.py --config_file {p}`)"
+
+        load_cfg_btn.click(
+            on_load_config, inputs=config_path, outputs=inputs + [config_status]
+        )
+        save_cfg_btn.click(
+            on_save_config, inputs=[config_path, *inputs], outputs=config_status
+        )
 
         print_btn.click(on_print, inputs=inputs, outputs=out_cmd)
         start_btn.click(on_start, inputs=inputs, outputs=[out_cmd, out_status])
