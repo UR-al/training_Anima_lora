@@ -1811,6 +1811,108 @@ def stop() -> dict:
     return {"ok": False, "error": "no run in progress"}
 
 
+# --------------------------------------------------------------------------- #
+# Self-update (the GUI face of update.bat: git pull + uv sync from our origin).
+# --------------------------------------------------------------------------- #
+def _git(*args: str, timeout: int = 60) -> str:
+    """Run a read git command in ROOT; return stdout (stripped) or "" on error."""
+    try:
+        r = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return (r.stdout or "").strip()
+    except Exception:  # noqa: BLE001  (git missing / not a repo / timeout)
+        return ""
+
+
+def tool_version(fetch: bool = True) -> dict:
+    """Identity of this checkout + how far behind origin it is.
+
+    Mirrors what ``update.bat`` acts on: this fork is a git clone, so "the
+    installed version" is the current commit and "an update is available" means
+    ``origin/<branch>`` is ahead. Best-effort + read-only; never raises.
+    ``fetch=False`` skips the network call (use on GUI startup so an offline box
+    doesn't stall — behind/ahead then reflect the last fetch); the explicit
+    "Check for updates" button passes ``fetch=True``. ``ok=False`` when this isn't
+    a git checkout (a release-zip install)."""
+    if not (ROOT / ".git").exists():
+        return {
+            "ok": False,
+            "note": "Not a git checkout — update via the installer / release zip.",
+        }
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+    if fetch:
+        _git("fetch", "--quiet", "origin", timeout=45)  # network; tolerated if offline
+    ref = f"origin/{branch}"
+    behind = _git("rev-list", "--count", f"HEAD..{ref}") or "0"
+    ahead = _git("rev-list", "--count", f"{ref}..HEAD") or "0"
+    return {
+        "ok": True,
+        "branch": branch,
+        "sha": _git("rev-parse", "--short", "HEAD"),
+        "last_commit": _git("log", "-1", "--format=%cs  %s"),
+        "behind": behind,  # commits available to pull
+        "ahead": ahead,  # local commits not on origin
+        "remote": _git("remote", "get-url", "origin"),
+        "remote_last": _git("log", "-1", "--format=%cs  %s", ref),
+        "up_to_date": behind == "0",
+    }
+
+
+def update_tool() -> dict:
+    """``git pull --ff-only`` (+ ``uv sync`` if deps changed) — the GUI face of
+    update.bat. Datasets / output / models are gitignored and untouched. Refuses
+    while a run is active (a pull could swap train.py mid-run). Fast-forward only,
+    so it never creates a merge commit and bails cleanly on local divergence."""
+    if status().get("running"):
+        return {"ok": False, "output": "A job is running — Stop it before updating."}
+    if not (ROOT / ".git").exists():
+        return {"ok": False, "output": "Not a git checkout — update via the installer."}
+    out: list[str] = []
+    try:
+        pull = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "output": f"git pull failed to launch: {exc}"}
+    out.append("$ git pull --ff-only\n" + (pull.stdout or "") + (pull.stderr or ""))
+    if pull.returncode != 0:
+        out.append(
+            "\n[!] Pull failed — likely local edits or a diverged history. "
+            "Resolve manually (or run update.bat) and retry."
+        )
+        return {"ok": False, "output": "\n".join(out)}
+    if "Already up to date" in (pull.stdout or ""):
+        out.append("\nAlready on the latest commit — nothing to do.")
+        return {"ok": True, "output": "\n".join(out), "changed": False}
+    deps = ("uv.lock" in pull.stdout) or ("pyproject.toml" in pull.stdout)
+    if deps:
+        out.append("\n[deps changed] running uv sync …")
+        try:
+            sync = subprocess.run(
+                ["uv", "sync"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+            out.append((sync.stdout or "") + (sync.stderr or ""))
+        except FileNotFoundError:
+            out.append("uv not found — run update.bat / install_*.bat to sync deps.")
+        except Exception as exc:  # noqa: BLE001
+            out.append(f"uv sync error: {exc}")
+    out.append("\n[OK] Updated. RESTART the GUI to load the new code.")
+    return {"ok": True, "output": "\n".join(out), "changed": True, "restart": True}
+
+
 def log_tail(n: int = 80) -> dict:
     """Last ``n`` lines of the active run's captured console output.
 

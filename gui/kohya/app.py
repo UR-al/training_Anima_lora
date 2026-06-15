@@ -900,6 +900,32 @@ def build_app(default_port: int = 7860):
                 "time). The launched command + result show in the **Result / status** "
                 "box below; to cancel a running job use **Stop** on the LoRA tab."
             )
+
+            # ── Update (GUI face of update.bat: git pull + uv sync) ─────────
+            with gr.Accordion("Update (git pull + uv sync)", open=True):
+                gr.Markdown(
+                    "Update this tool to the latest commit on "
+                    "**UR-al/training_Anima_lora** — the GUI equivalent of "
+                    "`update.bat`. Your datasets / output / models are gitignored and "
+                    "never touched. **Restart the GUI** after updating so the new code "
+                    "loads. (Installed from a release zip instead of git? Use the "
+                    "installer to update.)"
+                )
+                update_info = gr.Markdown("")
+                with gr.Row():
+                    check_update_btn = gr.Button(
+                        "Check for updates", variant="secondary"
+                    )
+                    update_now_btn = gr.Button(
+                        "Update now (git pull + uv sync)", variant="primary"
+                    )
+                update_log = gr.Textbox(
+                    label="Update output",
+                    lines=10,
+                    interactive=False,
+                    visible=False,
+                )
+
             # ── Auto-batch search (tasks.py bench-autobatch) ────────────────
             with gr.Accordion("Auto-batch (max batch-size search)", open=True):
                 _ab_tiers = [str(t) for t in server.list_target_res_tiers()]
@@ -1013,6 +1039,34 @@ def build_app(default_port: int = 7860):
         def on_status():
             return server.status()
 
+        def _fmt_version(v: dict) -> str:
+            if not v.get("ok"):
+                return f"ℹ️ {v.get('note', '')}"
+            ahead = v.get("ahead", "0")
+            ahead_note = (
+                f" · {ahead} local commit(s) not pushed" if ahead != "0" else ""
+            )
+            head = (
+                "✅ **Up to date.**"
+                if v.get("up_to_date")
+                else f"🔔 **{v['behind']} update(s) available** — click *Update now*."
+            )
+            return (
+                f"{head}\n\n"
+                f"- branch **{v['branch']}** @ `{v['sha']}`{ahead_note}\n"
+                f"- this checkout: {v['last_commit']}\n"
+                f"- latest on origin: {v.get('remote_last', '?')}\n"
+                f"- remote: `{v.get('remote', '?')}`"
+            )
+
+        def on_check_update():
+            return _fmt_version(server.tool_version(fetch=True))
+
+        def on_update_now():
+            res = server.update_tool()
+            info = _fmt_version(server.tool_version(fetch=False))
+            return info, gr.update(value=res.get("output", ""), visible=True)
+
         def _run_util(fn, *vals):
             form = _collect(keys, vals)
             try:
@@ -1105,6 +1159,10 @@ def build_app(default_port: int = 7860):
         status_btn.click(on_status, inputs=None, outputs=out_status)
         ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
         mask_run_btn.click(on_masking, inputs=inputs, outputs=[out_cmd, out_status])
+        check_update_btn.click(on_check_update, inputs=None, outputs=update_info)
+        update_now_btn.click(
+            on_update_now, inputs=None, outputs=[update_info, update_log]
+        )
         queue_add_btn.click(on_queue_add, inputs=inputs, outputs=queue_view)
         queue_run_btn.click(on_queue_run, inputs=None, outputs=[queue_view, out_status])
         queue_refresh_btn.click(on_queue_refresh, inputs=None, outputs=queue_view)
@@ -1165,6 +1223,11 @@ def build_app(default_port: int = 7860):
         for _drv in _dep_in:
             _drv.change(_recompute_deps, _dep_in, _dep_out)
         demo.load(_recompute_deps, _dep_in, _dep_out)
+        # Show the local version on startup WITHOUT a network fetch (offline-safe);
+        # the "Check for updates" button does the fetch on demand.
+        demo.load(
+            lambda: _fmt_version(server.tool_version(fetch=False)), None, update_info
+        )
 
     # Stash the field order on the app for any callers / debugging.
     FIELD_KEYS[:] = keys
