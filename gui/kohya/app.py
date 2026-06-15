@@ -1065,7 +1065,17 @@ def build_app(default_port: int = 7860):
                             allow_custom_value=True,
                         ),
                     )
-                    reg("huber_c", gr.Textbox(label="huber_c", placeholder="0.1"))
+                    # Initial interactive state matches the default-driver greying
+                    # (loss_type="" → not huber → disabled). Set statically here so the
+                    # initial state needs NO demo.load event (which, by reading driver
+                    # components on load, 422'd and left these on a spinner). The
+                    # per-driver .change handlers update them live thereafter.
+                    reg(
+                        "huber_c",
+                        gr.Textbox(
+                            label="huber_c", placeholder="0.1", interactive=False
+                        ),
+                    )
                     reg(
                         "huber_schedule",
                         gr.Dropdown(
@@ -1073,6 +1083,7 @@ def build_app(default_port: int = 7860):
                             value="",
                             label="huber_schedule",
                             allow_custom_value=True,
+                            interactive=False,
                         ),
                     )
                 with gr.Row():
@@ -1106,8 +1117,19 @@ def build_app(default_port: int = 7860):
                         ),
                     )
                 with gr.Row():
-                    reg("logit_mean", gr.Textbox(label="logit_mean", placeholder="0.0"))
-                    reg("logit_std", gr.Textbox(label="logit_std", placeholder="1.0"))
+                    # weighting_scheme="" → not logit_normal → disabled initially.
+                    reg(
+                        "logit_mean",
+                        gr.Textbox(
+                            label="logit_mean", placeholder="0.0", interactive=False
+                        ),
+                    )
+                    reg(
+                        "logit_std",
+                        gr.Textbox(
+                            label="logit_std", placeholder="1.0", interactive=False
+                        ),
+                    )
                     reg("t_min", gr.Textbox(label="t_min (σ 0–1)", placeholder="0.0"))
                     reg("t_max", gr.Textbox(label="t_max (σ 0–1)", placeholder="1.0"))
                 with gr.Row():
@@ -1561,51 +1583,18 @@ def build_app(default_port: int = 7860):
                 return f"❌ save error: {exc}"
             return f"✓ saved → `{p}` (run: `python train.py --config_file {p}`)"
 
-        # ── Conflict / dependency greying (ported from the web GUI's CONFLICT_RULES
-        #    + ARG_DEPS) — disable (and reset) a field when an active option makes it a
-        #    no-op. Defined here so the config-load .then below can run ONE clean full
-        #    recompute AFTER every value has landed. ──────────────────────────────────
-        _dep_drivers = [
-            "use_vae_cache",
-            "use_text_cache",
-            "use_constantcosine",
-            "loss_type",
-            "timestep_sampling",
-            "weighting_scheme",
-        ]
-        _dep_targets = [
-            "ds_random_crop",
-            "ds_caption_dropout_rate",
-            "lr_scheduler_type",
-            "huber_c",
-            "huber_schedule",
-            "sigmoid_scale",
-            "logit_mean",
-            "logit_std",
-        ]
-
+        # ── Conflict / dependency greying ───────────────────────────────────────
+        # Per-driver scoped .change handlers (below) toggle a target's interactive
+        # state on live edits. The INITIAL greyed state is set statically at component
+        # construction (interactive=…), and config-load folds it into on_load_config's
+        # output — so NO startup/recompute event reads driver components (a load event
+        # that did 422'd and wedged huber_c/sigmoid_scale/… on a spinner).
         def _gray(on: bool, reset=None):
             if on:
                 return gr.update(interactive=True)
             if reset is not None:
                 return gr.update(interactive=False, value=reset)
             return gr.update(interactive=False)
-
-        def _recompute_deps(use_vae, use_text, use_cc, loss, ts, ws):
-            huber = loss in ("huber", "smooth_l1")
-            return [
-                _gray(not use_vae, reset=False),  # random_crop ↮ cached latents
-                _gray(not use_text, reset="0"),  # caption_dropout ↮ cached TE
-                _gray(not use_cc),  # lr_scheduler_type ← overridden by constant→cosine
-                _gray(huber),  # huber_c only for huber/smooth_l1
-                _gray(huber),  # huber_schedule
-                _gray(ts in ("", "sigmoid")),  # sigmoid_scale: sigmoid family
-                _gray(ws == "logit_normal"),  # logit_mean
-                _gray(ws == "logit_normal"),  # logit_std
-            ]
-
-        _dep_in = [by_key[k] for k in _dep_drivers]
-        _dep_out = [by_key[k] for k in _dep_targets]
 
         # Config load is a SINGLE event: on_load_config writes every value AND folds in
         # the dep-greying interactive states (via _interactive_states). NO .then / no
@@ -1690,11 +1679,14 @@ def build_app(default_port: int = 7860):
             bk["weighting_scheme"],
             [bk["logit_mean"], bk["logit_std"]],
         )
-        # Initial interactive state: one full recompute on app load (the right place to
-        # set all 8 at once); config-load uses the .then chain above for the same.
-        demo.load(_recompute_deps, _dep_in, _dep_out)
+        # NOTE: no demo.load(_recompute_deps, _dep_in, _dep_out) — a load event that
+        # READS the driver components 422'd on startup and left huber_c/sigmoid_scale/…
+        # stuck on a spinner. The initial greyed state is set statically at component
+        # construction (interactive=…) instead; the per-driver .change handlers above
+        # update it live, and config-load folds it into on_load_config's own output.
         # Show the local version on startup WITHOUT a network fetch (offline-safe);
-        # the "Check for updates" button does the fetch on demand.
+        # the "Check for updates" button does the fetch on demand. (inputs=None, so it
+        # never reads components → no startup 422.)
         demo.load(
             lambda: _fmt_version(server.tool_version(fetch=False)), None, update_info
         )
