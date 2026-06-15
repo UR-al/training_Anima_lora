@@ -1075,6 +1075,200 @@ def _build_precached_config(form: dict) -> str | None:
     return str(path)
 
 
+def _dataset_fingerprint(entries) -> str:
+    """A fast signature of an auto-preprocess run: the manifest entries (all
+    settings — tiers, min_pixels, random_crop, cache/resized dirs) PLUS a
+    stat-only fingerprint of every source image (relpath, size, mtime). No image
+    decode — just os.walk + os.stat — so it's cheap to recompute each launch.
+    Changing a setting OR adding/removing/editing an image flips the hash.
+    """
+    import hashlib
+    import json as _json
+
+    exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif")
+    parts = [_json.dumps(entries, sort_keys=True, default=str)]
+    for src in sorted({e.get("src") for e in entries if e.get("src")}):
+        files = []
+        try:
+            for root, _dirs, names in os.walk(src):
+                for n in names:
+                    if n.lower().endswith(exts):
+                        fp = os.path.join(root, n)
+                        try:
+                            stt = os.stat(fp)
+                            rel = os.path.relpath(fp, src).replace("\\", "/")
+                            files.append((rel, stt.st_size, int(stt.st_mtime)))
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+        files.sort()
+        parts.append(src + "::" + repr(files))
+    return hashlib.sha1("\n".join(parts).encode("utf-8", "replace")).hexdigest()
+
+
+def _caches_ready(prep: dict) -> bool:
+    """True iff a prior preprocess of this EXACT spec finished — the marker file
+    exists, its stored signature matches the current one, and the cache root is
+    still present. Lets launch() skip the preprocess phase and train directly."""
+    marker, sig = prep.get("_marker"), prep.get("_sig")
+    if not marker or not sig:
+        return False
+    path = marker if os.path.isabs(marker) else str(ROOT / marker)
+    if not os.path.isfile(path) or not os.path.isdir(os.path.dirname(path)):
+        return False
+    try:
+        import json as _json
+
+        return _json.loads(open(path, encoding="utf-8").read()).get("sig") == sig
+    except (OSError, ValueError):
+        return False
+
+
+def _prepare_auto_preprocess(form: dict) -> dict:
+    """Set up the auto-preprocess → train chain from the form.
+
+    Resizes/caches (and optionally masks) RAW image folders at training start —
+    like latent caching, but kicked off automatically. Returns the preprocess spec
+    (``extra_env`` for ``tasks.py preprocess-manifest`` + the completion ``_marker``
+    / ``_sig`` so a repeat launch can skip it). Also REWRITES ``form['dataset_config']``
+    to the auto-generated config pointing at the to-be-created cache dirs, so the
+    chained train reads the fresh caches. Returns ``{"error": …}`` on a bad folder.
+
+    Everything generated lives under ``cache/<output_name>/`` (resized/ + the
+    VAE/TE/PE caches split into vae/te/pe + masks/), keyed on output_name so a
+    run's data is self-contained.
+    """
+    import json as _json
+
+    import toml as _toml
+
+    subs = _dataset_subsets(form)
+    if not subs:
+        return {"error": "Auto-preprocess is on but no dataset subset / image "
+                "folder is set."}
+    for s in subs:
+        if not Path(s["image_dir"]).is_dir():
+            return {"error": f"Image folder not found: {s['image_dir']}"}
+
+    name = _safe_name(form.get("output_name") or form.get("ds_name") or "gui")
+    base_resized = f"cache/{name}/resized"
+    base_cache = f"cache/{name}"
+    base_mask = f"cache/{name}/masks"
+    masking = bool(form.get("mask_enable"))
+    tiers = sorted(int(t) for t in (form.get("target_res") or [])
+                   if str(t).strip()) or [1024]
+    multiscale = bool(form.get("multiscale")) and len(tiers) >= 2
+    bs = int(form.get("ds_batch") or form.get("ds_batch_size") or 1)
+
+    skip_map: dict[int, int] = {}
+    for part in str(form.get("ms_skip") or "").split(","):
+        if ":" in part:
+            tk, sk = part.split(":", 1)
+            try:
+                skip_map[int(tk)] = int(sk)
+            except ValueError:
+                pass
+    no_skip = form.get("ms_skip_upscale") is False
+
+    def _skip_minpx(tier: int) -> int:
+        if no_skip:
+            return 0
+        if tier in skip_map:
+            edge = skip_map[tier]
+        else:
+            gi = tiers.index(tier) if tier in tiers else 0
+            edge = 0 if gi == 0 else tiers[gi - 1]
+        return edge * edge
+
+    entries: list[dict] = []
+    datasets: list[dict] = []
+    for i, s in enumerate(subs):
+        block_common = {k: s[k] for k in
+                        ("num_repeats", "keep_tokens", "caption_extension",
+                         "caption_dropout_rate") if s.get(k) not in (None, "")}
+        if s.get("flip_aug"):
+            block_common["flip_aug"] = True
+        rc_entry: dict = {}
+        if s.get("random_crop"):
+            rc_entry["random_crop"] = True
+            if s.get("random_crop_padding_percent") not in (None, ""):
+                rc_entry["random_crop_padding_percent"] = s["random_crop_padding_percent"]
+        sub_bs = int(s.get("batch_size") or bs)
+        sub_tiers = [t for t in (s.get("tiers") or tiers) if t in tiers] or tiers
+        if multiscale:
+            for t in sub_tiers:
+                rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
+                mdir = f"{base_mask}/{i}/{t}" if masking else None
+                e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
+                     "target_res": str(t), "min_pixels": _skip_minpx(t), **rc_entry}
+                if mdir:
+                    e["mask"] = mdir
+                entries.append(e)
+                blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True,
+                       **block_common}
+                if mdir:
+                    blk["mask_dir"] = mdir
+                datasets.append({"batch_size": sub_bs, "subsets": [blk]})
+        else:
+            rdir, cdir = f"{base_resized}/{i}", f"{base_cache}/{i}"
+            mdir = f"{base_mask}/{i}" if masking else None
+            e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
+                 "target_res": " ".join(str(t) for t in sub_tiers),
+                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000,
+                 **rc_entry}
+            if mdir:
+                e["mask"] = mdir
+            entries.append(e)
+            blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True,
+                   **block_common}
+            if mdir:
+                blk["mask_dir"] = mdir
+            datasets.append({"batch_size": sub_bs, "subsets": [blk]})
+
+    ds_toml = _toml.dumps({"datasets": datasets})
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    ds_path = DATASET_DIR / f"{name}_auto.toml"
+    ds_path.write_text(ds_toml, encoding="utf-8")
+    form["dataset_config"] = str(ds_path)
+
+    manifest: dict = {
+        "caption_shuffle_variants": str(form.get("caption_shuffle_variants") or "4"),
+        "caption_tag_dropout_rate": str(form.get("caption_tag_dropout_rate") or "0.1"),
+        "entries": entries,
+    }
+    for mk, fk in (("vae", "vae_path"), ("qwen3", "te_path"), ("dit", "dit_path")):
+        v = (form.get(fk) or "").strip()
+        if v:
+            manifest[mk] = v
+    STORE_DIR.mkdir(parents=True, exist_ok=True)
+    mf_path = STORE_DIR / f"manifest_{name}.json"
+    mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+
+    sig = _dataset_fingerprint(entries)
+    marker = str(ROOT / base_cache / ".anima_preprocess.json")
+    env = {
+        "MANIFEST_FILE": str(mf_path),
+        "PREPROCESS_MARKER": marker,
+        "PREPROCESS_SIG": sig,
+    }
+    if masking:
+        env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
+        env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
+        if str(form.get("mit_text_threshold") or "").strip():
+            env["MIT_TEXT_THRESHOLD"] = str(form["mit_text_threshold"])
+        if str(form.get("mit_dilate") or "").strip():
+            env["MIT_DILATE"] = str(form["mit_dilate"])
+        if form.get("mask_sam") and str(form.get("sam3_path") or "").strip():
+            env["SAM3_CHECKPOINT"] = str(form["sam3_path"]).strip()
+    return {
+        "extra_env": env,
+        "dataset_config": str(ds_path),
+        "_marker": marker,
+        "_sig": sig,
+    }
+
+
 def _autobatch_argv(form: dict):
     """Build the ``tasks.py bench-autobatch`` argv from the self-contained ab_* GUI
     fields. Returns (argv, error): error is non-None when nothing to search."""
@@ -1198,18 +1392,22 @@ def launch(form: dict) -> dict:
     if proc is not None and proc.poll() is None:
         return {"ok": False, "error": "A run is already in progress."}
 
-    # Auto-preprocess used to chain preprocess → train through the job queue. With
-    # only a single blocking subprocess there's no way to sequence the two, so refuse
-    # cleanly and tell the user to run preprocessing on its own first.
+    # Auto-preprocess → train: with the job queue gone we chain the two as a SINGLE
+    # subprocess (tools/gui_chain_preprocess_train.py) instead of a queue hop. Build
+    # the preprocess spec + rewrite form['dataset_config'] to the fresh-cache config;
+    # if the completion marker already matches (caches built), skip straight to train.
+    chain_spec = None
     if form.get("auto_preprocess"):
-        return {
-            "ok": False,
-            "error": "Auto-preprocess (preprocess → train chaining) needed the job "
-            "queue, which has been removed. Run preprocessing separately first "
-            "(make preprocess / the Preprocess panel), then launch training with the "
-            "resulting caches.",
-        }
-    if form.get("subsets") and not (form.get("dataset_config") or "").strip():
+        prep = _prepare_auto_preprocess(form)  # rewrites form['dataset_config']
+        if "error" in prep:
+            return {"ok": False, "error": prep["error"]}
+        if not _caches_ready(prep):
+            chain_spec = {
+                "preprocess_env": prep["extra_env"],
+                "marker": prep["_marker"],
+                "sig": prep["_sig"],
+            }
+    elif form.get("subsets") and not (form.get("dataset_config") or "").strip():
         # A dataset is defined → treat the subsets as already resized + cached and
         # build the dataset config straight from them.
         pc = _build_precached_config(form)
@@ -1221,11 +1419,24 @@ def launch(form: dict) -> dict:
 
     mon = _monitor_url(form)
     cmd = build_command(form)
+    name = _safe_name((form.get("output_name") or "").strip() or "training")
+
+    # When preprocessing is needed first, swap the train command for the chain runner
+    # (it runs preprocess-manifest, then this exact train argv). Same single child,
+    # same log capture — the live-log panel mirrors both phases.
+    if chain_spec is not None:
+        import json as _json
+
+        chain_spec["train_argv"] = cmd
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+        spec_path = STORE_DIR / f"chain_{name}.json"
+        spec_path.write_text(_json.dumps(chain_spec), encoding="utf-8")
+        cmd = [sys.executable,
+               str(ROOT / "tools" / "gui_chain_preprocess_train.py"), str(spec_path)]
     cmd_str = " ".join(cmd)
 
     # Capture the child's stdout+stderr (the sd-scripts RichHandler console) to a
     # logfile so the GUI live-log panel (log_tail) can mirror the terminal.
-    name = _safe_name((form.get("output_name") or "").strip() or "training")
     log_dir = ROOT / "output" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"webgui_{name}.log"

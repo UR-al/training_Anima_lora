@@ -60,6 +60,11 @@ _DIRECT_FIELDS = {
     "save_every_n_epochs",
     "save_precision",
     "resume",
+    # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
+    # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
+    # into extra_flags as bogus train flags).
+    "caption_shuffle_variants",
+    "caption_tag_dropout_rate",
 }
 # Boolean form fields (rendered as checkboxes; value kept as bool, not str).
 _BOOL_FIELDS = {
@@ -73,6 +78,11 @@ _BOOL_FIELDS = {
     "qwen_image_vae_2d",
     "save_state",
     "output_config",
+    # GUI auto-preprocess orchestration toggles (not train.py args).
+    "auto_preprocess",
+    "multiscale",
+    "drop_lowres",
+    "mask_enable",
 }
 # Tri-state dropdown fields ("on"/"off"/blank): a config bool maps to "on"/"off".
 _TRISTATE_FIELDS = {"torch_compile"}

@@ -167,6 +167,21 @@ def test_load_without_dataset_leaves_ds_fields_unset():
     assert not any(k.startswith("ds_") for k in form)
 
 
+def test_load_auto_preprocess_orchestration_keys():
+    # GUI auto-preprocess knobs are not train.py args — they must map to their
+    # dedicated form fields, never leak into extra_flags as bogus --flags.
+    form = load_toml_to_form(
+        "auto_preprocess = true\n"
+        "multiscale = true\n"
+        "drop_lowres = false\n"
+        "caption_shuffle_variants = 6\n"
+    )
+    assert form["auto_preprocess"] is True and form["multiscale"] is True
+    assert form["drop_lowres"] is False
+    assert form["caption_shuffle_variants"] == "6"
+    assert "auto_preprocess" not in form.get("extra_flags", "")
+
+
 def test_load_resume_and_caption_variant_fields():
     form = load_toml_to_form(
         'resume = "output/ckpt/x-state"\n'
@@ -215,6 +230,7 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()
     test_load_multi_subset_fills_extra_grid()
     print("all config_io round-trip tests passed")

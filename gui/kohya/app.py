@@ -390,6 +390,31 @@ def build_app(default_port: int = 7860):
                     "`base.toml` blueprint (`post_image_dataset/lora`). An explicit "
                     "`dataset_config` wins over the folder fields._"
                 )
+            # ── Auto-preprocess at train start ──────────────────────────────
+            with gr.Accordion("Auto-preprocess at train start", open=False):
+                gr.Markdown(
+                    "Toggle **ON** and just hit **Start**: the subset folders above "
+                    "(point `image_dir` at the **raw** images) are resized + cached "
+                    "into `cache/<output_name>/` first, then training runs — one "
+                    "subprocess. A completion marker skips it on the next run if "
+                    "nothing changed. (Masking uses the Utils-tab SAM3/MIT toggles.)"
+                )
+                with gr.Row():
+                    reg("auto_preprocess", gr.Checkbox(
+                        value=False,
+                        label="auto_preprocess (resize/cache then train)"))
+                    reg("multiscale", gr.Checkbox(
+                        value=False, label="multiscale (every tier, ≥2 tiers)"))
+                    reg("drop_lowres", gr.Checkbox(
+                        value=True, label="drop low-res (< 0.5MP)"))
+                    reg("mask_enable", gr.Checkbox(
+                        value=False, label="mask (SAM3 + MIT)"))
+                with gr.Row():
+                    reg("caption_shuffle_variants", gr.Textbox(
+                        label="caption_shuffle_variants (caption variation)",
+                        placeholder="4"))
+                    reg("caption_tag_dropout_rate", gr.Textbox(
+                        label="caption_tag_dropout_rate", placeholder="0.1"))
 
         with gr.Tab("Samples"):
             # ── Sample prompts ──────────────────────────────────────────────
