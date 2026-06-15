@@ -167,6 +167,35 @@ def test_load_without_dataset_leaves_ds_fields_unset():
     assert not any(k.startswith("ds_") for k in form)
 
 
+_MULTI_SUBSET = """
+[[datasets]]
+batch_size = 2
+  [[datasets.subsets]]
+  image_dir = "data/main"
+  num_repeats = 5
+  [[datasets.subsets]]
+  image_dir = "data/reg"
+  flip_aug = true
+  tiers = [512, 1024]
+[[datasets]]
+batch_size = 4
+  [[datasets.subsets]]
+  image_dir = "data/third"
+"""
+
+
+def test_load_multi_subset_fills_extra_grid():
+    form = load_toml_to_form(_MULTI_SUBSET)
+    # first subset → flat fields
+    assert form["ds_image_dir"] == "data/main" and form["ds_batch_size"] == "2"
+    # subsets 2..N → ds_extra grid rows (in _DS_EXTRA_COLS order)
+    rows = form["ds_extra"]
+    assert len(rows) == 2
+    assert rows[0][0] == "data/reg" and rows[0][6] is True  # image_dir, flip_aug
+    assert rows[0][8] == "512,1024"  # tiers column
+    assert rows[1][0] == "data/third" and rows[1][5] == 4  # third subset, block bs
+
+
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_maps_dedicated_fields()
     test_load_renames_to_dedicated_fields()
@@ -175,4 +204,5 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_multi_subset_fills_extra_grid()
     print("all config_io round-trip tests passed")

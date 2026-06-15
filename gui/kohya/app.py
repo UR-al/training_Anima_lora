@@ -39,10 +39,9 @@ def _collect(keys: list[str], values) -> dict:
     return form
 
 
-# Flat dataset-field key → (subset-dict key, caster). The Gradio app exposes one
-# subset (the common single-folder LoRA case); the backend's _dataset_subsets
-# list-branch consumes the assembled form["subsets"]. Multi-subset datasets use a
-# --dataset_config TOML (or the stdlib web GUI's subset cards).
+# Flat dataset-field key → (subset-dict key, caster) for the PRIMARY subset (the
+# common single-folder case). The backend's _dataset_subsets list-branch consumes
+# the assembled form["subsets"]; additional subsets come from the ds_extra grid.
 _DS_SUBSET_FIELDS = (
     ("ds_num_repeats", "num_repeats", int),
     ("ds_keep_tokens", "keep_tokens", int),
@@ -51,22 +50,70 @@ _DS_SUBSET_FIELDS = (
     ("ds_batch_size", "batch_size", int),
 )
 _DS_SUBSET_BOOLS = (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop"))
+# Column order of the "Additional subsets" gr.Dataframe (type="array" → list rows).
+# Shared with config_io._DS_EXTRA_COLS so the load round-trip stays symmetric.
+_DS_EXTRA_COLS = (
+    "image_dir", "cache_dir", "num_repeats", "keep_tokens", "caption_extension",
+    "batch_size", "flip_aug", "random_crop", "tiers",
+)
 _DS_POP_KEYS = (
-    "ds_image_dir", "ds_cache_dir", "ds_tiers",
+    "ds_image_dir", "ds_cache_dir", "ds_tiers", "ds_extra",
     *(k for k, _s, _c in _DS_SUBSET_FIELDS),
     *(k for k, _s in _DS_SUBSET_BOOLS),
 )
 
 
-def _assemble_dataset(form: dict) -> None:
-    """Fold the flat ``ds_*`` dataset fields into ``form['subsets']`` (a single
-    subset) so the backend builds a precached dataset config from it. No-op when
-    no image_dir is given (defer to base.toml blueprint / an explicit
-    --dataset_config). Mutates ``form`` in place."""
+def _tier_list(text) -> list[int]:
+    """Parse a free-form tier string (\"512,1024\" / \"1024\") into ints."""
     import re
 
+    return [int(x) for x in re.findall(r"\d+", str(text or ""))]
+
+
+def _parse_extra_subsets(rows) -> list[dict]:
+    """Turn the ds_extra grid (list-of-rows in _DS_EXTRA_COLS order) into subset
+    dicts. Rows without an image_dir are skipped (e.g. the trailing blank row)."""
+    out: list[dict] = []
+    for row in rows or []:
+        if not isinstance(row, (list, tuple)):
+            continue
+        cells = dict(zip(_DS_EXTRA_COLS, row))
+        img = str(cells.get("image_dir") or "").strip()
+        if not img:
+            continue
+        sub: dict = {"image_dir": img}
+        cache = str(cells.get("cache_dir") or "").strip()
+        if cache:
+            sub["cache_dir"] = cache
+        for k in ("num_repeats", "keep_tokens", "batch_size"):
+            v = cells.get(k)
+            if v in (None, ""):
+                continue
+            try:
+                sub[k] = int(float(v))
+            except (TypeError, ValueError):
+                pass
+        ce = str(cells.get("caption_extension") or "").strip()
+        if ce:
+            sub["caption_extension"] = ce
+        for k in ("flip_aug", "random_crop"):
+            if cells.get(k) in (True, "true", "True", 1, "1"):
+                sub[k] = True
+        tiers = _tier_list(cells.get("tiers"))
+        if tiers:
+            sub["tiers"] = tiers
+        out.append(sub)
+    return out
+
+
+def _assemble_dataset(form: dict) -> None:
+    """Fold the flat ds_* primary-subset fields + the ds_extra grid into
+    ``form['subsets']`` (primary first, then extra rows) so the backend builds a
+    precached dataset config. No-op when nothing has an image_dir (defer to the
+    base.toml blueprint / an explicit --dataset_config). Mutates ``form``."""
+    subs: list[dict] = []
     img = str(form.get("ds_image_dir") or "").strip()
-    if img and not form.get("subsets"):
+    if img:
         sub: dict = {"image_dir": img}
         cache = str(form.get("ds_cache_dir") or "").strip()
         if cache:
@@ -82,10 +129,13 @@ def _assemble_dataset(form: dict) -> None:
         for fk, sk in _DS_SUBSET_BOOLS:
             if form.get(fk):
                 sub[sk] = True
-        tiers = [int(x) for x in re.findall(r"\d+", str(form.get("ds_tiers") or ""))]
+        tiers = _tier_list(form.get("ds_tiers"))
         if tiers:
             sub["tiers"] = tiers
-        form["subsets"] = [sub]
+        subs.append(sub)
+    subs.extend(_parse_extra_subsets(form.get("ds_extra")))
+    if subs and not form.get("subsets"):
+        form["subsets"] = subs
     for k in _DS_POP_KEYS:  # don't leak the flat helpers to the backend form
         form.pop(k, None)
 
@@ -316,6 +366,18 @@ def build_app(default_port: int = 7860):
                 reg("ds_tiers", gr.Textbox(
                     label="this subset's tiers (multi-scale; blank = all)",
                     placeholder="e.g. 1024 or 512,1024"))
+                gr.Markdown(
+                    "**Additional subsets** (optional) — one row per extra folder; "
+                    "the fields above are subset #1. Leave empty for a single subset."
+                )
+                reg("ds_extra", gr.Dataframe(
+                    headers=list(_DS_EXTRA_COLS),
+                    datatype=["str", "str", "number", "number", "str",
+                              "number", "bool", "bool", "str"],
+                    type="array",
+                    row_count=(0, "dynamic"),
+                    label="Additional subsets (image_dir required per row)",
+                ))
                 reg(
                     "dataset_config",
                     gr.Textbox(

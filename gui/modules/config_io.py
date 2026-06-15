@@ -129,52 +129,77 @@ def _nearest_tier(res) -> int | None:
     return min(_DATASET_TIERS, key=lambda t: abs(t - r))
 
 
+# Column order of the GUI's "Additional subsets" grid (must match
+# gui.kohya.app._DS_EXTRA_COLS) so a multi-subset config round-trips.
+_DS_EXTRA_COLS = (
+    "image_dir", "cache_dir", "num_repeats", "keep_tokens", "caption_extension",
+    "batch_size", "flip_aug", "random_crop", "tiers",
+)
+
+
+def _subset_to_row(s: dict, block_bs=None) -> list:
+    """Render one subset dict as an ``_DS_EXTRA_COLS``-ordered grid row."""
+    tiers = s.get("tiers")
+    return [
+        str(s.get("image_dir") or ""),
+        str(s.get("cache_dir") or ""),
+        s.get("num_repeats"),
+        s.get("keep_tokens"),
+        str(s.get("caption_extension") or ""),
+        s.get("batch_size", block_bs),
+        bool(s.get("flip_aug", False)),
+        bool(s.get("random_crop", False)),
+        ",".join(str(x) for x in tiers) if isinstance(tiers, (list, tuple)) else "",
+    ]
+
+
 def _extract_dataset(data: dict, form: dict) -> None:
-    """Harvest the first ``[[datasets]]`` block + its first subset into the flat
-    ``ds_*`` / ``target_res`` form fields (the single-subset Gradio Dataset panel).
-    Multi-subset / multi-block configs keep only the first subset here — load the
-    full set via ``--dataset_config`` instead. Mutates ``form`` in place."""
+    """Harvest the ``[[datasets]]`` blocks into the Dataset panel: the first subset
+    fills the flat ``ds_*`` / ``target_res`` fields; any further subsets become rows
+    of the ``ds_extra`` grid (so a multi-subset config round-trips). Mutates
+    ``form`` in place."""
     blocks = data.get("datasets")
     if not isinstance(blocks, list) or not blocks:
         return
     tiers: set[int] = set()
-    block_bs = None
-    first_sub: dict | None = None
+    flat_bs = None  # batch_size to surface for the first subset (block fallback)
+    pairs: list[tuple[dict, object]] = []  # (subset, owning-block batch_size)
     for blk in blocks:
         if not isinstance(blk, dict):
             continue
         tier = _nearest_tier(blk.get("resolution"))
         if tier is not None:
             tiers.add(tier)
-        if block_bs is None and blk.get("batch_size") is not None:
-            block_bs = blk["batch_size"]
         subs = blk.get("subsets")
-        if first_sub is None and isinstance(subs, list) and subs:
-            if isinstance(subs[0], dict):
-                first_sub = subs[0]
-    if first_sub is not None:
-        s = first_sub
-        if s.get("image_dir"):
-            form["ds_image_dir"] = str(s["image_dir"])
-        if s.get("cache_dir"):
-            form["ds_cache_dir"] = str(s["cache_dir"])
+        if isinstance(subs, list):
+            for s in subs:
+                if isinstance(s, dict):
+                    pairs.append((s, blk.get("batch_size")))
+    if pairs:
+        first, first_block_bs = pairs[0]
+        if first.get("image_dir"):
+            form["ds_image_dir"] = str(first["image_dir"])
+        if first.get("cache_dir"):
+            form["ds_cache_dir"] = str(first["cache_dir"])
         for fk, sk in (
             ("ds_num_repeats", "num_repeats"),
             ("ds_keep_tokens", "keep_tokens"),
             ("ds_caption_extension", "caption_extension"),
             ("ds_caption_dropout_rate", "caption_dropout_rate"),
         ):
-            if s.get(sk) is not None:
-                form[fk] = str(s[sk])
-        bs = s.get("batch_size", block_bs)
-        if bs is not None:
-            form["ds_batch_size"] = str(bs)
+            if first.get(sk) is not None:
+                form[fk] = str(first[sk])
+        flat_bs = first.get("batch_size", first_block_bs)
+        if flat_bs is not None:
+            form["ds_batch_size"] = str(flat_bs)
         for fk, sk in (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop")):
-            if sk in s:
-                form[fk] = bool(s[sk])
-        t = s.get("tiers")
+            if sk in first:
+                form[fk] = bool(first[sk])
+        t = first.get("tiers")
         if isinstance(t, (list, tuple)) and t:
             form["ds_tiers"] = ",".join(str(x) for x in t)
+        if len(pairs) > 1:
+            form["ds_extra"] = [_subset_to_row(s, bbs) for s, bbs in pairs[1:]]
     if tiers:
         form["target_res"] = [str(t) for t in sorted(tiers)]
 
