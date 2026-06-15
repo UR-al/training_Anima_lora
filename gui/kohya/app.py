@@ -563,6 +563,20 @@ def build_app(default_port: int = 7860):
                     save_cfg_btn = gr.Button("Save form →", variant="secondary")
                 config_status = gr.Markdown("")
 
+            # ── Queue (saved runs, LoRA_Easy-style) ─────────────────────────
+            with gr.Accordion("Queue (saved runs)", open=False):
+                gr.Markdown(
+                    "Stack runs to launch one at a time (single subprocess). "
+                    "**Add** the current form, **Run next** launches the first queued "
+                    "run; re-run after it finishes for the next."
+                )
+                queue_view = gr.JSON(label="Queued runs (id · name)")
+                with gr.Row():
+                    queue_add_btn = gr.Button("Add current → queue")
+                    queue_run_btn = gr.Button("Run next", variant="primary")
+                    queue_refresh_btn = gr.Button("Refresh")
+                    queue_clear_btn = gr.Button("Clear queue", variant="stop")
+
         with gr.Tab("Utils"):
             gr.Markdown(
                 "Utilities run as **direct subprocesses** (`tasks.py …`), like "
@@ -685,6 +699,27 @@ def build_app(default_port: int = 7860):
         def on_masking(*vals):
             return _run_util(server.run_masking, *vals)
 
+        def _queue_brief():
+            # Show only id + name (the full per-run form is large and noisy).
+            return [{"id": i.get("id"), "name": i.get("name")}
+                    for i in server.queue_list()]
+
+        def on_queue_add(*vals):
+            form = _collect(keys, vals)
+            server.queue_add((form.get("output_name") or "run").strip() or "run", form)
+            return _queue_brief()
+
+        def on_queue_run():
+            res = server.queue_run()
+            return _queue_brief(), res
+
+        def on_queue_refresh():
+            return _queue_brief()
+
+        def on_queue_clear():
+            server.queue_clear()
+            return _queue_brief()
+
         def on_save_samples(name, text):
             res = server.save_sample_prompts(name or "sample", text or "")
             # Push the written path into the sample_prompts field on success.
@@ -745,6 +780,10 @@ def build_app(default_port: int = 7860):
         status_btn.click(on_status, inputs=None, outputs=out_status)
         ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
         mask_run_btn.click(on_masking, inputs=inputs, outputs=[out_cmd, out_status])
+        queue_add_btn.click(on_queue_add, inputs=inputs, outputs=queue_view)
+        queue_run_btn.click(on_queue_run, inputs=None, outputs=[queue_view, out_status])
+        queue_refresh_btn.click(on_queue_refresh, inputs=None, outputs=queue_view)
+        queue_clear_btn.click(on_queue_clear, inputs=None, outputs=queue_view)
         # Live log: tick every 2s while Auto-refresh is on; the checkbox toggles
         # the timer so the poll stops when the panel isn't being watched.
         log_timer.tick(on_log_tick, inputs=None, outputs=out_log)
