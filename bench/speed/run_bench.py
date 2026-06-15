@@ -38,12 +38,14 @@ import time
 from pathlib import Path
 
 # Run as a script (python bench/speed/run_bench.py) puts bench/speed on sys.path[0],
-# NOT the repo root — so root-level packages like LoraEasyCustomOptimizer (the
-# optimizer zoo, not pip-installed) aren't importable and CAME/etc. would fall back
-# to torch.optim. Put the repo root first so the zoo resolves like it does in train.py.
+# NOT the repo root — so root-level packages aren't importable and CAME/etc. would
+# fall back to torch.optim. Put the repo root first, plus custom_scheduler/ where the
+# vendored LoraEasyCustomOptimizer zoo now lives (LETS layout), so it resolves like
+# it does in train.py.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+for _p in (str(_REPO_ROOT), str(_REPO_ROOT / "custom_scheduler")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import torch  # noqa: E402 — after the repo-root sys.path bootstrap above
 import torch.nn.functional as F  # noqa: E402

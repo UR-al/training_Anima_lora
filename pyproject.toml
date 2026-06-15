@@ -131,8 +131,14 @@ reportUnsupportedDunderAll = "none"
 # (`from bench._common import …`, `from scripts.dcw.haar import …`) resolve via
 # the editable finder instead of per-file `sys.path.insert` shims — and any tool
 # runs as `python -m bench.spd.foo`. `gui` stays CLI-only (not importable).
+# `custom_scheduler` is a second source root (LETS layout) holding the vendored
+# `LoraEasyCustomOptimizer` optimizer zoo — installed as the top-level
+# `LoraEasyCustomOptimizer` so user-config dotted paths (`…came.CAME`) still
+# resolve. `library.env.ensure_custom_scheduler_on_path()` covers the from-source
+# (pre-`uv sync`) case.
 [tool.setuptools.packages.find]
-include = ["anima_lora*", "library*", "networks*", "bench*", "scripts*", "preprocess*", "gui*", "finetune*"]
+where = [".", "custom_scheduler"]
+include = ["anima_lora*", "library*", "networks*", "bench*", "scripts*", "preprocess*", "gui*", "finetune*", "LoraEasyCustomOptimizer*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

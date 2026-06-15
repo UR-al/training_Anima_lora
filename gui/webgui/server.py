@@ -74,6 +74,9 @@ def list_optimizers() -> list[str]:
     try:
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
+        _cs = str(ROOT / "custom_scheduler")  # vendored zoo's LETS home
+        if _cs not in sys.path:
+            sys.path.insert(0, _cs)
         from LoraEasyCustomOptimizer import OPTIMIZERS  # type: ignore
 
         custom = sorted({cls.__name__ for cls in OPTIMIZERS.values()})
@@ -630,6 +633,9 @@ def optimizer_arg_help(name: str) -> dict:
 
     cls = None
     try:
+        _cs = str(ROOT / "custom_scheduler")  # vendored zoo's LETS home (dotted + registry)
+        if _cs not in sys.path:
+            sys.path.insert(0, _cs)
         if "." in name:
             vals = name.split(".")
             cls = getattr(importlib.import_module(".".join(vals[:-1])), vals[-1])

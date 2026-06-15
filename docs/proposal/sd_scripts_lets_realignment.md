@@ -35,7 +35,7 @@ training_Anima_lora/
 │  train.py, inference.py          # engine entry (sd-scripts root scripts)        [keep]
 │  tasks.py, Makefile, pyproject.toml
 ├── library/                       # sd-scripts core (anima_lora engine)           [keep name]
-│   ├── api/                       # ← anima_lora/ façade folded here              [MOVE]
+│   ├── api/                       # ← anima_lora/ façade folded here              [DONE]
 │   └── monitoring/                # AnimaLoraToolkit monitor                       [keep]
 ├── networks/                      # sd-scripts adapters; importlib create_network [keep name]
 ├── tools/                         # ← sd-scripts-style utils                       [NEW]
@@ -44,7 +44,7 @@ training_Anima_lora/
 ├── finetune/                      # ← sd-scripts-style captioning/tagging          [NEW]
 │                                  #   from scripts/anima_tagger/, captioning
 ├── custom_scheduler/
-│   └── LoraEasyCustomOptimizer/   # ← optimizer zoo, LETS placement                [MOVE]
+│   └── LoraEasyCustomOptimizer/   # ← optimizer zoo, LETS placement                [DONE]
 ├── gui/                           # ← LETS/kohya frontend                          [NEW]
 │   ├── kohya/                     #   vendored kohya LoRA + Utilities tabs
 │   ├── webgui/                    #   (moved from scripts/webgui)
@@ -64,13 +64,17 @@ training_Anima_lora/
 | `scripts/preprocess/`, `scripts/merge_to_dit.py` | `tools/` | **DONE 2026-06-15** — flat sd-scripts `tools/`, run by path |
 | `scripts/daemon/` | **DELETED** | done 2026-06-15; training inline-only |
 | `anima_lora/` | `library/api/` | **DONE 2026-06-15** — façade moved to `library/api/` (`ROOT` = parents[2]); `anima_lora/` kept as a lazy PEP-562 shim delegating to `library.api` so `import anima_lora` still works. Verified torch-free (import + ROOT + façade `dir()` + lazy dispatch). `library*` find-include auto-discovers `library.api`; **local `uv sync` re-sync still recommended** before an embedder run. |
-| `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | **DEFERRED** — not installed (repo-root-on-path only) + absolute self-imports + user-config dotted paths (`…came.CAME`); needs `where=[".","custom_scheduler"]` packaging + local re-sync/smoke-test |
+| `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | **DONE 2026-06-15 (wiring; needs local smoke-test)** — `git mv` + pyproject `where=[".","custom_scheduler"]` & `LoraEasyCustomOptimizer*` include (installs as top-level name → dotted `…came.CAME` configs still resolve). `library.env.ensure_custom_scheduler_on_path()` bootstraps the from-source case (called in `library/training/optimizers.py`, which `schedulers.py` imports; GUI `server.py` + `bench/speed` add the path inline). Verified short of the torch import: package gone from root, `find_spec` locates it + submodules (came/utils/CAWR) after bootstrap, ruff + config_io tests green. **Local `uv sync` + an optimizer-load smoke-test (e.g. CAME) still required to fully bless.** |
 | `library/`, `networks/`, `train.py` | **unchanged at root** | = sd-scripts layout; preserves dotted `network_module` + LETS config compat |
 
-> **Deferred-moves rationale**: the two remaining moves can't be runtime-verified
-> in the torch-less CI container and have catastrophic-if-wrong blast radius (all
-> optimizer resolution / the public embedder API). They're staged to run together
-> with a local `uv sync` + one-step training smoke-test.
+> **Formerly-deferred moves (now landed 2026-06-15)**: both the embedder façade
+> (`anima_lora/` → `library/api/`) and the optimizer zoo
+> (`LoraEasyCustomOptimizer/` → `custom_scheduler/`) are done with back-compat
+> shims / path bootstraps, verified as far as the torch-less container allows
+> (imports/`find_spec`/ruff/tests). They couldn't be *runtime*-verified here and
+> have catastrophic-if-wrong blast radius (all optimizer resolution / the public
+> embedder API), so a local `uv sync` + a one-step training + optimizer-load
+> smoke-test is still the gate before relying on them.
 
 > **On "전면 rename":** the reference repos you chose (sd-scripts, LETS) *use*
 > `library/`/`networks/`. Mirroring them = keep those names. The "clean

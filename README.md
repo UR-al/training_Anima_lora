@@ -7,7 +7,7 @@ A fast **Anima** LoRA trainer with a browser control panel, a ~89-optimizer zoo,
 | From | What | Vendored as |
 |---|---|---|
 | **[anima_lora](https://github.com/sorryhyun/anima_lora)** (MIT) | the fast base: `torch.compile` LoRA training of the Anima DiT (constant-token bucketing + native-flatten compile, flash-attn, block-swap, fully-cached dataloader) | the repo itself |
-| **[LoRA_Easy_Training_Scripts](https://github.com/67372a/LoRA_Easy_Training_Scripts)** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `LoraEasyCustomOptimizer/` |
+| **[LoRA_Easy_Training_Scripts](https://github.com/67372a/LoRA_Easy_Training_Scripts)** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `custom_scheduler/LoraEasyCustomOptimizer/` |
 | **[AnimaLoraToolkit](https://github.com/Moeblack/AnimaLoraToolkit)** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
 
 ## Web control panel — `run_gui.bat`
@@ -69,7 +69,7 @@ Then fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models
 This is a **derivative work** of the three projects above:
 
 - **anima_lora** — **MIT** (the base engine; its notice is preserved as `LICENSE-MIT`).
-- **LoRA_Easy_Training_Scripts** — its optimizer/scheduler package is vendored under `LoraEasyCustomOptimizer/` (retains upstream authorship; see that tree's headers).
+- **LoRA_Easy_Training_Scripts** — its optimizer/scheduler package is vendored under `custom_scheduler/LoraEasyCustomOptimizer/` (a second install source root; retains upstream authorship; see that tree's headers).
 - **AnimaLoraToolkit** — its web monitor is vendored under `library/monitoring/`. **AnimaLoraToolkit is GPL-3.0** (it derives from ComfyUI's GPL-3.0 model code). The monitor files carry no separate license, so they are covered by that GPL-3.0.
 
 **This combined work is licensed under GPL-3.0** (`LICENSE`) because it includes the GPL-3.0 monitor; the permissive MIT/Apache notices of the included parts are kept as `LICENSE-MIT` / `LICENSE-APACHE` and in `NOTICE`. Model weights (Anima / Qwen / VAE) have their own terms — check each model card.

@@ -54,6 +54,22 @@ def resolve_under_home(path) -> Path:
     return anima_home() / p
 
 
+def ensure_custom_scheduler_on_path() -> None:
+    """Put ``<repo>/custom_scheduler`` on ``sys.path`` so the vendored
+    ``LoraEasyCustomOptimizer`` package — relocated there under the sd-scripts/LETS
+    layout — imports even when the repo isn't editable-installed (``uv sync``) or is
+    run from a foreign CWD. After ``uv sync`` the package is installed and this is a
+    harmless no-op. Idempotent; cheap; torch-free. Anchored on the code checkout
+    (``project_root``), not ``ANIMA_HOME``, since the package ships with the code.
+    """
+    import sys
+
+    d = project_root() / "custom_scheduler"
+    s = str(d)
+    if d.is_dir() and s not in sys.path:
+        sys.path.insert(0, s)
+
+
 def load_dotenv(path: Optional[Path] = None) -> dict[str, str]:
     """Read a ``.env`` file into ``os.environ`` (without overriding existing keys).
 

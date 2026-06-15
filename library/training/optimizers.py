@@ -10,6 +10,15 @@ from torch.optim import Optimizer
 # get_optimizer; no other optimizer needs it, so importing this module stays
 # cheap.
 
+from library.env import ensure_custom_scheduler_on_path as _ensure_custom_scheduler
+
+# The vendored LoraEasyCustomOptimizer zoo lives under custom_scheduler/ (LETS
+# layout). Put it on sys.path before any friendly-name registry / dotted-path
+# (`LoraEasyCustomOptimizer.came.CAME`) resolution below — covers the from-source
+# (pre-`uv sync`) case; a no-op once editable-installed. schedulers.py imports
+# from this module, so it inherits the same bootstrap.
+_ensure_custom_scheduler()
+
 logger = logging.getLogger(__name__)
 
 
