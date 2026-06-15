@@ -3,7 +3,7 @@
 The ψ_src provider for DirectEdit. Public surface: ``predict``,
 ``predict_caption``.
 
-Checkpoint layout (produced by ``python -m scripts.anima_tagger.cli``):
+Checkpoint layout (produced by ``python -m finetune.anima_tagger.cli``):
 
 ::
 
@@ -108,7 +108,7 @@ TAG_TYPE_NAMES: Dict[int, str] = {
 RATINGS: Tuple[str, ...] = ("general", "sensitive", "explicit")
 
 # 8-class people-count bucket. Derived from parsed count tags
-# (``scripts.anima_tagger.constants.classify_people``); trained as a dedicated
+# (``finetune.anima_tagger.constants.classify_people``); trained as a dedicated
 # softmax head separate from the multi-label tag head. Order is the canonical
 # class index — do not reorder without rebuilding vocab.
 PEOPLE_COUNT_LABELS: Tuple[str, ...] = (
@@ -145,7 +145,7 @@ def _fix_artist_category(category: str, name: str) -> str:
 
     Older vocab builds typed any ``@``-prefixed tag as ``artist``, which
     swept up booru emoticons like ``@_@`` (stored space-form as ``@ @``).
-    The corrected rule (see ``scripts/anima_tagger/vocab.categorize``)
+    The corrected rule (see ``finetune/anima_tagger/vocab.categorize``)
     requires ``@`` followed by non-whitespace; anything else falls back
     to ``general``. We patch loaded vocab here so existing checkpoints
     don't need to be rebuilt — the model's tag-level sigmoid is unchanged.

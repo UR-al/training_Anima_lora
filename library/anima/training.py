@@ -49,7 +49,7 @@ def _is_artist_tag(tag: str) -> bool:
     """True for @-prefixed artist handles; False for booru emoticons like ``@ @``.
 
     Matches the predicate the Anima Tagger uses (see
-    ``scripts/anima_tagger/vocab.py``): a single ``@`` followed by non-space
+    ``finetune/anima_tagger/vocab.py``): a single ``@`` followed by non-space
     characters. ``@ @`` (``@_@`` after the corpus-wide ``_``→`` `` normalization)
     is a general-category eye-shape tag and must not trigger the shuffle
     boundary.

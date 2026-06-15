@@ -280,7 +280,7 @@ def cmd_test_directedit(extra):
     if not anima_ckpt.exists():
         raise SystemExit(
             f"Anima Tagger checkpoint missing at {anima_ckpt} — "
-            "train via `python -m scripts.anima_tagger.cli`."
+            "train via `python -m finetune.anima_tagger.cli`."
         )
 
     print(f"  > tagging source: {ref_image}")

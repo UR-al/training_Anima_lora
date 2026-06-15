@@ -4,7 +4,7 @@ These recognize the *form* of a tag (artist ``@``-prefix, count tag, raw rating
 literal) without any vocab or model. They are shared by every consumer that
 types tags so the two categorization paths can't silently drift:
 
-* the Anima Tagger vocab build — ``scripts/anima_tagger/vocab.py::categorize``
+* the Anima Tagger vocab build — ``finetune/anima_tagger/vocab.py::categorize``
   (image→tag model's view of the corpus), and
 * the dataset caption index — ``scripts/preprocess/build_caption_index.py``
   (method-agnostic typed-tag index for identity pairing / analytics).

@@ -132,7 +132,7 @@ reportUnsupportedDunderAll = "none"
 # the editable finder instead of per-file `sys.path.insert` shims — and any tool
 # runs as `python -m bench.spd.foo`. `gui` stays CLI-only (not importable).
 [tool.setuptools.packages.find]
-include = ["anima_lora*", "library*", "networks*", "bench*", "scripts*", "preprocess*", "gui*"]
+include = ["anima_lora*", "library*", "networks*", "bench*", "scripts*", "preprocess*", "gui*", "finetune*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

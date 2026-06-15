@@ -39,7 +39,7 @@ from pathlib import Path
 
 # Shared tag-shape primitives (torch-free) — single source of truth for the
 # artist ``@``-prefix rule, count-tag detection, and the raw-caption rating set,
-# kept in sync with the Anima Tagger vocab build (scripts/anima_tagger/vocab.py).
+# kept in sync with the Anima Tagger vocab build (finetune/anima_tagger/vocab.py).
 from library.captioning.taxonomy import CAPTION_RATINGS, is_artist_tag, is_count_tag
 from library.datasets.image_utils import IMAGE_EXTENSIONS
 from library.datasets.subsets import filter_paths_by_glob

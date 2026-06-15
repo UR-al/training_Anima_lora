@@ -2,7 +2,7 @@
 
 * :class:`TaggerManifest` — loads ``dataset.json`` (the per-stem
   image-path + multi-hot tag indices + rating-class index + people-count
-  class index emitted by ``python -m scripts.anima_tagger.cli --mode
+  class index emitted by ``python -m finetune.anima_tagger.cli --mode
   build_vocab``).
 * :class:`FeatureCacheBuilder` — mean-pool cache (``pool_kind="mean"``).
   Encodes each manifest image through a frozen PE trunk, mean-pools over
@@ -473,7 +473,7 @@ class CachedDualDataset(Dataset):
     batches are grouped by aux bucket only.
 
     ``cache_dir`` / ``cache_dir_aux`` should be the per-side outputs of
-    :func:`scripts.anima_tagger.caches.cache_dir_for` (i.e.
+    :func:`finetune.anima_tagger.caches.cache_dir_for` (i.e.
     ``.cache/pooled-<encoder>/`` for mean, ``.cache/tokens-<encoder>/`` for
     map). Spec is only used when the side is map (to map T → bucket); pass
     ``None`` for the spec on a mean side.
