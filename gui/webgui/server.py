@@ -831,6 +831,15 @@ def _method_preset_extra(form: dict):
         if form.get(_key):
             extra.append(_flag)
 
+    # torch_compile is a tri-state ("on"/"off"/blank): it defaults ON in base.toml,
+    # so a plain checkbox couldn't disable it — emit the explicit flag for on/off and
+    # defer to the config chain when blank.
+    _tc = str(form.get("torch_compile") or "").strip().lower()
+    if _tc in ("on", "true", "1"):
+        extra.append("--torch_compile")
+    elif _tc in ("off", "false", "0"):
+        extra.append("--no-torch_compile")
+
     sched = (form.get("lr_scheduler_type") or "").strip()
     # Built-in schedulers go through --lr_scheduler; dotted-path customs through
     # --lr_scheduler_type (the resolver branch). Heuristic: a "." => custom.

@@ -73,6 +73,8 @@ _BOOL_FIELDS = {
     "save_state",
     "output_config",
 }
+# Tri-state dropdown fields ("on"/"off"/blank): a config bool maps to "on"/"off".
+_TRISTATE_FIELDS = {"torch_compile"}
 # Model-path renames (kohya/LETS name → our form field).
 _MODEL_PATHS = {
     "pretrained_model_name_or_path": "dit_path",
@@ -261,6 +263,8 @@ def load_toml_to_form(toml_text: str) -> dict:
                 if isinstance(value, (list, tuple))
                 else str(value)
             )
+        elif key in _TRISTATE_FIELDS:
+            form[key] = "on" if bool(value) else "off"
         elif key in _BOOL_FIELDS:
             form[key] = bool(value)
         elif key in _DIRECT_FIELDS:

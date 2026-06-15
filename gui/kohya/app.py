@@ -438,6 +438,11 @@ def build_app(default_port: int = 7860):
                     reg("attn_mode", gr.Dropdown(
                         ["", "flash", "sdpa", "torch", "sageattn", "flex"],
                         value="", label="attn_mode"))
+                    # torch_compile defaults ON (base.toml) → tri-state so the box can
+                    # force it off too (blank = config default = on; the big speedup).
+                    reg("torch_compile", gr.Dropdown(
+                        ["", "on", "off"], value="",
+                        label="torch_compile (blank = default on)"))
                     reg("save_precision", gr.Dropdown(
                         ["", "bf16", "fp16", "float"], value="", label="save_precision"))
                 with gr.Row():
