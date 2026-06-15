@@ -229,7 +229,7 @@ def build_app(default_port: int = 7860):
             "directly; its log streams below and to the terminal."
         )
 
-        with gr.Tab("Model & Output"):
+        with gr.Tab("LoRA"):
             # ── Method / preset (this repo's core training-selection concept) ──
             with gr.Row():
                 reg(
@@ -292,7 +292,6 @@ def build_app(default_port: int = 7860):
                     placeholder="Path to the Qwen-Image VAE",
                 )
 
-        with gr.Tab("LoRA"):
             # ── Basic training params ───────────────────────────────────────
             with gr.Accordion("Basic", open=True):
                 with gr.Row():
@@ -393,7 +392,6 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
-        with gr.Tab("Dataset"):
             # ── Dataset ─────────────────────────────────────────────────────
             with gr.Accordion("Dataset", open=True):
                 gr.Markdown(
@@ -482,7 +480,6 @@ def build_app(default_port: int = 7860):
                     reg("caption_tag_dropout_rate", gr.Textbox(
                         label="caption_tag_dropout_rate", placeholder="0.1"))
 
-        with gr.Tab("Samples"):
             # ── Sample prompts ──────────────────────────────────────────────
             with gr.Accordion("Sample images", open=True):
                 reg_path(
@@ -498,7 +495,6 @@ def build_app(default_port: int = 7860):
                 )
                 save_samples_btn = gr.Button("Save prompts → file")
 
-        with gr.Tab("Training"):
             # ── Advanced / monitor / run ────────────────────────────────────
             with gr.Accordion("Monitor & Run", open=True):
                 with gr.Row():
@@ -609,7 +605,6 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
-        with gr.Tab("Config"):
             # ── Config file (load / save) — sd-scripts/LETS --config_file ───
             with gr.Accordion("Config file (load / save)", open=True):
                 gr.Markdown(
