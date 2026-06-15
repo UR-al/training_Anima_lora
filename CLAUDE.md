@@ -33,7 +33,7 @@ All training runs `train.py --method <name> --preset <name>`. By default it's in
 
 | File | Purpose |
 |------|---------|
-| `anima_lora/__init__.py` | **Programmatic front door** — lazy (PEP 562) re-export of the curated embedder entry points (`generate`, `get_generation_settings`, `GenerationRequest`, `load_method_preset`, `load_dit_model`, `load_vae`, …) + `ROOT` (repo root). `import anima_lora` instead of reverse-engineering `main()`s. |
+| `library/api/__init__.py` | **Programmatic front door** (moved here from `anima_lora/` in the sd-scripts/LETS realignment) — lazy (PEP 562) re-export of the curated embedder entry points (`generate`, `get_generation_settings`, `GenerationRequest`, `load_method_preset`, `load_dit_model`, `load_vae`, …) + `ROOT` (repo root). `from library.api import …`. `anima_lora/__init__.py` is kept as a back-compat lazy shim delegating here, so `import anima_lora` still works. |
 | `examples/` | Runnable API scripts (`01`–`04` high-level flows, `05`–`06` raw primitives). `examples/README.md` is the embedder guide. |
 | `train.py` | `AnimaTrainer` — main training loop via HF Accelerate |
 | `inference.py` | Standalone image generation (`--help` for all flags) |

@@ -63,7 +63,7 @@ training_Anima_lora/
 | `scripts/anima_tagger/` | `finetune/anima_tagger/` | **DONE 2026-06-15** — captioning *logic* stays in `library.captioning` |
 | `scripts/preprocess/`, `scripts/merge_to_dit.py` | `tools/` | **DONE 2026-06-15** — flat sd-scripts `tools/`, run by path |
 | `scripts/daemon/` | **DELETED** | done 2026-06-15; training inline-only |
-| `anima_lora/` | `library/api/` | **DEFERRED** — public API (`import anima_lora`) + `ROOT`/`.env` anchor + PEP-562; needs re-export shim + local `uv sync` smoke-test (untestable in CI container) |
+| `anima_lora/` | `library/api/` | **DONE 2026-06-15** — façade moved to `library/api/` (`ROOT` = parents[2]); `anima_lora/` kept as a lazy PEP-562 shim delegating to `library.api` so `import anima_lora` still works. Verified torch-free (import + ROOT + façade `dir()` + lazy dispatch). `library*` find-include auto-discovers `library.api`; **local `uv sync` re-sync still recommended** before an embedder run. |
 | `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | **DEFERRED** — not installed (repo-root-on-path only) + absolute self-imports + user-config dotted paths (`…came.CAME`); needs `where=[".","custom_scheduler"]` packaging + local re-sync/smoke-test |
 | `library/`, `networks/`, `train.py` | **unchanged at root** | = sd-scripts layout; preserves dotted `network_module` + LETS config compat |
 
