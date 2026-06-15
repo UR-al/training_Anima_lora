@@ -167,6 +167,17 @@ def test_load_without_dataset_leaves_ds_fields_unset():
     assert not any(k.startswith("ds_") for k in form)
 
 
+def test_load_resume_and_caption_variant_fields():
+    form = load_toml_to_form(
+        'resume = "output/ckpt/x-state"\n'
+        "cache_text_encoder_outputs_to_disk = true\n"  # LETS rename → use_text_cache
+        "use_shuffled_caption_variants = true\n"
+    )
+    assert form["resume"] == "output/ckpt/x-state"
+    assert form["use_text_cache"] is True
+    assert form["use_shuffled_caption_variants"] is True
+
+
 _MULTI_SUBSET = """
 [[datasets]]
 batch_size = 2
@@ -204,5 +215,6 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_resume_and_caption_variant_fields()
     test_load_multi_subset_fills_extra_grid()
     print("all config_io round-trip tests passed")

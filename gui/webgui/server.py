@@ -810,6 +810,8 @@ def _method_preset_extra(form: dict):
         ("--qwen3_max_token_length", "qwen3_max_token_length"),
         ("--save_every_n_epochs", "save_every_n_epochs"),
         ("--save_precision", "save_precision"),
+        # NOTE: --resume is already emitted near the top of this function (line ~778);
+        # do not re-add it here or it doubles.
     ):
         add(_flag, _key)
 
@@ -820,6 +822,9 @@ def _method_preset_extra(form: dict):
         ("--gradient_checkpointing", "gradient_checkpointing"),
         ("--network_train_unet_only", "network_train_unet_only"),
         ("--use_vae_cache", "use_vae_cache"),
+        ("--use_text_cache", "use_text_cache"),
+        ("--use_shuffled_caption_variants", "use_shuffled_caption_variants"),
+        ("--use_shuffled_caption_variants_only", "use_shuffled_caption_variants_only"),
         ("--save_state", "save_state"),
         ("--output_config", "output_config"),
     ):

@@ -479,13 +479,28 @@ def build_app(default_port: int = 7860):
                     reg("network_train_unet_only", gr.Checkbox(
                         value=False, label="network_train_unet_only"))
                     reg("use_vae_cache", gr.Checkbox(
-                        value=False, label="use_vae_cache (cache_latents)"))
+                        value=False, label="use_vae_cache (cache latents to disk)"))
                     reg("save_state", gr.Checkbox(value=False, label="save_state"))
                     reg("output_config", gr.Checkbox(
                         value=False, label="output_config (save_toml)"))
+                # Disk-caching siblings of "cache latents to disk" + the caption-
+                # variation technique (shuffled-caption-variant TE caches).
+                with gr.Row():
+                    reg("use_text_cache", gr.Checkbox(
+                        value=False, label="use_text_cache (cache TE to disk)"))
+                    reg("use_shuffled_caption_variants", gr.Checkbox(
+                        value=False, label="use_shuffled_caption_variants"))
+                    reg("use_shuffled_caption_variants_only", gr.Checkbox(
+                        value=False, label="…_variants_only (skip pristine v0)"))
+                with gr.Row():
+                    reg("resume", gr.Textbox(
+                        label="resume (saved training-state dir)",
+                        placeholder="output/ckpt/<name>-state"))
                 gr.Markdown(
                     "*Blank/unchecked → defer to the `base→preset→method` config "
-                    "chain. To force a bool **off**, use Extra CLI flags `--no-<flag>`.*"
+                    "chain. To force a bool **off**, use Extra CLI flags `--no-<flag>`. "
+                    "Caption variants need TE caches built with "
+                    "`caption_shuffle_variants > 0` at preprocess.*"
                 )
 
             with gr.Accordion("Extra CLI flags", open=False):

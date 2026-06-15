@@ -59,6 +59,7 @@ _DIRECT_FIELDS = {
     "qwen3_max_token_length",
     "save_every_n_epochs",
     "save_precision",
+    "resume",
 }
 # Boolean form fields (rendered as checkboxes; value kept as bool, not str).
 _BOOL_FIELDS = {
@@ -66,6 +67,9 @@ _BOOL_FIELDS = {
     "gradient_checkpointing",
     "network_train_unet_only",
     "use_vae_cache",
+    "use_text_cache",
+    "use_shuffled_caption_variants",
+    "use_shuffled_caption_variants_only",
     "save_state",
     "output_config",
 }
@@ -83,6 +87,8 @@ _RENAME = {
     "timestep_sample_method": "timestep_sampling",
     "cache_latents": "use_vae_cache",
     "cache_latents_to_disk": "use_vae_cache",
+    "cache_text_encoder_outputs": "use_text_cache",
+    "cache_text_encoder_outputs_to_disk": "use_text_cache",
     "save_toml": "output_config",
 }
 # Keys with no anima_lora equivalent — dropped on load (documented in the GUI).
