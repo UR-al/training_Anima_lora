@@ -1197,6 +1197,15 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         v = (form.get(fk) or "").strip()
         if v:
             manifest[mk] = v
+    # 2D Qwen VAE: if the training auto-arg toggle is ON, use it for the auto-preprocess
+    # latent caching too (one toggle → faster / ~1/3-VRAM caching). Latents are
+    # numerically equivalent to the 3D VAE, so the chained train job's caches stay valid.
+    if any(
+        (it.get("dest") == "qwen_image_vae_2d" or it.get("flag") == "--qwen_image_vae_2d")
+        and it.get("on")
+        for it in (form.get("adv") or [])
+    ):
+        manifest["qwen_image_vae_2d"] = True
     # REPA v2: if the form's network_args carry use_repa, tell the manifest loop
     # to also cache PE-Spatial features (so the chained train job finds them).
     na_kv = dict(

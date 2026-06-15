@@ -589,11 +589,18 @@ def cmd_preprocess_manifest(extra):
                 *rc_args,
             ]
         )
+        vae2d = (
+            ["--qwen_image_vae_2d"]
+            if str(spec.get("qwen_image_vae_2d", "")).strip().lower()
+            in ("1", "true", "yes")
+            else []
+        )
         run(
             [
                 PY, "scripts/preprocess/cache_latents.py",
                 "--dir", e["resized"], "--cache_dir", e["cache"],
                 "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
+                *vae2d,
             ]
         )
         run(
