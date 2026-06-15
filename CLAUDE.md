@@ -39,6 +39,7 @@ All training runs `train.py --method <name> --preset <name>`. By default it's in
 | `inference.py` | Standalone image generation (`--help` for all flags) |
 | `networks/spectrum.py` | Spectrum inference acceleration |
 | `scripts/webgui/` | Web control panel (stdlib, no Qt) — `python tasks.py webgui`: configure → launch → live monitor in the browser |
+| `scripts/gradio_gui/` | Gradio control panel (kohya_ss-style layout) — `python tasks.py gradio-gui`. A thin UI re-skin over `scripts/webgui/server.py` (`options`/`build_command`/`launch`/`status`/`stop`), so it drives **this repo's** `train.py`, not kohya `sd-scripts`. Opt-in `gradio` extra (`uv sync --extra gradio`). |
 | `tasks.py` | Cross-platform task runner — source of truth for every `make` target |
 | `scripts/tasks/` + `scripts/experimental_tasks/` | Where command bodies actually live (`_common.py` = shared helpers) |
 

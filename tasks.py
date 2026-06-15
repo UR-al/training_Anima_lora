@@ -28,6 +28,7 @@ from scripts.tasks import (
     daemon,
     dcw,
     downloads,
+    gradio_gui,
     inference,
     masking,
     preprocess,
@@ -52,6 +53,12 @@ COMMANDS = {
         webgui.cmd_webgui,
         "Web control panel (no Qt): configure -> launch -> live monitor in the "
         "browser. python tasks.py webgui [--port 7860] [--no-browser].",
+    ),
+    "gradio-gui": (
+        gradio_gui.cmd_gradio_gui,
+        "Gradio control panel (kohya-style UI) driving this repo's train.py. "
+        "Needs the optional `gradio` extra. python tasks.py gradio-gui "
+        "[--port 7860] [--no-browser].",
     ),
     "easycontrol": (
         training.cmd_easycontrol,
