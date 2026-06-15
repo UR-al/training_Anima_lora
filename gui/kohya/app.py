@@ -40,11 +40,72 @@ def _register(keys: list[str], comps: list, key: str, comp):
     return comp
 
 
+# Fields entered as a key|value BLOCK in the GUI (one pair per line, LoRA_Easy
+# style) but consumed by the backend as a space-joined `key=value …` string.
+# Normalized in _collect; round-tripped to block form on config load.
+_ARG_BLOCK_KEYS = (
+    "network_args",
+    "optimizer_args",
+    "lr_scheduler_args",
+    "ab_network_args",
+)
+
+
+def _args_block_to_inline(text) -> str:
+    """key|value BLOCK → the space-joined ``key=value`` string the backend's
+    ``_arg_split`` expects. Tolerant: a legacy single inline line (``a=1 b=2``)
+    or already-``key=value`` lines pass through; blank/``#`` lines are dropped;
+    only the FIRST ``|``/``=`` splits key from value (so ``betas|0.9,0.999`` is
+    one pair); a value containing spaces is auto-quoted so it survives the split."""
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    if "\n" not in s and "|" not in s:  # legacy inline single line — leave as-is
+        return s
+    toks: list[str] = []
+    for raw in s.replace("\r", "").split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "|" in line:
+            k, v = line.split("|", 1)
+            k, v = k.strip(), v.strip()
+            if " " in v and not (v[:1] in "\"'" and v[-1:] == v[:1]):
+                v = f'"{v}"'
+            toks.append(f"{k}={v}")
+        elif "=" in line:  # one or more inline key=value already
+            toks.extend(line.split())
+        else:
+            toks.append(line)
+    return " ".join(toks)
+
+
+def _args_inline_to_block(text) -> str:
+    """Inverse for config-load display: space-joined ``key=value`` → ``key|value``
+    lines. Quote-aware so ``caption="a b"`` stays a single ``caption|a b`` row."""
+    import shlex
+
+    s = str(text or "").strip()
+    if not s or "\n" in s:  # empty or already block form
+        return s
+    try:
+        toks = shlex.split(s)
+    except ValueError:
+        toks = s.split()
+    lines = [
+        f"{t.split('=', 1)[0]}|{t.split('=', 1)[1]}" if "=" in t else t for t in toks
+    ]
+    return "\n".join(lines)
+
+
 def _collect(keys: list[str], values) -> dict:
     """Zip positional handler args back into the backend `form` dict."""
     form = dict(zip(keys, values))
     # Gradio Textbox yields "" for empty; backend treats "" as "use default".
     # Coerce checkbox-style truthiness through untouched (already bool).
+    for k in _ARG_BLOCK_KEYS:  # key|value blocks → inline key=value for the backend
+        if k in form:
+            form[k] = _args_block_to_inline(form[k])
     _assemble_dataset(form)
     return form
 
@@ -373,15 +434,17 @@ def build_app(default_port: int = 7860):
                     reg(
                         "optimizer_args",
                         gr.Textbox(
-                            label="optimizer_args (k=v …)",
-                            placeholder="weight_decay=0.01 betas=0.9,0.99",
+                            label="optimizer_args — one key|value per line",
+                            lines=3,
+                            placeholder="weight_decay|0.01\nbetas|0.9,0.999\nuse_bias_correction|True",
                         ),
                     )
                     reg(
                         "lr_scheduler_args",
                         gr.Textbox(
-                            label="lr_scheduler_args (k=v …)",
-                            placeholder="",
+                            label="lr_scheduler_args — one key|value per line",
+                            lines=2,
+                            placeholder="num_cycles|3\nmin_lr|1e-6",
                         ),
                     )
                 # constant→cosine one-shot: hold constant LR for the planned run,
@@ -421,8 +484,9 @@ def build_app(default_port: int = 7860):
                 reg(
                     "network_args",
                     gr.Textbox(
-                        label="network_args (k=v …)",
-                        placeholder="conv_dim=8 conv_alpha=4",
+                        label="network_args — one key|value per line",
+                        lines=4,
+                        placeholder="conv_dim|8\nconv_alpha|4\nalgo|lokr\nuse_tucker|True",
                     ),
                 )
 
@@ -880,8 +944,9 @@ def build_app(default_port: int = 7860):
                     reg(
                         "ab_network_args",
                         gr.Textbox(
-                            label="network_args (k=v …)",
-                            placeholder="algo=lokr factor=4",
+                            label="network_args — one key|value per line",
+                            lines=2,
+                            placeholder="algo|lokr\nfactor|4",
                         ),
                     )
                 ab_run_btn = gr.Button("Run auto-batch", variant="primary")
@@ -999,6 +1064,9 @@ def build_app(default_port: int = 7860):
                     form = load_toml_to_form(fh.read())
             except Exception as exc:  # noqa: BLE001
                 return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
+            for k in _ARG_BLOCK_KEYS:  # inline key=value → key|value block for display
+                if k in form:
+                    form[k] = _args_inline_to_block(form[k])
             updates = [
                 gr.update(value=form[k]) if k in form else gr.update() for k in keys
             ]
