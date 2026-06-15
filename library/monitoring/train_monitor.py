@@ -13,6 +13,7 @@ from urllib.parse import urlparse, parse_qs
 # 全局状态
 MONITOR_STATE = {
     "losses": [],
+    "val_losses": [],  # validation passes (CMMD or FM-MSE average) — sparse, plotted as a 2nd curve
     "lr_history": [],
     "epoch": 0,
     "step": 0,
@@ -46,7 +47,7 @@ _LAST_SAVE_T = 0.0
 _STATE_MAX_POINTS = 5000
 
 
-def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, speed=None, sample_path=None, config=None):
+def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, speed=None, sample_path=None, config=None, val_loss=None):
     """更新监控状态"""
     with _LOCK:
         # 先更新 step/epoch 等，使本次写入的 loss/lr 点位正确
@@ -64,6 +65,14 @@ def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, 
             # 保留最近 50000 个点（支持长时间训练）
             if len(MONITOR_STATE["losses"]) > 50000:
                 MONITOR_STATE["losses"] = MONITOR_STATE["losses"][-50000:]
+
+        # Validation pass (CMMD or FM-MSE average) — sparse points, own series so the
+        # dashboard can overlay it on the loss chart. The step used is whatever the
+        # validation log carried (the global_step at the val pass).
+        if val_loss is not None:
+            MONITOR_STATE["val_losses"].append({"step": MONITOR_STATE["step"], "loss": val_loss, "time": time.time()})
+            if len(MONITOR_STATE["val_losses"]) > 50000:
+                MONITOR_STATE["val_losses"] = MONITOR_STATE["val_losses"][-50000:]
 
         if lr is not None:
             MONITOR_STATE["lr_history"].append({"step": MONITOR_STATE["step"], "lr": lr})
@@ -118,17 +127,21 @@ def get_state(max_points: int = _STATE_MAX_POINTS):
         snapshot = MONITOR_STATE.copy()
         losses = list(MONITOR_STATE["losses"])
         lr_history = list(MONITOR_STATE["lr_history"])
+        val_losses = list(MONITOR_STATE.get("val_losses", []))
         snapshot["samples"] = list(MONITOR_STATE["samples"])
     if max_points and len(losses) > max_points:
         losses = _downsample_uniform(losses, max_points)
     if max_points and len(lr_history) > max_points:
         lr_history = _downsample_uniform(lr_history, max_points)
+    if max_points and len(val_losses) > max_points:
+        val_losses = _downsample_uniform(val_losses, max_points)
     snapshot["losses"] = losses
     snapshot["lr_history"] = lr_history
+    snapshot["val_losses"] = val_losses
     return snapshot
 
 
-def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, total_steps=None, start_time=None, config=None):
+def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, total_steps=None, start_time=None, config=None, val_losses=None):
     """恢复监控状态（用于断点续训）
     
     Args:
@@ -141,6 +154,8 @@ def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, t
     with _LOCK:
         if losses is not None:
             MONITOR_STATE["losses"] = losses
+        if val_losses is not None:
+            MONITOR_STATE["val_losses"] = val_losses
         if lr_history is not None:
             MONITOR_STATE["lr_history"] = lr_history
         if epoch is not None:
@@ -181,6 +196,7 @@ def load_persisted_state(run_name=None):
     losses = prev.get("losses") or []
     restore_monitor_state(
         losses=losses,
+        val_losses=prev.get("val_losses") or [],
         lr_history=prev.get("lr_history") or [],
         start_time=prev.get("start_time"),
     )

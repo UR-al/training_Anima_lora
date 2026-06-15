@@ -782,10 +782,18 @@
                 labels: [],
                 datasets: [
                     { label: 'Raw', data: [], borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.02)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
-                    { label: 'EMA', data: [], borderColor: '#39ff14', backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 }
+                    { label: 'EMA', data: [], borderColor: '#39ff14', backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                    // Validation (CMMD or FM-MSE avg) on its OWN right axis — it's a
+                    // different scale than the FM training loss, so a shared axis would
+                    // squash the training curve.
+                    { label: 'Validation', data: [], yAxisID: 'yVal', borderColor: '#36d1ff', backgroundColor: 'transparent', fill: false, tension: 0, spanGaps: true, pointRadius: 4, pointStyle: 'rectRot', borderWidth: 1.5 }
                 ]
             },
-            options: chartDefaults
+            options: { ...chartDefaults,
+                plugins: { ...chartDefaults.plugins, legend: { display: true, labels: { color: '#888', font: { family: "'JetBrains Mono'", size: 10 }, boxWidth: 12, boxHeight: 8 } } },
+                scales: { ...chartDefaults.scales,
+                    yVal: { position: 'right', grid: { display: false }, ticks: { color: '#36d1ff', font: { family: "'JetBrains Mono'", size: 10 } } } }
+            }
         });
 
         const lrChart = new Chart(document.getElementById('lrChart'), {
@@ -851,6 +859,21 @@
                 lossChart.data.labels = display.map(l => l.step);
                 lossChart.data.datasets[0].data = raw;
                 lossChart.data.datasets[1].data = smooth;
+                // Validation: sparse points keyed by step → align onto the (downsampled)
+                // training-step label axis at the nearest index; spanGaps connects them.
+                const vl = data.val_losses || [];
+                if (vl.length) {
+                    const steps = display.map(l => l.step);
+                    const valArr = new Array(steps.length).fill(null);
+                    vl.forEach(v => {
+                        let bi = 0, bd = Infinity;
+                        for (let i = 0; i < steps.length; i++) { const d = Math.abs(steps[i] - v.step); if (d < bd) { bd = d; bi = i; } }
+                        valArr[bi] = v.loss;
+                    });
+                    lossChart.data.datasets[2].data = valArr;
+                } else {
+                    lossChart.data.datasets[2].data = [];
+                }
                 lossChart.update('none');
 
                 // Analysis update logic...

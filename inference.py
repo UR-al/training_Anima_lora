@@ -162,8 +162,9 @@ def process_batch_prompts(prompts_data: List[Dict], args: argparse.Namespace) ->
 
     # 1. Prepare VAE
     logger.info("Loading VAE for batch generation...")
-    vae_for_batch = qwen_image_autoencoder_kl.load_vae(
+    vae_for_batch = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
         args.vae,
+        use_2d=getattr(args, "qwen_image_vae_2d", False),
         device="cpu",
         disable_mmap=True,
         spatial_chunk_size=args.vae_chunk_size,
@@ -332,8 +333,9 @@ def process_interactive(args: argparse.Namespace) -> None:
     shared_models = load_shared_models(args)
     shared_models["conds_cache"] = {}
 
-    vae = qwen_image_autoencoder_kl.load_vae(
+    vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
         args.vae,
+        use_2d=getattr(args, "qwen_image_vae_2d", False),
         device="cpu",
         disable_mmap=True,
         spatial_chunk_size=args.vae_chunk_size,
@@ -452,8 +454,9 @@ def main():
 
             latents_list.append(latents)
 
-        vae = qwen_image_autoencoder_kl.load_vae(
+        vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
             args.vae,
+            use_2d=getattr(args, "qwen_image_vae_2d", False),
             device=device,
             disable_mmap=True,
             spatial_chunk_size=args.vae_chunk_size,
@@ -499,8 +502,9 @@ def main():
 
             clean_memory_on_device(device)
 
-            vae = qwen_image_autoencoder_kl.load_vae(
+            vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
                 args.vae,
+                use_2d=getattr(args, "qwen_image_vae_2d", False),
                 device="cpu",
                 disable_mmap=True,
                 spatial_chunk_size=args.vae_chunk_size,

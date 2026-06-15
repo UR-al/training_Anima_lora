@@ -1044,8 +1044,9 @@ def _setup_easycontrol(args, anima, device, shared_models):
     vae = (shared_models or {}).get("vae")
     vae_was_shared = vae is not None
     if vae is None:
-        vae = qwen_image_autoencoder_kl.load_vae(
+        vae = qwen_image_autoencoder_kl.load_vae_2d_or_3d(
             args.vae,
+            use_2d=getattr(args, "qwen_image_vae_2d", False),
             device="cpu",
             disable_mmap=True,
             spatial_chunk_size=getattr(args, "vae_chunk_size", None),

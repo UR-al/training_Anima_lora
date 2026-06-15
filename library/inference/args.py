@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         + "",
     )
     parser.add_argument(
+        "--qwen_image_vae_2d",
+        action="store_true",
+        help="Decode with the image-only 2D Qwen-Image VAE (faster / ~1/3 VRAM; pixels "
+        "equivalent to the 3D VAE for single images). Ported from sd-scripts 2a81265.",
+    )
+    parser.add_argument(
         "--text_encoder",
         type=str,
         required=True,

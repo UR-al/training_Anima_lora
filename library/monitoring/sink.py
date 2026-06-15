@@ -159,9 +159,21 @@ class MonitorSink:
             self._inner.log(
                 logs, global_step=global_step, epoch=epoch, val_step=val_step
             )
-        # Only mirror training steps (skip validation passes) to the loss curve.
+        # Only mirror training steps (skip per-val-step passes) to the loss curve.
         if self._update is None or val_step is not None:
             return
+        # The validation-pass AVERAGE (CMMD or FM-MSE) arrives here with val_step=None
+        # (logged via epoch_logging/step_logging). Route it to the dashboard's own
+        # validation series instead of the training-loss curve.
+        v = logs.get("loss/validation/epoch_average")
+        if v is None:
+            v = logs.get("loss/validation/step_average")
+        if v is not None:
+            try:
+                self._update(val_loss=float(v), epoch=epoch, step=global_step)
+            except Exception as exc:
+                logger.debug("monitor val emit failed: %s", exc)
+            return  # validation logs carry no training loss/lr/speed
         try:
             loss = logs.get("loss/average")
             if loss is None:
