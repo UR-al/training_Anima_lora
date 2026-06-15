@@ -25,7 +25,6 @@ import sys
 from scripts.experimental_tasks import inference as exp_inference
 from scripts.experimental_tasks import training as exp_training
 from scripts.tasks import (
-    daemon,
     dcw,
     downloads,
     gradio_gui,
@@ -79,31 +78,6 @@ COMMANDS = {
         training.cmd_easycontrol_download,
         "Download an EasyControl adapter's extra weights. "
         "EASYADAPTER=colorize → Sketch2Manga screening weights (~5.7GB).",
-    ),
-    # ── Training daemon ───────────────────────────────────────────────
-    "daemon": (
-        daemon.cmd_daemon,
-        "Start the local training-job daemon (idempotent; detached, waits for /health).",
-    ),
-    "daemon-status": (
-        daemon.cmd_daemon_status,
-        "Daemon status as JSON (health + resolved base_url + compact job "
-        "summaries; --full for raw records). Passive — never starts a daemon; "
-        "exit 1 when down.",
-    ),
-    "daemon-attach": (
-        daemon.cmd_daemon_attach,
-        "Follow the daemon (read-only). JOB=<id> tails that job's stdout; "
-        "ctrl-C detaches only — training keeps running.",
-    ),
-    "daemon-kill": (
-        daemon.cmd_daemon_kill,
-        "Abort the running job (or JOB=<id>) and free the GPU; daemon stays up "
-        "and starts the next queued job.",
-    ),
-    "daemon-terminate": (
-        daemon.cmd_daemon_terminate,
-        "Stop the daemon entirely (active job killed, GPU freed, queue discarded).",
     ),
     # ── Inference ─────────────────────────────────────────────────────
     "test": (
