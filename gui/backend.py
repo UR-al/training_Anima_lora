@@ -2065,10 +2065,12 @@ def update_tool() -> dict:
         return {"ok": True, "output": "\n".join(out), "changed": False}
     deps = ("uv.lock" in pull.stdout) or ("pyproject.toml" in pull.stdout)
     if deps:
-        out.append("\n[deps changed] running uv sync …")
+        out.append("\n[deps changed] running uv sync --extra gradio …")
         try:
+            # --extra gradio: the GUI is an opt-in extra; plain `uv sync` would
+            # UNINSTALL gradio (+ fastapi/uvicorn/…) and break the GUI on next launch.
             sync = subprocess.run(
-                ["uv", "sync"],
+                ["uv", "sync", "--extra", "gradio"],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

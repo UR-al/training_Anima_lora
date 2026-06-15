@@ -19,12 +19,14 @@ echo Re-syncing dependencies ...
 where uv >nul 2>nul
 if errorlevel 1 (
   if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -m pip install -e . --extra-index-url https://download.pytorch.org/whl/cu132 --pre
+    ".venv\Scripts\python.exe" -m pip install -e ".[gradio]" --extra-index-url https://download.pytorch.org/whl/cu132 --pre
   ) else (
     echo no uv and no .venv - run install_uv.bat or install_pip.bat first.
   )
 ) else (
-  uv sync
+  REM --extra gradio: the GUI (gradio + fastapi/uvicorn/starlette) is an OPT-IN extra.
+  REM Plain "uv sync" UNINSTALLS it, breaking run_gui.bat — always keep the extra here.
+  uv sync --extra gradio
 )
 
 echo.
