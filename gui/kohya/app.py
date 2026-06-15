@@ -496,27 +496,6 @@ def build_app(default_port: int = 7860):
                 save_samples_btn = gr.Button("Save prompts → file")
 
             # ── Advanced / monitor / run ────────────────────────────────────
-            with gr.Accordion("Monitor & Run", open=True):
-                with gr.Row():
-                    reg(
-                        "monitor",
-                        gr.Checkbox(value=False, label="Web loss monitor (--monitor)"),
-                    )
-                with gr.Row():
-                    reg(
-                        "monitor_host",
-                        gr.Textbox(value="127.0.0.1", label="Monitor host"),
-                    )
-                    reg(
-                        "monitor_port",
-                        gr.Textbox(label="Monitor port", placeholder="8766"),
-                    )
-                    reg(
-                        "log_every_n_steps",
-                        gr.Textbox(label="Log every N steps", placeholder="(default)"),
-                    )
-
-            # ── Training details (sd-scripts / LETS knobs → dedicated fields) ─
             with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
                 with gr.Row():
                     reg("mixed_precision", gr.Dropdown(
@@ -638,6 +617,27 @@ def build_app(default_port: int = 7860):
                     queue_refresh_btn = gr.Button("Refresh")
                     queue_clear_btn = gr.Button("Clear queue", variant="stop")
 
+            with gr.Accordion("Monitor & Run", open=True):
+                with gr.Row():
+                    reg(
+                        "monitor",
+                        gr.Checkbox(value=False, label="Web loss monitor (--monitor)"),
+                    )
+                with gr.Row():
+                    reg(
+                        "monitor_host",
+                        gr.Textbox(value="127.0.0.1", label="Monitor host"),
+                    )
+                    reg(
+                        "monitor_port",
+                        gr.Textbox(label="Monitor port", placeholder="8766"),
+                    )
+                    reg(
+                        "log_every_n_steps",
+                        gr.Textbox(label="Log every N steps", placeholder="(default)"),
+                    )
+
+            # ── Training details (sd-scripts / LETS knobs → dedicated fields) ─
         with gr.Tab("Utils"):
             gr.Markdown(
                 "Utilities run as **direct subprocesses** (`tasks.py …`), like "
