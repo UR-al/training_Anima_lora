@@ -22,8 +22,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo Running "uv sync" - resolves torch ^(cu132^) + flash-attn. This can take a while...
-uv sync
+echo Running "uv sync --extra gradio" - resolves torch ^(cu132^) + flash-attn + the
+echo Gradio GUI. This can take a while...
+uv sync --extra gradio
 if errorlevel 1 (
   echo.
   echo uv sync failed. Most common cause on Windows: antivirus locking uv's

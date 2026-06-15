@@ -10,7 +10,7 @@ if not defined PYTORCH_CUDA_ALLOC_CONF set "PYTORCH_CUDA_ALLOC_CONF=expandable_s
 if exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" tasks.py gradio-gui %*
 ) else (
-  uv run python tasks.py gradio-gui %*
+  uv run --extra gradio python tasks.py gradio-gui %*
 )
 REM Keep the window open if it exited with an error, so the message is readable
 REM (a normal Ctrl-C stop exits 0 and closes cleanly).
