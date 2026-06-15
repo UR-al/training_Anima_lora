@@ -1823,6 +1823,83 @@ def stop() -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Web monitor — the GUI's "Start monitoring" button (kohya's "Start tensorboard"
+# analogue). During a --monitor training run the dashboard is already served
+# in-process; otherwise spawn a READ-ONLY standalone server (tools/run_monitor.py)
+# that rehydrates monitor_data/state.json + serves <output_dir>/sample. It runs in
+# its OWN process (NOT the training _STATE slot) so it can coexist with a live run.
+# --------------------------------------------------------------------------- #
+_MONITOR_PROC: dict = {"proc": None, "url": None}
+
+
+def start_monitoring(form: dict) -> dict:
+    """Open the web monitor for the current/last run. Attaches to a live --monitor
+    run's URL if one is up; else launches a standalone read-only monitor server."""
+    st = status()
+    if st.get("running") and st.get("monitor_url"):
+        return {
+            "ok": True,
+            "url": st["monitor_url"],
+            "mode": "attached",
+            "note": "Training's --monitor server is already serving this URL.",
+        }
+    mp = _MONITOR_PROC.get("proc")
+    if mp is not None and mp.poll() is None:
+        return {
+            "ok": True,
+            "url": _MONITOR_PROC["url"],
+            "mode": "standalone",
+            "note": "Standalone monitor already running.",
+        }
+    host = str(form.get("monitor_host") or "127.0.0.1").strip() or "127.0.0.1"
+    port = str(form.get("monitor_port") or "8766").strip() or "8766"
+    eff_name = (form.get("output_name") or "").strip() or (
+        form.get("method") or "anima_lora"
+    )
+    out_base = (form.get("output_dir") or "output").strip().rstrip("/\\ ") or "output"
+    out_dir = ROOT / out_base / eff_name
+    cmd = [
+        sys.executable,
+        str(ROOT / "tools" / "run_monitor.py"),
+        "--host",
+        host,
+        "--port",
+        port,
+        "--output_dir",
+        str(out_dir),
+    ]
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    log_dir = ROOT / "output" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        logf = open(  # noqa: SIM115 (kept open for the child's lifetime)
+            log_dir / "webgui_monitor.log", "w", encoding="utf-8", errors="replace"
+        )
+        proc = subprocess.Popen(
+            cmd, cwd=str(ROOT), env=env, stdout=logf, stderr=subprocess.STDOUT
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"failed to spawn monitor: {exc}"}
+    shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
+    url = f"http://{shown}:{port}"
+    _MONITOR_PROC.update(proc=proc, url=url)
+    return {"ok": True, "url": url, "mode": "standalone", "pid": proc.pid}
+
+
+def stop_monitoring() -> dict:
+    """Terminate the standalone monitor (no-op for an attached training monitor)."""
+    mp = _MONITOR_PROC.get("proc")
+    if mp is not None and mp.poll() is None:
+        try:
+            mp.terminate()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "stopped": True}
+    return {"ok": False, "error": "no standalone monitor running"}
+
+
+# --------------------------------------------------------------------------- #
 # Self-update (the GUI face of update.bat: git pull + uv sync from our origin).
 # --------------------------------------------------------------------------- #
 def _git(*args: str, timeout: int = 60) -> str:

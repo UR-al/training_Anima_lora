@@ -923,6 +923,7 @@ def build_app(default_port: int = 7860):
                 with gr.Row():
                     print_btn = gr.Button("Print training command", variant="secondary")
                     start_btn = gr.Button("Start training", variant="primary")
+                    monitor_btn = gr.Button("Start monitoring", variant="secondary")
                     stop_btn = gr.Button("Stop", variant="stop")
                     status_btn = gr.Button("Refresh status", variant="secondary")
 
@@ -1068,6 +1069,17 @@ def build_app(default_port: int = 7860):
 
         def on_stop():
             return "", server.stop()
+
+        def on_start_monitoring(*vals):
+            """Open the web monitor: attach to a live --monitor run's URL, else spawn
+            a standalone read-only dashboard (rehydrates the last run's curves)."""
+            form = _collect(keys, vals)
+            try:
+                res = server.start_monitoring(form)
+            except Exception as exc:  # noqa: BLE001
+                res = {"ok": False, "error": str(exc)}
+            url = res.get("url", "")
+            return (f"# monitor: {url}" if url else ""), res
 
         def on_status():
             return server.status()
@@ -1245,6 +1257,9 @@ def build_app(default_port: int = 7860):
 
         print_btn.click(on_print, inputs=inputs, outputs=out_cmd)
         start_btn.click(on_start, inputs=inputs, outputs=[out_cmd, out_status])
+        monitor_btn.click(
+            on_start_monitoring, inputs=inputs, outputs=[out_cmd, out_status]
+        )
         stop_btn.click(on_stop, inputs=None, outputs=[out_cmd, out_status])
         status_btn.click(on_status, inputs=None, outputs=out_status)
         ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
