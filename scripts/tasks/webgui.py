@@ -11,7 +11,7 @@ import os
 
 
 def cmd_webgui(extra):
-    from scripts.webgui import server
+    from gui.webgui import server
 
     host, port, open_browser = "127.0.0.1", 7860, True
     args = list(extra or [])

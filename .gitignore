@@ -46,4 +46,4 @@ near_twins_temp.toml
 library/monitoring/monitor_data/
 smoke_data/
 # web GUI queue + saved-config store (local runtime data)
-scripts/webgui/store/
+gui/webgui/store/

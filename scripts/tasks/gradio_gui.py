@@ -33,7 +33,7 @@ def cmd_gradio_gui(extra):
     port = int(os.environ.get("GRADIO_GUI_PORT", port))
 
     try:
-        from scripts.gradio_gui import app
+        from gui.kohya import app
 
         app.serve(host=host, port=port, open_browser=open_browser)
     except ModuleNotFoundError as exc:  # gradio (imported lazily in build_app) missing

@@ -26,7 +26,7 @@ All training runs `train.py --method <name> --preset <name>`. By default it's in
 
 - **Training**: `make lora PRESET=low_vram|fast_16gb|half` (half → `sample_ratio=0.5`); `make lora-gui GUI_PRESETS=tlora` runs the clean per-variant `configs/gui-methods/` tree (`ls` it for the live list). `exp-soft-tokens | exp-chimera | exp-turbo` are the experimental methods.
 - **Inference compose flags**: `SPECTRUM=1` / `MOD=1` / `NOLORA=1` compose into **every** `test-*` target (`make test`, `test-hydra`, `test-merge`, `test-dcw{,-v4}`, `test-smc-cfg`, `test-easycontrol REF_IMAGE=…`, `exp-test-*`).
-- **Launch model**: training runs **inline** (blocking) in the calling process — `make lora` / `python train.py …` / GUI Start all `Popen` `train.py` directly and wait. There is **no job queue / daemon** (removed 2026-06-15); for background or overnight runs use your shell's job control (`nohup make lora &`, `tmux`, `screen`) or submit runs sequentially. The GUI (`scripts/webgui/`, `scripts/gradio_gui/`) and the ComfyUI trainer node spawn `train.py` as a direct subprocess and capture its stdout/stderr to a logfile (`output/logs/`).
+- **Launch model**: training runs **inline** (blocking) in the calling process — `make lora` / `python train.py …` / GUI Start all `Popen` `train.py` directly and wait. There is **no job queue / daemon** (removed 2026-06-15); for background or overnight runs use your shell's job control (`nohup make lora &`, `tmux`, `screen`) or submit runs sequentially. The GUI (`gui/webgui/`, `gui/kohya/`) and the ComfyUI trainer node spawn `train.py` as a direct subprocess and capture its stdout/stderr to a logfile (`output/logs/`).
 - **Gotchas**: `make merge ADAPTER_DIR=… [MULTIPLIER=0.8]` bakes LoRA into the DiT (LoRA/Ortho/T-LoRA only) and refuses Hydra-moe / postfix unless `--allow-partial`. `turbo` output is a normal LoRA — infer with `--infer_steps` matched to the DP-DMD `student_steps` rollout (currently 4) and `--cfg 1.0`. `make print-config METHOD=… PRESET=…` dumps the merged chain; `make test-unit` runs pytest; `ruff check . --fix && ruff format .` (touched files only — see [[feedback_ruff_scope_collateral]]).
 
 ## Key entry points
@@ -38,8 +38,8 @@ All training runs `train.py --method <name> --preset <name>`. By default it's in
 | `train.py` | `AnimaTrainer` — main training loop via HF Accelerate |
 | `inference.py` | Standalone image generation (`--help` for all flags) |
 | `networks/spectrum.py` | Spectrum inference acceleration |
-| `scripts/webgui/` | Web control panel (stdlib, no Qt) — `python tasks.py webgui`: configure → launch → live monitor in the browser |
-| `scripts/gradio_gui/` | Gradio control panel (kohya_ss-style layout) — `python tasks.py gradio-gui`. A thin UI re-skin over `scripts/webgui/server.py` (`options`/`build_command`/`launch`/`status`/`stop`/`log_tail`), so it drives **this repo's** `train.py`, not kohya `sd-scripts`. Includes a live training-log panel that tails the subprocess's captured logfile (the sd-scripts RichHandler console). Opt-in `gradio` extra (`uv sync --extra gradio`). |
+| `gui/webgui/` | Web control panel (stdlib, no Qt) — `python tasks.py webgui`: configure → launch → live monitor in the browser. Backend (`options`/`build_command`/`launch`/`status`/`stop`/`log_tail`) for both GUIs. (Moved from `scripts/webgui/`.) |
+| `gui/kohya/` | Gradio control panel (kohya_ss-style layout) — `python tasks.py gradio-gui`. A thin UI re-skin over `gui/webgui/server.py`, so it drives **this repo's** `train.py`, not kohya `sd-scripts`. Includes a live training-log panel that tails the subprocess's captured logfile (the sd-scripts RichHandler console). Opt-in `gradio` extra (`uv sync --extra gradio`). (Moved from `scripts/gradio_gui/`.) |
 | `tasks.py` | Cross-platform task runner — source of truth for every `make` target |
 | `scripts/tasks/` + `scripts/experimental_tasks/` | Where command bodies actually live (`_common.py` = shared helpers) |
 
