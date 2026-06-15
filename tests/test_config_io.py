@@ -167,6 +167,18 @@ def test_load_without_dataset_leaves_ds_fields_unset():
     assert not any(k.startswith("ds_") for k in form)
 
 
+def test_load_constantcosine_fields():
+    form = load_toml_to_form(
+        "use_constantcosine = true\n"
+        "constantcosine_tail_epochs = 8\n"
+        "lr_scheduler_min_lr_ratio = 0.05\n"
+    )
+    assert form["use_constantcosine"] is True
+    assert form["constantcosine_tail_epochs"] == "8"
+    assert form["lr_scheduler_min_lr_ratio"] == "0.05"
+    assert "constantcosine" not in form.get("extra_flags", "")
+
+
 def test_load_auto_preprocess_orchestration_keys():
     # GUI auto-preprocess knobs are not train.py args — they must map to their
     # dedicated form fields, never leak into extra_flags as bogus --flags.
@@ -230,6 +242,7 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_constantcosine_fields()
     test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()
     test_load_multi_subset_fills_extra_grid()

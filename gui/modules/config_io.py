@@ -60,6 +60,8 @@ _DIRECT_FIELDS = {
     "save_every_n_epochs",
     "save_precision",
     "resume",
+    "constantcosine_tail_epochs",
+    "lr_scheduler_min_lr_ratio",
     # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
     # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
     # into extra_flags as bogus train flags).
@@ -76,6 +78,7 @@ _BOOL_FIELDS = {
     "use_shuffled_caption_variants",
     "use_shuffled_caption_variants_only",
     "qwen_image_vae_2d",
+    "use_constantcosine",
     "save_state",
     "output_config",
     # GUI auto-preprocess orchestration toggles (not train.py args).

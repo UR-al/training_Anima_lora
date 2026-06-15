@@ -810,6 +810,10 @@ def _method_preset_extra(form: dict):
         ("--qwen3_max_token_length", "qwen3_max_token_length"),
         ("--save_every_n_epochs", "save_every_n_epochs"),
         ("--save_precision", "save_precision"),
+        # constant→cosine one-shot (use_constantcosine appends a cosine tail; the
+        # floor is lr_scheduler_min_lr_ratio).
+        ("--constantcosine_tail_epochs", "constantcosine_tail_epochs"),
+        ("--lr_scheduler_min_lr_ratio", "lr_scheduler_min_lr_ratio"),
         # NOTE: --resume is already emitted near the top of this function (line ~778);
         # do not re-add it here or it doubles.
     ):
@@ -826,6 +830,7 @@ def _method_preset_extra(form: dict):
         ("--use_shuffled_caption_variants", "use_shuffled_caption_variants"),
         ("--use_shuffled_caption_variants_only", "use_shuffled_caption_variants_only"),
         ("--qwen_image_vae_2d", "qwen_image_vae_2d"),
+        ("--use_constantcosine", "use_constantcosine"),
         ("--save_state", "save_state"),
         ("--output_config", "output_config"),
     ):

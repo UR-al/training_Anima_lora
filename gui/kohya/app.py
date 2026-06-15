@@ -164,8 +164,10 @@ def build_app(default_port: int = 7860):
 
     keys: list[str] = []
     inputs: list = []
+    by_key: dict = {}  # field name → component, for cross-field dependency greying
 
     def reg(key, comp):
+        by_key[key] = comp
         return _register(keys, inputs, key, comp)
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
@@ -316,6 +318,16 @@ def build_app(default_port: int = 7860):
                             placeholder="",
                         ),
                     )
+                # constant→cosine one-shot: hold constant LR for the planned run,
+                # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
+                # Overrides lr_scheduler (which greys out when this is on).
+                with gr.Row():
+                    reg("use_constantcosine", gr.Checkbox(
+                        value=False, label="use_constantcosine (constant→cosine)"))
+                    reg("constantcosine_tail_epochs", gr.Textbox(
+                        label="constantcosine_tail_epochs", placeholder="0 = off"))
+                    reg("lr_scheduler_min_lr_ratio", gr.Textbox(
+                        label="min_lr_ratio (cosine floor)", placeholder="0.0"))
 
             # ── Network / adapter ───────────────────────────────────────────
             with gr.Accordion("Network / Adapter", open=False):
@@ -808,6 +820,42 @@ def build_app(default_port: int = 7860):
             inputs=[inputs[keys.index("output_name")], sample_editor],
             outputs=sample_path_comp,
         )
+
+        # ── Conflict / dependency greying (ported from the web GUI's
+        #    CONFLICT_RULES + ARG_DEPS) — disable (and reset) a field when an active
+        #    option makes it a no-op or incompatible. Every relevant change (and the
+        #    initial load) recomputes all targets from the driver values. ──────────
+        _dep_drivers = ["use_vae_cache", "use_text_cache", "use_constantcosine",
+                        "loss_type", "timestep_sampling", "weighting_scheme"]
+        _dep_targets = ["ds_random_crop", "ds_caption_dropout_rate",
+                        "lr_scheduler_type", "huber_c", "huber_schedule",
+                        "sigmoid_scale", "logit_mean", "logit_std"]
+
+        def _gray(on: bool, reset=None):
+            if on:
+                return gr.update(interactive=True)
+            if reset is not None:
+                return gr.update(interactive=False, value=reset)
+            return gr.update(interactive=False)
+
+        def _recompute_deps(use_vae, use_text, use_cc, loss, ts, ws):
+            huber = loss in ("huber", "smooth_l1")
+            return [
+                _gray(not use_vae, reset=False),   # random_crop ↮ cached latents
+                _gray(not use_text, reset="0"),    # caption_dropout ↮ cached TE
+                _gray(not use_cc),                 # lr_scheduler ← overridden by cc
+                _gray(huber),                      # huber_c only for huber/smooth_l1
+                _gray(huber),                      # huber_schedule
+                _gray(ts in ("", "sigmoid")),      # sigmoid_scale: sigmoid family
+                _gray(ws == "logit_normal"),       # logit_mean
+                _gray(ws == "logit_normal"),       # logit_std
+            ]
+
+        _dep_in = [by_key[k] for k in _dep_drivers]
+        _dep_out = [by_key[k] for k in _dep_targets]
+        for _drv in _dep_in:
+            _drv.change(_recompute_deps, _dep_in, _dep_out)
+        demo.load(_recompute_deps, _dep_in, _dep_out)
 
     # Stash the field order on the app for any callers / debugging.
     FIELD_KEYS[:] = keys
