@@ -2248,7 +2248,17 @@ def _arg_split(s: str) -> list:
     byte-identical to str.split(). Used for every free-text arg list the GUI emits
     (network_args / optimizer_args / lr_scheduler_args / extra_flags / nargs)."""
     s = s or ""
-    return shlex.split(s, posix=True) if ('"' in s or "'" in s) else s.split()
+    if '"' not in s and "'" not in s:
+        return s.split()
+    try:
+        return shlex.split(s, posix=True)
+    except ValueError:
+        # Unbalanced quote — e.g. a Windows path under a folder named O'Brien, or
+        # optimizer_args like `preset=anima's_preset`. Don't kill the launch over an
+        # apostrophe: fall back to a plain whitespace split (key=value tokens and
+        # unquoted paths survive intact; only intentionally-quoted spaced values lose
+        # their grouping, which beats a "No closing quotation" non-start).
+        return s.split()
 
 
 def _flatten_kv(v) -> str:

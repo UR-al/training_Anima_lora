@@ -74,8 +74,12 @@ def _interactive_states(form: dict) -> dict:
         return {"interactive": False, "value": reset}
 
     return {
-        "ds_random_crop": g(use_vae, reset=False),
-        "ds_caption_dropout_rate": g(use_text, reset="0"),
+        # random_crop / caption_dropout only bite under LIVE encoding — a disk-cached
+        # VAE latent / TE embedding is frozen, so they are no-ops once caching is ON.
+        # ENABLE when the cache is OFF (matches the live use_*_cache .change handlers,
+        # which gray on `not v`); the old non-negated form was inverted.
+        "ds_random_crop": g(not use_vae, reset=False),
+        "ds_caption_dropout_rate": g(not use_text, reset="0"),
         "lr_scheduler_type": g(not use_cc),
         "huber_c": g(huber),
         "huber_schedule": g(huber),
@@ -517,7 +521,9 @@ def build_app(default_port: int = 7860):
                             reg(
                                 f"{prefix}caption_dropout_rate",
                                 gr.Textbox(
-                                    label="caption_dropout_rate", placeholder="0.0"
+                                    label="caption_dropout_rate",
+                                    placeholder="0.0",
+                                    info="use_text_cache가 꺼진 라이브 인코딩에서만 효과 (캐시된 임베딩은 고정)",
                                 ),
                             )
                             reg(
@@ -534,7 +540,11 @@ def build_app(default_port: int = 7860):
                             )
                             reg(
                                 f"{prefix}random_crop",
-                                gr.Checkbox(value=False, label="random_crop"),
+                                gr.Checkbox(
+                                    value=False,
+                                    label="random_crop",
+                                    info="use_vae_cache가 꺼진 라이브 인코딩에서만 효과 (캐시된 latent은 고정)",
+                                ),
                             )
                             reg(
                                 f"{prefix}gradient_checkpointing",
@@ -597,7 +607,7 @@ def build_app(default_port: int = 7860):
                     )
                     reg(
                         "drop_lowres",
-                        gr.Checkbox(value=True, label="drop low-res (< 0.5MP)"),
+                        gr.Checkbox(value=False, label="drop low-res (< 0.5MP)"),
                     )
                     reg(
                         "mask_enable",
@@ -1518,9 +1528,10 @@ def build_app(default_port: int = 7860):
 
         def on_load_dataset_config(path):
             """Parse a dataset_config TOML's [[datasets]] blocks into the subset blocks
-            + Resolution tiers, then clear the dataset_config path so the filled subsets
-            drive training (a LoRA_Easy dataset TOML isn't anima-native, so we convert
-            it rather than pass it through)."""
+            + Resolution tiers. When the blocks fully capture the file, clear the
+            dataset_config path so the filled subsets drive training; otherwise (no
+            parseable subsets, or more subsets than the GUI shows) KEEP the path so the
+            user's input isn't lost / all subsets still train via the pass-through TOML."""
             p = (path or "").strip()
             if not p:
                 return [gr.update() for _ in keys] + [
@@ -1536,27 +1547,42 @@ def build_app(default_port: int = 7860):
                 for k, v in f2.items()
                 if k == "target_res" or k.split("_")[0] in ("ds", "ds2", "ds3", "ds4")
             }
-            updates = []
-            for k in keys:
-                if k == "dataset_config":
-                    updates.append(gr.update(value=""))  # filled subsets are the source
-                elif k in wanted:
-                    updates.append(gr.update(value=wanted[k]))
-                else:
-                    updates.append(gr.update())
             n = sum(
                 1
                 for k, v in wanted.items()
                 if k.endswith("image_dir") and str(v).strip()
             )
+            # _ds_overflow has a leading "_" so it is (intentionally) excluded from
+            # `wanted` — read it straight off f2, mirroring on_load_config.
+            overflow = f2.get("_ds_overflow")
+            # Clear the dataset_config path ONLY when the subset blocks fully captured
+            # the file (≥1 filled AND no overflow) — then those blocks drive training.
+            # On a no-subset load keep the path (don't wipe the user's input); on overflow
+            # keep it too so ALL subsets still train via the pass-through TOML.
+            clear_path = bool(n) and not overflow
+            updates = []
+            for k in keys:
+                if k == "dataset_config":
+                    updates.append(gr.update(value="") if clear_path else gr.update())
+                elif k in wanted:
+                    updates.append(gr.update(value=wanted[k]))
+                else:
+                    updates.append(gr.update())
             tiers = wanted.get("target_res") or []
-            note = (
-                f"✓ filled {n} subset(s)"
-                + (f" + tiers {','.join(tiers)}" if tiers else "")
-                + f" from `{p}` — dataset_config path cleared so these subsets train."
-                if n
-                else f"⚠ no `[[datasets]]` subsets found in `{p}`"
-            )
+            tier_note = f" + tiers {','.join(tiers)}" if tiers else ""
+            if not n:
+                note = f"⚠ no `[[datasets]]` subsets found in `{p}` — path kept as-is."
+            elif overflow:
+                note = (
+                    f"⚠ config has {overflow} subsets but the GUI shows {N_SUBSETS}; "
+                    f"filled the first {N_SUBSETS}{tier_note} and KEPT the dataset_config "
+                    f"path so all {overflow} still train via the TOML."
+                )
+            else:
+                note = (
+                    f"✓ filled {n} subset(s){tier_note} from `{p}` — dataset_config path "
+                    "cleared so these subsets train."
+                )
             return updates + [note]
 
         def on_save_config(path, *vals):

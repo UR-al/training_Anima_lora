@@ -246,6 +246,86 @@ def test_load_multi_subset_fills_blocks():
     assert "gradient_checkpointing_resolutions" not in (form.get("extra_flags") or "")
 
 
+def test_load_drops_sd_era_crash_keys():
+    """kohya / LoRA_Easy / SD-era keys with no anima flag must be DROPPED on load,
+    never folded into extra_flags — train.py uses a strict argparse, so a leaked
+    --shuffle_caption / --sdxl / … would abort the run at Start. Regression guard for
+    the config_io._DROP ↔ backend._IMPORT_DROP drift the audit caught."""
+    form = load_toml_to_form(
+        "shuffle_caption = true\n"
+        "skip_image_resolution = false\n"
+        "clip_skip = 2\n"
+        "sdxl = true\n"
+        "v2 = false\n"
+        "v_parameterization = false\n"
+        'name = "my_lora"\n'
+    )
+    ef = form.get("extra_flags", "")
+    for k in (
+        "shuffle_caption",
+        "skip_image_resolution",
+        "clip_skip",
+        "sdxl",
+        "v2",
+        "v_parameterization",
+        "name",
+    ):
+        assert k not in ef, f"{k} leaked into extra_flags → would crash train.py"
+
+
+def test_load_preserves_valid_anima_flags():
+    """Anima-VALID flags must survive load. prior_loss_weight (float) rides emit();
+    no_half_vae is a store_true → emit `--no_half_vae` only when true (a false value
+    must NOT become `--no-no_half_vae`, which argparse would reject)."""
+    ef = load_toml_to_form("prior_loss_weight = 5.0\n").get("extra_flags", "")
+    assert "--prior_loss_weight 5.0" in ef
+    assert "--no_half_vae" in load_toml_to_form("no_half_vae = true\n").get(
+        "extra_flags", ""
+    )
+    assert "no_half_vae" not in load_toml_to_form("no_half_vae = false\n").get(
+        "extra_flags", ""
+    )
+    # lowram is owned by _BOOL_FIELDS (its dead _DROP entry was removed).
+    assert load_toml_to_form("lowram = true\n")["lowram"] is True
+
+
+_SAME_DIR_MULTISCALE = """
+[[datasets]]
+resolution = [1536, 1536]
+skip_image_resolution = [1024, 1024]
+batch_size = 1
+  [[datasets.subsets]]
+  image_dir = "C:/x/imgs"
+  num_repeats = 10
+  keep_tokens = 5
+[[datasets]]
+resolution = [1024, 1024]
+batch_size = 1
+  [[datasets.subsets]]
+  image_dir = "C:/x/imgs"
+  num_repeats = 10
+  keep_tokens = 5
+[[datasets]]
+resolution = [512, 512]
+batch_size = 1
+  [[datasets.subsets]]
+  image_dir = "C:/x/imgs"
+  num_repeats = 10
+  keep_tokens = 5
+"""
+
+
+def test_load_dedups_same_dir_multiscale_to_one_subset():
+    """A LoRA_Easy "same folder at N resolutions" dataset_config collapses to ONE
+    subset + the union of tiers (anima multiscale). skip_image_resolution is dropped."""
+    form = load_toml_to_form(_SAME_DIR_MULTISCALE)
+    assert form["ds_image_dir"] == "C:/x/imgs"
+    assert form["ds_num_repeats"] == "10" and form["ds_keep_tokens"] == "5"
+    assert "ds2_image_dir" not in form  # deduped — only one distinct folder
+    assert sorted(form["target_res"]) == ["1024", "1536", "512"]  # union of tiers
+    assert "skip_image_resolution" not in form.get("extra_flags", "")
+
+
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_maps_dedicated_fields()
     test_load_renames_to_dedicated_fields()
@@ -258,4 +338,7 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_constantcosine_fields()
     test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()
+    test_load_drops_sd_era_crash_keys()
+    test_load_preserves_valid_anima_flags()
+    test_load_dedups_same_dir_multiscale_to_one_subset()
     print("all config_io round-trip tests passed")

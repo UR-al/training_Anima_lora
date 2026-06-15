@@ -161,13 +161,16 @@ _RENAME = {
     "cache_text_encoder_outputs_to_disk": "use_text_cache",
     "save_toml": "output_config",
 }
-# Keys with no anima_lora equivalent — dropped on load (documented in the GUI).
+# kohya / LoRA_Easy / SD-era keys with NO anima train.py flag — dropped on load so
+# they are NOT folded into extra_flags. train.py uses a strict argparse (parse_args,
+# not parse_known_args) BEFORE reading the config, so an unrecognized --<key> would
+# abort the run at Start with "unrecognized arguments". Mirror of the import-side drop
+# set gui/backend.py::_IMPORT_DROP — keep the two in sync. (Anima-VALID args like
+# prior_loss_weight / no_half_vae are NOT here — they round-trip via emit()/_EMIT_IF_TRUE.)
 _DROP = {
     "train_mode",
     "xformers",
-    "prior_loss_weight",
     "max_token_length",
-    "no_half_vae",
     "full_fp16",
     "full_bf16",
     # kohya aspect-ratio bucketing — anima_lora uses constant-token tiers
@@ -181,7 +184,18 @@ _DROP = {
     "batch_size",
     "lr_scheduler_num_cycles",
     "split_attn",
-    "lowram",
+    # SD1.5/SDXL model-family + meta keys with no anima equivalent (anima is a
+    # flow-matching DiT + Qwen3 TE). These appear in essentially every kohya /
+    # LoRA_Easy config and otherwise crash argparse on Start. skip_image_resolution
+    # is handled by choose_edge/target_res; (caption) shuffle is a preprocess-time
+    # knob (caption_shuffle_variants), a train-time no-op.
+    "skip_image_resolution",
+    "shuffle_caption",
+    "sdxl",
+    "v2",
+    "v_parameterization",
+    "clip_skip",
+    "name",
     # Consumed by _extract_dataset (restores the per-subset gradient_checkpointing
     # checkboxes by tier) — dropped here so it isn't ALSO folded into extra_flags,
     # which would double-own the flag with the subset blocks on the next save.
@@ -195,6 +209,12 @@ _DROP = {
     "run_name_mode",
     "edm2_loss_weighting",
 }
+# Anima-VALID store_true flags with no dedicated GUI field: emit `--flag` ONLY when
+# truthy. A plain store_true has no `--no-<flag>` form, so routing a false value through
+# emit() (which would write `--no-no_half_vae`) would itself crash argparse — hence the
+# special case rather than membership in _DROP. (prior_loss_weight is a float and rides
+# the normal emit() path; lowram is owned by _BOOL_FIELDS, checked before _DROP.)
+_EMIT_IF_TRUE = {"no_half_vae"}
 # Dataset-blueprint sections are not flat scalars — skip the flat-key routing, but
 # `datasets` is harvested into the ds_* fields first (see _extract_dataset).
 _SKIP_SECTIONS = {"general", "datasets", "subsets"}
@@ -371,6 +391,9 @@ def load_toml_to_form(toml_text: str) -> dict:
             form[key] = bool(value)
         elif key in _DIRECT_FIELDS:
             form[key] = str(value)
+        elif key in _EMIT_IF_TRUE:
+            if value:  # store_true: only --flag (no --no-flag form) — false ⇒ drop
+                emit(key, True)
         elif key in _DROP:
             continue
         else:
