@@ -864,10 +864,26 @@ def build_app(default_port: int = 7860):
 
 def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) -> None:
     """Launch the Gradio server (blocking)."""
+    import inspect
+
     demo = build_app(default_port=port)
-    demo.launch(
-        server_name=host,
-        server_port=port,
-        inbrowser=open_browser,
-        show_api=False,
-    )
+    kwargs = {
+        "server_name": host,
+        "server_port": port,
+        "inbrowser": open_browser,
+        "show_api": False,  # hide the auto-generated API page
+    }
+    # Tolerate gradio version drift: a launch() whose signature dropped/renamed a
+    # kwarg (e.g. show_api on some 5.x/6.x builds) would otherwise TypeError and
+    # kill the GUI. If launch() has no **kwargs catch-all, pass only what it
+    # actually accepts.
+    try:
+        params = inspect.signature(demo.launch).parameters
+        has_var_kw = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        if not has_var_kw:
+            kwargs = {k: v for k, v in kwargs.items() if k in params}
+    except (TypeError, ValueError):
+        pass
+    demo.launch(**kwargs)
