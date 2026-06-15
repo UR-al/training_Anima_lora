@@ -193,58 +193,23 @@ def _nearest_tier(res) -> int | None:
     return min(_DATASET_TIERS, key=lambda t: abs(t - r))
 
 
-# Per-subset field mapping for the config round-trip — mirrors gui.kohya.app's block
-# keys: the primary subset uses the "ds_" prefix, extras "ds2_"/"ds3_"/…. Keep
-# _DS_N_SUBSETS in sync with gui.kohya.app.N_SUBSETS.
-_DS_N_SUBSETS = 4
-_DS_PREFIXES = ("ds_",) + tuple(f"ds{i}_" for i in range(2, _DS_N_SUBSETS + 1))
+# Per-subset scalar/bool keys carried verbatim into each subset dict.
 _DS_STR_FIELDS = (
-    ("num_repeats", "num_repeats"),
-    ("keep_tokens", "keep_tokens"),
-    ("caption_extension", "caption_extension"),
-    ("caption_dropout_rate", "caption_dropout_rate"),
+    "num_repeats",
+    "keep_tokens",
+    "caption_extension",
+    "caption_dropout_rate",
 )
-_DS_BOOL_FIELDS = (
-    ("flip_aug", "flip_aug"),
-    ("random_crop", "random_crop"),
-    ("gradient_checkpointing", "gradient_checkpointing"),
-)
-
-
-def _fill_subset_block(
-    form: dict, prefix: str, s: dict, block_bs, gc_edges: set
-) -> None:
-    """Write one subset dict into the form's prefixed block fields. cache_dir lands
-    only on the primary (extras share it in the GUI). gradient_checkpointing is
-    reconstructed from a tier match against ``gradient_checkpointing_resolutions`` (the
-    backend's per-subset GC emit — the value isn't stored as a subset TOML key)."""
-    if s.get("image_dir"):
-        form[f"{prefix}image_dir"] = str(s["image_dir"])
-    if prefix == "ds_" and s.get("cache_dir"):
-        form["ds_cache_dir"] = str(s["cache_dir"])
-    for fk, sk in _DS_STR_FIELDS:
-        if s.get(sk) is not None:
-            form[f"{prefix}{fk}"] = str(s[sk])
-    bs = s.get("batch_size", block_bs)
-    if bs is not None:
-        form[f"{prefix}batch_size"] = str(bs)
-    for fk, sk in _DS_BOOL_FIELDS:
-        if sk in s:
-            form[f"{prefix}{fk}"] = bool(s[sk])
-    t = s.get("tiers")
-    tier_ints: set[int] = set()
-    if isinstance(t, (list, tuple)) and t:
-        form[f"{prefix}tiers"] = ",".join(str(x) for x in t)
-        tier_ints = {int(x) for x in t if str(x).isdigit()}
-    if gc_edges and tier_ints and (tier_ints & gc_edges):
-        form[f"{prefix}gradient_checkpointing"] = True
+_DS_BOOL_FIELDS = ("flip_aug", "random_crop", "gradient_checkpointing")
 
 
 def _extract_dataset(data: dict, form: dict) -> None:
-    """Harvest the ``[[datasets]]`` blocks into the per-subset block fields: the first
-    subset fills ds_*, further subsets ds2_*/ds3_*/… (up to N). Resolutions across
-    blocks seed target_res; gradient_checkpointing_resolutions restores the per-subset
-    GC checkboxes by tier. Mutates ``form`` in place."""
+    """Harvest the ``[[datasets]]`` blocks into ``form['subsets']`` = list[dict] — the
+    shape the GUI's dynamic subset rows (and the backend) consume. Each block's
+    batch_size falls through to its subsets; resolutions across blocks seed target_res;
+    gradient_checkpointing_resolutions restores the per-subset GC flag by tier match.
+    The first subset's cache_dir is surfaced as the shared ds_cache_dir. Mutates
+    ``form`` in place."""
     blocks = data.get("datasets")
     if not isinstance(blocks, list) or not blocks:
         return
@@ -254,22 +219,43 @@ def _extract_dataset(data: dict, form: dict) -> None:
         if str(x).isdigit()
     }
     tiers: set[int] = set()
-    pairs: list[tuple[dict, object]] = []  # (subset, owning-block batch_size)
+    subsets: list[dict] = []
     for blk in blocks:
         if not isinstance(blk, dict):
             continue
         tier = _nearest_tier(blk.get("resolution"))
         if tier is not None:
             tiers.add(tier)
-        subs = blk.get("subsets")
-        if isinstance(subs, list):
-            for s in subs:
-                if isinstance(s, dict):
-                    pairs.append((s, blk.get("batch_size")))
-    for prefix, (s, block_bs) in zip(_DS_PREFIXES, pairs):
-        _fill_subset_block(form, prefix, s, block_bs, gc_edges)
-    if len(pairs) > _DS_N_SUBSETS:
-        form["_ds_overflow"] = len(pairs)  # surfaced as a load note by on_load_config
+        block_bs = blk.get("batch_size")
+        for s in blk.get("subsets") or []:
+            if not isinstance(s, dict) or not s.get("image_dir"):
+                continue
+            sub: dict = {"image_dir": str(s["image_dir"])}
+            if s.get("cache_dir"):
+                sub["cache_dir"] = str(s["cache_dir"])
+            for k in _DS_STR_FIELDS:
+                if s.get(k) is not None:
+                    sub[k] = s[k]
+            bs = s.get("batch_size", block_bs)
+            if bs is not None:
+                sub["batch_size"] = bs
+            for k in _DS_BOOL_FIELDS:
+                if k in s:
+                    sub[k] = bool(s[k])
+            t = s.get("tiers")
+            tier_ints: set[int] = set()
+            if isinstance(t, (list, tuple)) and t:
+                sub["tiers"] = list(t)
+                tier_ints = {int(x) for x in t if str(x).isdigit()}
+            if gc_edges and tier_ints and (tier_ints & gc_edges):
+                sub["gradient_checkpointing"] = True
+            subsets.append(sub)
+    if subsets:
+        form["subsets"] = subsets
+        # surface the (shared) cache_dir from the first subset that has one
+        cd = next((s["cache_dir"] for s in subsets if s.get("cache_dir")), None)
+        if cd:
+            form["ds_cache_dir"] = str(cd)
     if tiers:
         form["target_res"] = [str(t) for t in sorted(tiers)]
 
