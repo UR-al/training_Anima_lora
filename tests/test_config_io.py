@@ -261,7 +261,6 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_subsets_unset()
-    test_load_multi_subset_fills_blocks()
     test_load_constantcosine_fields()
     test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()
