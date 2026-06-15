@@ -70,6 +70,7 @@ _BOOL_FIELDS = {
     "use_text_cache",
     "use_shuffled_caption_variants",
     "use_shuffled_caption_variants_only",
+    "qwen_image_vae_2d",
     "save_state",
     "output_config",
 }

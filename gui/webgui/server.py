@@ -825,6 +825,7 @@ def _method_preset_extra(form: dict):
         ("--use_text_cache", "use_text_cache"),
         ("--use_shuffled_caption_variants", "use_shuffled_caption_variants"),
         ("--use_shuffled_caption_variants_only", "use_shuffled_caption_variants_only"),
+        ("--qwen_image_vae_2d", "qwen_image_vae_2d"),
         ("--save_state", "save_state"),
         ("--output_config", "output_config"),
     ):

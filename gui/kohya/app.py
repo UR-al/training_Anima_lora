@@ -493,6 +493,9 @@ def build_app(default_port: int = 7860):
                 with gr.Row():
                     reg("use_text_cache", gr.Checkbox(
                         value=False, label="use_text_cache (cache TE to disk)"))
+                    reg("qwen_image_vae_2d", gr.Checkbox(
+                        value=False,
+                        label="qwen_image_vae_2d (~2x faster VAE caching)"))
                     reg("use_shuffled_caption_variants", gr.Checkbox(
                         value=False, label="use_shuffled_caption_variants"))
                     reg("use_shuffled_caption_variants_only", gr.Checkbox(
