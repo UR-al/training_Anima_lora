@@ -306,33 +306,55 @@ def build_app(default_port: int = 7860):
         )
         return tb
 
+    # Every visibility-toggleable row group (subset blocks + arg rows) collects here;
+    # the config-load button reveals them all (a static .then returning constants —
+    # no component reads, so no race). All add/reveal/clear use plain button.click
+    # (static events) — NOT gr.render — so there's no fn-index desync / focus loss.
+    _reveal_groups: list = []
+
+    def _add_button_for(groups, label):
+        """A "+ Add" button that reveals the next hidden row group (count-based)."""
+        n = len(groups)
+        count = gr.State(1)
+        btn = gr.Button(label, size="sm")
+
+        def _grow(c):
+            c = min(int(c) + 1, n)
+            return [c] + [gr.update(visible=(j < c)) for j in range(n)]
+
+        btn.click(_grow, count, [count] + groups, show_progress="hidden")
+
     def reg_arg_rows(group, *, title):
-        """LoRA_Easy-style "ADD NETWORK ARG" editor: a header + a fixed pool of
-        name → value rows (Enter Arg Name | Enter Arg Value | 🗑 clear). Each row
-        reg()s as ``{group}__k{i}`` / ``{group}__v{i}``; _collect folds the non-blank
-        rows into the inline ``key=value`` string the backend reads under ``group``."""
+        """LoRA_Easy "+ Add" name→value editor: a fixed pool of rows, row 1 shown and
+        the rest revealed by "+ Add". Each row is a gr.Group (visibility-toggled);
+        fields reg() as ``{group}__k{i}``/``{group}__v{i}`` (STATIC components → no
+        gr.render, no fn-index desync, no focus loss). 🗑 clears a row; _collect folds
+        the non-blank rows into the inline ``key=value`` string under ``group``."""
         n = _ARG_ROW_GROUPS[group]
-        gr.Markdown(f"**{title}** — one key → value per row (blank rows ignored)")
+        gr.Markdown(f"**{title}** — one key → value per row")
+        groups = []
         for i in range(1, n + 1):
-            with gr.Row():
-                ktb = gr.Textbox(
-                    placeholder="Enter Arg Name",
-                    show_label=False,
-                    container=False,
-                    scale=5,
-                )
-                vtb = gr.Textbox(
-                    placeholder="Enter Arg Value",
-                    show_label=False,
-                    container=False,
-                    scale=5,
-                )
-                clr = gr.Button("🗑", scale=0, min_width=44)
-            reg(f"{group}__k{i}", ktb)
-            reg(f"{group}__v{i}", vtb)
-            # outputs bind THIS row's components (evaluated at click-registration);
-            # the lambda returns constants, so there's no loop-closure capture bug.
-            clr.click(lambda: ("", ""), outputs=[ktb, vtb], show_progress="hidden")
+            with gr.Group(visible=(i == 1)) as grp:
+                with gr.Row():
+                    ktb = gr.Textbox(
+                        placeholder="Enter Arg Name",
+                        show_label=False,
+                        container=False,
+                        scale=5,
+                    )
+                    vtb = gr.Textbox(
+                        placeholder="Enter Arg Value",
+                        show_label=False,
+                        container=False,
+                        scale=5,
+                    )
+                    clr = gr.Button("🗑", scale=0, min_width=44)
+                reg(f"{group}__k{i}", ktb)
+                reg(f"{group}__v{i}", vtb)
+                clr.click(lambda: ("", ""), outputs=[ktb, vtb], show_progress="hidden")
+            groups.append(grp)
+        _add_button_for(groups, f"+ Add {title.lower()} row")
+        _reveal_groups.extend(groups)
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
         gr.Markdown(
@@ -517,10 +539,12 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
-                def _subset_block(idx: int) -> None:
-                    """Register one subset block's fields. Primary (idx==1) carries the
-                    shared cache_dir; extras don't. reg() keeps keys+inputs in lockstep,
-                    so ds{idx}_* round-trip through _collect / on_load_config unchanged."""
+                def _subset_block(idx: int):
+                    """Register one subset block's fields + return its (visibility-
+                    toggled) Accordion. Primary (idx==1) shows + carries the shared
+                    cache_dir; extras start hidden, revealed by "+ Add subset". reg()
+                    keeps keys+inputs in lockstep, so ds{idx}_* round-trip through
+                    _collect / on_load_config unchanged (STATIC components)."""
                     prefix = "ds_" if idx == 1 else f"ds{idx}_"
                     primary = idx == 1
                     title = (
@@ -528,7 +552,7 @@ def build_app(default_port: int = 7860):
                         if primary
                         else f"Subset #{idx} (optional)"
                     )
-                    with gr.Accordion(title, open=primary):
+                    with gr.Accordion(title, open=True, visible=primary) as grp:
                         if primary:
                             with gr.Row():
                                 reg_path(
@@ -598,9 +622,11 @@ def build_app(default_port: int = 7860):
                                     label="gradient_checkpointing (this subset's tier)",
                                 ),
                             )
+                    return grp
 
-                for _i in range(1, N_SUBSETS + 1):
-                    _subset_block(_i)
+                subset_groups = [_subset_block(_i) for _i in range(1, N_SUBSETS + 1)]
+                _add_button_for(subset_groups, "+ Add subset")
+                _reveal_groups.extend(subset_groups)
 
                 reg_path(
                     "dataset_config",
@@ -1589,6 +1615,13 @@ def build_app(default_port: int = 7860):
         # recompute the identical state already applied (idempotent).
         load_cfg_btn.click(
             on_load_config, inputs=config_path, outputs=inputs + [config_status]
+        ).then(
+            # Reveal every subset/arg row group so a loaded config's extra rows show
+            # (the "+ Add" reveal is count-based; load may populate hidden rows). Returns
+            # constants → no component reads → no race with the value-write above.
+            lambda: [gr.update(visible=True) for _ in _reveal_groups],
+            None,
+            _reveal_groups,
         )
         save_cfg_btn.click(
             on_save_config, inputs=[config_path, *inputs], outputs=config_status
