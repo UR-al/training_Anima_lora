@@ -1,149 +1,109 @@
-# sd-scripts / LETS realignment — target structure proposal
+# sd-scripts / LETS realignment — target structure proposal (v2)
 
 Status: **DRAFT for approval** (structure target first, then GUI on top).
-Date: 2026-06-15.
+Date: 2026-06-15. Supersedes v1.
 
-Goal (from the requester): drive the trainer in plain **sd-scripts / LoRA_Easy_Training_Scripts (LETS)**
-style — one `--config_file` carrying everything, `network_module` + `network_args`
-carrying the routing, a kohya-style GUI on top that emits such a config, **no
-daemon** (direct CLI), and a folder layout that reads cleanly instead of being
-named after where each piece was lifted from.
+## The blueprint: a 4-donor layered fusion
 
----
-
-## 0. Key finding — the trainer is already ~80% sd-scripts/LETS-shaped
-
-Before renaming anything, note what already matches the convention (evidence):
-
-| Concern | Already sd-scripts/LETS? | Evidence |
+| Layer | Donor | Style we adopt |
 |---|---|---|
-| Network loading | **Yes** | `train.py:1735` `importlib.import_module(network_module)` → `create_network(multiplier, network_dim, network_alpha, vae, text_encoder, unet, **kwargs)` + `create_network_from_weights(...)`. Identical to sd-scripts. |
-| Pure config-file run | **Yes** | `library/config/io.py` `--config_file` alone is **lenient** (unknown keys ignored unless `--config_strict`); routing rides `network_args`. So `network_module=… , network_args=[…]` runs with **no** method/preset. |
-| Routing via `network_args` | **Yes** | three-axis `use_moe_style` / `route_per_layer` / `router_source` are already in the `NETWORK_KWARGS` allowlist and consumed from `network_args`. |
-| Direct (non-daemon) launch | **Yes** | `scripts/tasks/_common.py` `build_launch_cmd()` / `accelerate_launch()` is the default inline path; the daemon is opt-in (`--queue`). |
-| LETS/kohya config import | **Yes** | `scripts/webgui/server.py:2050 import_config()` already converts kohya / LoRA_Easy sectioned TOML/JSON. |
-| Core package names | **Yes** | `library/` and `networks/` are the **sd-scripts** names; `LoraEasyCustomOptimizer/` is the **LETS** package's own name. |
+| **GUI** | kohya_ss GUI | kohya `kohya_gui/` LoRA + Utilities tab frame |
+| **Training config** | sd-scripts + LETS | one plain TOML (`network_module` + `network_args` carry routing), `save_toml`/`load_toml`, runnable as `train.py --config_file …` |
+| **Training engine** | anima_lora (sorryhyun) | **this repo** — `train.py` + `library/` + `networks/` |
+| **Monitoring** | AnimaLoraToolkit (Moeblack) | already merged → `library/monitoring/` (`--monitor`, separate port) |
 
-**Implication:** "pure sd-scripts/LETS config → CLI" is largely a matter of
-*blessing and documenting the path that already exists* + cleanup + the GUI —
-not a ground-up rewrite. And renaming `library` / `networks` /
-`LoraEasyCustomOptimizer` would move **away** from the convention, not toward it.
+## Reference layouts (cloned + inspected 2026-06-15)
 
----
+**kohya/sd-scripts** (engine): root train scripts + `library/`, `networks/`, `tools/`, `finetune/`, `configs/`, `docs/`, `tests/`.
 
-## 1. Proposed target folder layout
+**LETS frontend** (`67372a/LoRA_Easy_Training_Scripts`): `main.py`, `ui_files/` (incl. `AnimaUI.py` — already anima-aware!), `modules/` (`TomlFunctions.py` = config save/load, `NetworkManager.py`, `OptimizerItem.py`, `QueueItem.py`), `css/`, `icons/`.
 
-Principle: keep the sd-scripts/LETS-standard names; make the **vendor boundary**
-explicit; give the one bespoke "lumped" name (`anima_lora`) a clear role.
+**LETS backend** (`…_Backend`): `main.py` (FastAPI), `sd_scripts/` (submodule), **`custom_scheduler/LoraEasyCustomOptimizer/`** (the optimizer zoo lives here), `utils/`.
+
+**Key takeaway:** mirroring these means we do **not** invent names — `library/`,
+`networks/`, `tools/`, `finetune/` are the sd-scripts names; the optimizer zoo's
+"proper" home is `custom_scheduler/LoraEasyCustomOptimizer/` (LETS). Keeping
+`library/`+`networks/` importable **at root** is also what preserves
+`network_module = "networks.lora_anima"` and LETS-config compatibility — moving
+them under a `backend/` package would break every config's dotted path.
+
+## Target structure for this repo
 
 ```
 training_Anima_lora/
-├── train.py, inference.py            # root train/infer scripts        (sd-scripts ✓, keep)
-├── library/                          # core trainer subsystem          (sd-scripts ✓, keep)
-├── networks/                         # adapters; importlib create_network (sd-scripts ✓, keep)
-├── configs/                          # config TOMLs + LETS-style examples (keep)
-├── gui/                              # ← NEW home for ALL GUI code
-│   ├── kohya/                        #   vendored kohya_ss LoRA + Utilities tab frame
-│   └── webgui/                       #   (moved) the stdlib panel, if kept
-├── vendor/                           # ← explicit third-party boundary
-│   └── lora_easy_optimizer/          #   (moved) = today's LoraEasyCustomOptimizer*
-├── tools/                            # sd-scripts-style standalone utilities (optional, from scripts/)
-├── bench/                            # keep
-└── anima_lora/  → DECISION NEEDED    # embedder façade; see §4
+│  train.py, inference.py          # engine entry (sd-scripts root scripts)        [keep]
+│  tasks.py, Makefile, pyproject.toml
+├── library/                       # sd-scripts core (anima_lora engine)           [keep name]
+│   ├── api/                       # ← anima_lora/ façade folded here              [MOVE]
+│   └── monitoring/                # AnimaLoraToolkit monitor                       [keep]
+├── networks/                      # sd-scripts adapters; importlib create_network [keep name]
+├── tools/                         # ← sd-scripts-style utils                       [NEW]
+│                                  #   from scripts/preprocess (cache_latents / _te),
+│                                  #   scripts/merge_to_dit.py, show_metadata, resize
+├── finetune/                      # ← sd-scripts-style captioning/tagging          [NEW]
+│                                  #   from scripts/anima_tagger/, captioning
+├── custom_scheduler/
+│   └── LoraEasyCustomOptimizer/   # ← optimizer zoo, LETS placement                [MOVE]
+├── gui/                           # ← LETS/kohya frontend                          [NEW]
+│   ├── kohya/                     #   vendored kohya LoRA + Utilities tabs
+│   ├── webgui/                    #   (moved from scripts/webgui)
+│   └── modules/                   #   config save/load (TomlFunctions-equiv) + launcher
+├── configs/                       # sd-scripts configs + LETS example TOMLs        [keep]
+│   └── examples/                  #   ← pure --config_file runnable samples         [NEW]
+├── bench/, docs/, custom_nodes/   # [keep]
+└── scripts/                       # orchestration left over (tasks.py bodies)      [shrinks]
 ```
 
-\* `LoraEasyCustomOptimizer` is imported by only ~3 files + `pyproject` + the
-resolver in `library/training/optimizers.py`. A move is cheap **iff** we keep a
-re-export shim so the friendly-name registry and any saved configs keep working.
-Counter-argument: it is the upstream LETS name — moving it diverges from LETS.
-**Recommend: keep the name, but document it as vendored** (cheapest, most
-LETS-faithful). Open for decision in §4.
+### Migration mapping (current → target)
 
-### What does NOT get renamed (and why)
-- `library/`, `networks/` — already the sd-scripts names (518 / 104 refs). Renaming
-  is pure cost with negative convention value.
-- `LoraEasyCustomOptimizer/` — the actual LETS package name.
+| Current | Target | Note |
+|---|---|---|
+| `anima_lora/` | `library/api/` | re-export shim at old path during transition |
+| `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | resolver in `library/training/optimizers.py` + `pyproject` updated; shim keeps friendly-name registry |
+| `scripts/webgui/`, `scripts/gradio_gui/` | `gui/webgui/`, `gui/kohya/` | GUI consolidates |
+| `scripts/preprocess/` (cache utils) | `tools/` | sd-scripts `tools/` |
+| `scripts/anima_tagger/`, captioning | `finetune/` | sd-scripts `finetune/` |
+| `scripts/daemon/` | removed from GUI flow | GUI launches `python train.py --config_file …` directly (no daemon) |
+| `library/`, `networks/`, `train.py` | **unchanged at root** | = sd-scripts layout; preserves dotted `network_module` + LETS config compat |
 
----
+> **On "전면 rename":** the reference repos you chose (sd-scripts, LETS) *use*
+> `library/`/`networks/`. Mirroring them = keep those names. The "clean
+> separation" you want is achieved by **relocation** (optimizer → custom_scheduler/,
+> façade → library/api/, GUI → gui/, utils → tools/+finetune/), not by renaming the
+> two standard packages. If you still want different top-level names for
+> `library`/`networks`, say so — but it diverges from the references and breaks
+> config dotted paths. **Need your call (§decision).**
 
-## 2. Config model — pure `--config_file` (LETS/sd-scripts style)
+## Config model (sd-scripts/LETS)
 
-**Primary CLI entry becomes:**
-```bash
-python train.py --config_file path/to/run.toml
-# (or: accelerate launch train.py --config_file …  for multi-GPU)
-```
-- The config carries **everything**: `network_module`, `network_args` (incl.
-  routing), optimizer/scheduler, dataset blueprint, sample settings, `--monitor`.
-- `--method`/`--preset` stay as an **optional convenience layer** (unchanged for
-  existing users), but are **not** required and are **not combined** with
-  `--config_file` (the `io.py:721` branch already enforces "config_file wins").
-- We ship **LETS-style example configs** under `configs/examples/` (a
-  `lora.toml`, `lora_moe.toml`, etc.) that are pure config-file runnable.
+Primary CLI: `python train.py --config_file run.toml` (already works — lenient
+loader, routing via `network_args`). The GUI's `modules/` writes this TOML
+(`save_toml`) exactly like LETS `TomlFunctions`. `--method`/`--preset` stay as an
+optional convenience layer. Ship `configs/examples/*.toml` (pure-config runnable).
 
-Example (illustrative) `configs/examples/lora.toml`:
-```toml
-network_module = "networks.lora_anima"
-network_dim    = 32
-network_alpha  = 16
-network_args   = ["use_moe_style=shared_A", "route_per_layer=true", "router_source=fei"]
-optimizer_type = "CAME"
-learning_rate  = 1e-4
-max_train_epochs = 16
-# + dataset blueprint ([[datasets]] / [[datasets.subsets]]) and sample settings
-```
+## Daemon
 
-**Work needed:** mostly validation + docs + examples; the loader path already exists.
-Optional: relax/standardize `import_config` into a first-class
-`--config_file` LETS reader so an unmodified LETS config "just runs".
+Removed from the GUI/training flow — GUI runs `train.py --config_file` directly,
+logs to the terminal, monitoring via the separate `--monitor` port. (`scripts/daemon`
++ `--queue` + ComfyUI trainer node decided separately; not used by the new GUI.)
 
----
+## Decisions still needed
 
-## 3. Network module convention
+1. **Confirm: mirror sd-scripts/LETS names** (keep `library`/`networks` at root)
+   — recommended — **or** still rename them to custom names (diverges, breaks
+   dotted paths; if so, give the names).
+2. **`scripts/` reorg depth**: move only the sd-scripts-equivalent utilities to
+   `tools/`+`finetune/` now, leaving orchestration (`scripts/tasks/`) in place
+   (recommended), or fully dissolve `scripts/`?
 
-Already matches (importlib + `create_network`/`create_network_from_weights`).
-Optional cosmetic alignment to the sd-scripts single-file form
-(`networks/lora.py` instead of `networks/lora_anima/`) is **not recommended** —
-`lora_anima/` is a justified 6-module package and 104 refs point at it. Keep the
-dotted-path entry points; they are the contract LETS configs key off.
+## Phasing (after approval)
 
----
-
-## 4. Open naming decisions (need confirmation)
-
-1. **Rename the already-standard packages?** Recommendation: **No** for
-   `library`/`networks`/`LoraEasyCustomOptimizer` (renaming diverges from
-   sd-scripts/LETS). Only introduce `gui/` and `vendor/` (or keep optimizer at
-   root). — *Requester earlier said "rename core packages too"; this finding may
-   change that call.*
-2. **`anima_lora/` façade** (the one bespoke "lumped" name, ~9 importers + the
-   public embedder API): keep as-is / rename (e.g. `anima/` or `embed/`) / fold
-   into `library/api/`. Trade-off: it is the documented programmatic front door,
-   so a rename ripples into examples + ComfyUI nodes + CLAUDE.md.
-3. **GUI consolidation**: move `scripts/webgui/` and the vendored kohya GUI under
-   a single `gui/` tree? (Recommended.)
-
----
-
-## 5. Daemon removal
-
-- The GUI's "Start" calls the **direct** path (`build_launch_cmd`) — no
-  `ensure_daemon`/`submit`. Logs go to the terminal (sd-scripts style).
-- `--queue` and the daemon package can be **retained but unused** by the GUI
-  (lower risk) or removed outright (ComfyUI trainer node + `--queue` flows would
-  need the inline path). Recommendation: **stop using it from the GUI now**;
-  decide on full removal separately (it also backs the ComfyUI trainer node).
-
----
-
-## 6. Phasing (after this structure is approved)
-
-- **Phase 1 — config + launch**: bless `--config_file` LETS path, add
-  `configs/examples/*.toml`, switch GUI/launch to direct CLI (no daemon), docs.
-- **Phase 2 — layout**: introduce `gui/` (+ `vendor/`); move webgui; resolve the
-  `anima_lora` decision with re-export shims so imports don't break.
-- **Phase 3 — GUI**: vendor kohya LoRA + Utilities tabs into `gui/kohya/`, rewire
-  the Train button to emit a pure config + `python train.py --config_file …`, add
-  the Anima toggles (method/preset optional, `--monitor`).
-- Each phase: keep re-export shims for renamed packages; run `make test-unit`.
+- **P1 — config + launch (no moves):** bless `--config_file` LETS path; add
+  `configs/examples/*.toml`; switch GUI/launch to direct CLI (drop daemon); docs.
+- **P2 — relocation:** introduce `gui/`, `tools/`, `finetune/`, `custom_scheduler/`,
+  `library/api/`; move with **re-export shims** at old paths; update `pyproject`
+  `packages.find`; `make test-unit` green each step.
+- **P3 — GUI:** vendor kohya LoRA + Utilities into `gui/kohya/`; rewire Train to
+  emit a pure config + `python train.py --config_file …`; add Anima toggles +
+  `--monitor`.
 ```
