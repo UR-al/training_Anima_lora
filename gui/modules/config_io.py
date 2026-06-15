@@ -128,6 +128,10 @@ _DROP = {
     "lr_scheduler_num_cycles",
     "split_attn",
     "lowram",
+    # Consumed by _extract_dataset (restores the per-subset gradient_checkpointing
+    # checkboxes by tier) — dropped here so it isn't ALSO folded into extra_flags,
+    # which would double-own the flag with the subset blocks on the next save.
+    "gradient_checkpointing_resolutions",
 }
 # Dataset-blueprint sections are not flat scalars — skip the flat-key routing, but
 # `datasets` is harvested into the ds_* fields first (see _extract_dataset).
@@ -151,40 +155,67 @@ def _nearest_tier(res) -> int | None:
     return min(_DATASET_TIERS, key=lambda t: abs(t - r))
 
 
-# Column order of the GUI's "Additional subsets" grid (must match
-# gui.kohya.app._DS_EXTRA_COLS) so a multi-subset config round-trips.
-_DS_EXTRA_COLS = (
-    "image_dir", "cache_dir", "num_repeats", "keep_tokens", "caption_extension",
-    "batch_size", "flip_aug", "random_crop", "tiers",
+# Per-subset field mapping for the config round-trip — mirrors gui.kohya.app's block
+# keys: the primary subset uses the "ds_" prefix, extras "ds2_"/"ds3_"/…. Keep
+# _DS_N_SUBSETS in sync with gui.kohya.app.N_SUBSETS.
+_DS_N_SUBSETS = 4
+_DS_PREFIXES = ("ds_",) + tuple(f"ds{i}_" for i in range(2, _DS_N_SUBSETS + 1))
+_DS_STR_FIELDS = (
+    ("num_repeats", "num_repeats"),
+    ("keep_tokens", "keep_tokens"),
+    ("caption_extension", "caption_extension"),
+    ("caption_dropout_rate", "caption_dropout_rate"),
+)
+_DS_BOOL_FIELDS = (
+    ("flip_aug", "flip_aug"),
+    ("random_crop", "random_crop"),
+    ("gradient_checkpointing", "gradient_checkpointing"),
 )
 
 
-def _subset_to_row(s: dict, block_bs=None) -> list:
-    """Render one subset dict as an ``_DS_EXTRA_COLS``-ordered grid row."""
-    tiers = s.get("tiers")
-    return [
-        str(s.get("image_dir") or ""),
-        str(s.get("cache_dir") or ""),
-        s.get("num_repeats"),
-        s.get("keep_tokens"),
-        str(s.get("caption_extension") or ""),
-        s.get("batch_size", block_bs),
-        bool(s.get("flip_aug", False)),
-        bool(s.get("random_crop", False)),
-        ",".join(str(x) for x in tiers) if isinstance(tiers, (list, tuple)) else "",
-    ]
+def _fill_subset_block(
+    form: dict, prefix: str, s: dict, block_bs, gc_edges: set
+) -> None:
+    """Write one subset dict into the form's prefixed block fields. cache_dir lands
+    only on the primary (extras share it in the GUI). gradient_checkpointing is
+    reconstructed from a tier match against ``gradient_checkpointing_resolutions`` (the
+    backend's per-subset GC emit — the value isn't stored as a subset TOML key)."""
+    if s.get("image_dir"):
+        form[f"{prefix}image_dir"] = str(s["image_dir"])
+    if prefix == "ds_" and s.get("cache_dir"):
+        form["ds_cache_dir"] = str(s["cache_dir"])
+    for fk, sk in _DS_STR_FIELDS:
+        if s.get(sk) is not None:
+            form[f"{prefix}{fk}"] = str(s[sk])
+    bs = s.get("batch_size", block_bs)
+    if bs is not None:
+        form[f"{prefix}batch_size"] = str(bs)
+    for fk, sk in _DS_BOOL_FIELDS:
+        if sk in s:
+            form[f"{prefix}{fk}"] = bool(s[sk])
+    t = s.get("tiers")
+    tier_ints: set[int] = set()
+    if isinstance(t, (list, tuple)) and t:
+        form[f"{prefix}tiers"] = ",".join(str(x) for x in t)
+        tier_ints = {int(x) for x in t if str(x).isdigit()}
+    if gc_edges and tier_ints and (tier_ints & gc_edges):
+        form[f"{prefix}gradient_checkpointing"] = True
 
 
 def _extract_dataset(data: dict, form: dict) -> None:
-    """Harvest the ``[[datasets]]`` blocks into the Dataset panel: the first subset
-    fills the flat ``ds_*`` / ``target_res`` fields; any further subsets become rows
-    of the ``ds_extra`` grid (so a multi-subset config round-trips). Mutates
-    ``form`` in place."""
+    """Harvest the ``[[datasets]]`` blocks into the per-subset block fields: the first
+    subset fills ds_*, further subsets ds2_*/ds3_*/… (up to N). Resolutions across
+    blocks seed target_res; gradient_checkpointing_resolutions restores the per-subset
+    GC checkboxes by tier. Mutates ``form`` in place."""
     blocks = data.get("datasets")
     if not isinstance(blocks, list) or not blocks:
         return
+    gc_edges = {
+        int(x)
+        for x in (data.get("gradient_checkpointing_resolutions") or [])
+        if str(x).isdigit()
+    }
     tiers: set[int] = set()
-    flat_bs = None  # batch_size to surface for the first subset (block fallback)
     pairs: list[tuple[dict, object]] = []  # (subset, owning-block batch_size)
     for blk in blocks:
         if not isinstance(blk, dict):
@@ -197,31 +228,10 @@ def _extract_dataset(data: dict, form: dict) -> None:
             for s in subs:
                 if isinstance(s, dict):
                     pairs.append((s, blk.get("batch_size")))
-    if pairs:
-        first, first_block_bs = pairs[0]
-        if first.get("image_dir"):
-            form["ds_image_dir"] = str(first["image_dir"])
-        if first.get("cache_dir"):
-            form["ds_cache_dir"] = str(first["cache_dir"])
-        for fk, sk in (
-            ("ds_num_repeats", "num_repeats"),
-            ("ds_keep_tokens", "keep_tokens"),
-            ("ds_caption_extension", "caption_extension"),
-            ("ds_caption_dropout_rate", "caption_dropout_rate"),
-        ):
-            if first.get(sk) is not None:
-                form[fk] = str(first[sk])
-        flat_bs = first.get("batch_size", first_block_bs)
-        if flat_bs is not None:
-            form["ds_batch_size"] = str(flat_bs)
-        for fk, sk in (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop")):
-            if sk in first:
-                form[fk] = bool(first[sk])
-        t = first.get("tiers")
-        if isinstance(t, (list, tuple)) and t:
-            form["ds_tiers"] = ",".join(str(x) for x in t)
-        if len(pairs) > 1:
-            form["ds_extra"] = [_subset_to_row(s, bbs) for s, bbs in pairs[1:]]
+    for prefix, (s, block_bs) in zip(_DS_PREFIXES, pairs):
+        _fill_subset_block(form, prefix, s, block_bs, gc_edges)
+    if len(pairs) > _DS_N_SUBSETS:
+        form["_ds_overflow"] = len(pairs)  # surfaced as a load note by on_load_config
     if tiers:
         form["target_res"] = [str(t) for t in sorted(tiers)]
 

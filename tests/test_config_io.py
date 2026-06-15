@@ -206,6 +206,7 @@ def test_load_resume_and_caption_variant_fields():
 
 
 _MULTI_SUBSET = """
+gradient_checkpointing_resolutions = [512, 1024]
 [[datasets]]
 batch_size = 2
   [[datasets.subsets]]
@@ -222,16 +223,24 @@ batch_size = 4
 """
 
 
-def test_load_multi_subset_fills_extra_grid():
+def test_load_multi_subset_fills_blocks():
     form = load_toml_to_form(_MULTI_SUBSET)
-    # first subset → flat fields
-    assert form["ds_image_dir"] == "data/main" and form["ds_batch_size"] == "2"
-    # subsets 2..N → ds_extra grid rows (in _DS_EXTRA_COLS order)
-    rows = form["ds_extra"]
-    assert len(rows) == 2
-    assert rows[0][0] == "data/reg" and rows[0][6] is True  # image_dir, flip_aug
-    assert rows[0][8] == "512,1024"  # tiers column
-    assert rows[1][0] == "data/third" and rows[1][5] == 4  # third subset, block bs
+    # subset #1 → primary ds_* block (batch_size from its owning [[datasets]] block)
+    assert form["ds_image_dir"] == "data/main"
+    assert form["ds_num_repeats"] == "5"
+    assert form["ds_batch_size"] == "2"
+    # subset #2 → ds2_* block
+    assert form["ds2_image_dir"] == "data/reg"
+    assert form["ds2_flip_aug"] is True
+    assert form["ds2_tiers"] == "512,1024"
+    assert form["ds2_batch_size"] == "2"  # first block's batch_size
+    # per-subset gradient_checkpointing restored by tier match (512,1024 ⊂ edges)
+    assert form["ds2_gradient_checkpointing"] is True
+    # subset #3 → ds3_* block (second [[datasets]] block, batch_size 4)
+    assert form["ds3_image_dir"] == "data/third"
+    assert form["ds3_batch_size"] == "4"
+    # gradient_checkpointing_resolutions is consumed (NOT echoed into extra_flags)
+    assert "gradient_checkpointing_resolutions" not in (form.get("extra_flags") or "")
 
 
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
@@ -242,6 +251,7 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
     test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_multi_subset_fills_blocks()
     test_load_constantcosine_fields()
     test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()

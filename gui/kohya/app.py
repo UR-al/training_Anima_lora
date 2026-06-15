@@ -110,37 +110,38 @@ def _collect(keys: list[str], values) -> dict:
     return form
 
 
-# Flat dataset-field key → (subset-dict key, caster) for the PRIMARY subset (the
-# common single-folder case). The backend's _dataset_subsets list-branch consumes
-# the assembled form["subsets"]; additional subsets come from the ds_extra grid.
-_DS_SUBSET_FIELDS = (
-    ("ds_num_repeats", "num_repeats", int),
-    ("ds_keep_tokens", "keep_tokens", int),
-    ("ds_caption_extension", "caption_extension", str),
-    ("ds_caption_dropout_rate", "caption_dropout_rate", float),
-    ("ds_batch_size", "batch_size", int),
+# Per-subset fields. The GUI renders N fixed subset BLOCKS — the primary uses the
+# "ds_" prefix, extras "ds2_"/"ds3_"/… — and each block's image_dir gates whether it
+# becomes a subset. (suffix → subset-dict key, caster) + bool suffixes. The backend
+# consumes the assembled form["subsets"]; cache_dir is primary-only and shared to all
+# subsets (so extras have no cache_dir field). Replaces the old single-primary + one
+# gr.Dataframe grid (which, under Gradio 6.x, could only ever add a single extra row).
+N_SUBSETS = 4  # primary + 3 extras; for more, point the dataset_config field at a TOML
+_DS_PREFIXES = ("ds_",) + tuple(f"ds{i}_" for i in range(2, N_SUBSETS + 1))
+_DS_FIELD_SUFFIXES = (
+    ("num_repeats", "num_repeats", int),
+    ("keep_tokens", "keep_tokens", int),
+    ("caption_extension", "caption_extension", str),
+    ("caption_dropout_rate", "caption_dropout_rate", float),
+    ("batch_size", "batch_size", int),
 )
-_DS_SUBSET_BOOLS = (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop"))
-# Column order of the "Additional subsets" gr.Dataframe (type="array" → list rows).
-# Shared with config_io._DS_EXTRA_COLS so the load round-trip stays symmetric.
-_DS_EXTRA_COLS = (
-    "image_dir",
-    "cache_dir",
-    "num_repeats",
-    "keep_tokens",
-    "caption_extension",
-    "batch_size",
-    "flip_aug",
-    "random_crop",
-    "tiers",
+_DS_BOOL_SUFFIXES = (
+    ("flip_aug", "flip_aug"),
+    ("random_crop", "random_crop"),
+    ("gradient_checkpointing", "gradient_checkpointing"),
 )
-_DS_POP_KEYS = (
-    "ds_image_dir",
-    "ds_cache_dir",
-    "ds_tiers",
-    "ds_extra",
-    *(k for k, _s, _c in _DS_SUBSET_FIELDS),
-    *(k for k, _s in _DS_SUBSET_BOOLS),
+# Flat per-block keys stripped from the form after assembling form["subsets"], so the
+# backend's auto-arg catch-all never misreads them as train.py flags. ds_name and
+# target_res stay (the backend reads them directly).
+_DS_POP_KEYS = ("ds_cache_dir",) + tuple(
+    f"{p}{suf}"
+    for p in _DS_PREFIXES
+    for suf in (
+        "image_dir",
+        "tiers",
+        *(s for s, _k, _c in _DS_FIELD_SUFFIXES),
+        *(s for s, _k in _DS_BOOL_SUFFIXES),
+    )
 )
 
 
@@ -151,73 +152,47 @@ def _tier_list(text) -> list[int]:
     return [int(x) for x in re.findall(r"\d+", str(text or ""))]
 
 
-def _parse_extra_subsets(rows) -> list[dict]:
-    """Turn the ds_extra grid (list-of-rows in _DS_EXTRA_COLS order) into subset
-    dicts. Rows without an image_dir are skipped (e.g. the trailing blank row)."""
-    out: list[dict] = []
-    for row in rows or []:
-        if not isinstance(row, (list, tuple)):
+def _subset_from_prefix(form: dict, prefix: str):
+    """Build one subset dict from a block's prefixed form fields, or None when the
+    block has no image_dir (an unused block)."""
+    img = str(form.get(f"{prefix}image_dir") or "").strip()
+    if not img:
+        return None
+    sub: dict = {"image_dir": img}
+    for suf, sk, cast in _DS_FIELD_SUFFIXES:
+        v = form.get(f"{prefix}{suf}")
+        if v in (None, ""):
             continue
-        cells = dict(zip(_DS_EXTRA_COLS, row))
-        img = str(cells.get("image_dir") or "").strip()
-        if not img:
-            continue
-        sub: dict = {"image_dir": img}
-        cache = str(cells.get("cache_dir") or "").strip()
-        if cache:
-            sub["cache_dir"] = cache
-        for k in ("num_repeats", "keep_tokens", "batch_size"):
-            v = cells.get(k)
-            if v in (None, ""):
-                continue
-            try:
-                sub[k] = int(float(v))
-            except (TypeError, ValueError):
-                pass
-        ce = str(cells.get("caption_extension") or "").strip()
-        if ce:
-            sub["caption_extension"] = ce
-        for k in ("flip_aug", "random_crop"):
-            if cells.get(k) in (True, "true", "True", 1, "1"):
-                sub[k] = True
-        tiers = _tier_list(cells.get("tiers"))
-        if tiers:
-            sub["tiers"] = tiers
-        out.append(sub)
-    return out
+        try:
+            sub[sk] = cast(v)
+        except (TypeError, ValueError):
+            pass
+    for suf, sk in _DS_BOOL_SUFFIXES:
+        if form.get(f"{prefix}{suf}"):
+            sub[sk] = True
+    tiers = _tier_list(form.get(f"{prefix}tiers"))
+    if tiers:
+        sub["tiers"] = tiers
+    return sub
 
 
 def _assemble_dataset(form: dict) -> None:
-    """Fold the flat ds_* primary-subset fields + the ds_extra grid into
-    ``form['subsets']`` (primary first, then extra rows) so the backend builds a
-    precached dataset config. No-op when nothing has an image_dir (defer to the
-    base.toml blueprint / an explicit --dataset_config). Mutates ``form``."""
+    """Fold the N per-subset blocks into ``form['subsets']`` (primary first). The
+    primary subset's cache_dir is shared to every subset (extras have no cache_dir
+    field). No-op when no block has an image_dir (defer to the base.toml blueprint /
+    an explicit --dataset_config). Mutates ``form``."""
+    primary_cache = str(form.get("ds_cache_dir") or "").strip()
     subs: list[dict] = []
-    img = str(form.get("ds_image_dir") or "").strip()
-    if img:
-        sub: dict = {"image_dir": img}
-        cache = str(form.get("ds_cache_dir") or "").strip()
-        if cache:
-            sub["cache_dir"] = cache
-        for fk, sk, cast in _DS_SUBSET_FIELDS:
-            v = form.get(fk)
-            if v in (None, ""):
-                continue
-            try:
-                sub[sk] = cast(v)
-            except (TypeError, ValueError):
-                pass
-        for fk, sk in _DS_SUBSET_BOOLS:
-            if form.get(fk):
-                sub[sk] = True
-        tiers = _tier_list(form.get("ds_tiers"))
-        if tiers:
-            sub["tiers"] = tiers
+    for prefix in _DS_PREFIXES:
+        sub = _subset_from_prefix(form, prefix)
+        if sub is None:
+            continue
+        if primary_cache:  # all subsets share the primary subset's cache_dir
+            sub["cache_dir"] = primary_cache
         subs.append(sub)
-    subs.extend(_parse_extra_subsets(form.get("ds_extra")))
     if subs and not form.get("subsets"):
         form["subsets"] = subs
-    for k in _DS_POP_KEYS:  # don't leak the flat helpers to the backend form
+    for k in _DS_POP_KEYS:  # don't leak the flat block helpers to the backend form
         form.pop(k, None)
 
 
@@ -399,49 +374,19 @@ def build_app(default_port: int = 7860):
                         label="Output base dir",
                     )
 
-            # ── Dataset ─────────────────────────────────────────────────────
-            with gr.Accordion("Dataset", open=True):
+            # ── Dataset (subsets) ───────────────────────────────────────────
+            with gr.Accordion("Dataset (subsets)", open=True):
                 gr.Markdown(
-                    "Define **one subset** by folder (the common single-character "
-                    "case) — the trainer builds a precached `--dataset_config` from "
-                    "it on Start. Run `make preprocess` **first**: point `image_dir` "
-                    "at the resized+cached dir (or set `cache_dir`). For multiple "
-                    "subsets, use a `--dataset_config` TOML below or the stdlib web GUI."
+                    f"Define up to **{N_SUBSETS}** subsets as folder blocks (old-GUI / "
+                    "LoRA_Easy style). **Subset #1** is the primary; the rest are "
+                    "optional (blank `image_dir` = unused). Run `make preprocess` "
+                    "first (point `image_dir` at the resized+cached dir), or toggle "
+                    "**Auto-preprocess** below to resize/cache raw folders on Start. "
+                    "`cache_dir` is set once on the primary and **shared by every "
+                    f"subset**. For more than {N_SUBSETS} subsets, use a "
+                    "`--dataset_config` TOML."
                 )
                 with gr.Row():
-                    reg_path(
-                        "ds_image_dir",
-                        label="image_dir (resized + cached images)",
-                        placeholder="post_image_dataset/resized",
-                    )
-                    reg_path(
-                        "ds_cache_dir",
-                        label="cache_dir (pre-cached latents; blank = default)",
-                        placeholder="post_image_dataset/lora",
-                    )
-                with gr.Row():
-                    reg(
-                        "ds_num_repeats",
-                        gr.Textbox(label="num_repeats", placeholder="1"),
-                    )
-                    reg(
-                        "ds_keep_tokens",
-                        gr.Textbox(label="keep_tokens", placeholder="0"),
-                    )
-                    reg(
-                        "ds_caption_extension",
-                        gr.Textbox(label="caption_extension", placeholder=".txt"),
-                    )
-                    reg(
-                        "ds_batch_size", gr.Textbox(label="batch_size", placeholder="1")
-                    )
-                with gr.Row():
-                    reg(
-                        "ds_caption_dropout_rate",
-                        gr.Textbox(label="caption_dropout_rate", placeholder="0.0"),
-                    )
-                    reg("ds_flip_aug", gr.Checkbox(value=False, label="flip_aug"))
-                    reg("ds_random_crop", gr.Checkbox(value=False, label="random_crop"))
                     reg(
                         "ds_name",
                         gr.Textbox(
@@ -457,47 +402,102 @@ def build_app(default_port: int = 7860):
                         label="Resolution tiers (constant-token; preprocess --target_res)",
                     ),
                 )
-                reg(
-                    "ds_tiers",
-                    gr.Textbox(
-                        label="this subset's tiers (multi-scale; blank = all)",
-                        placeholder="e.g. 1024 or 512,1024",
-                    ),
-                )
-                gr.Markdown(
-                    "**Additional subsets** (optional) — one row per extra folder; "
-                    "the fields above are subset #1. Leave empty for a single subset."
-                )
-                reg(
-                    "ds_extra",
-                    gr.Dataframe(
-                        headers=list(_DS_EXTRA_COLS),
-                        datatype=[
-                            "str",
-                            "str",
-                            "number",
-                            "number",
-                            "str",
-                            "number",
-                            "bool",
-                            "bool",
-                            "str",
-                        ],
-                        type="array",
-                        row_count=(0, "dynamic"),
-                        label="Additional subsets (image_dir required per row)",
-                    ),
-                )
+
+                def _subset_block(idx: int) -> None:
+                    """Register one subset block's fields. Primary (idx==1) carries the
+                    shared cache_dir; extras don't. reg() keeps keys+inputs in lockstep,
+                    so ds{idx}_* round-trip through _collect / on_load_config unchanged."""
+                    prefix = "ds_" if idx == 1 else f"ds{idx}_"
+                    primary = idx == 1
+                    title = (
+                        "Subset #1 (primary)"
+                        if primary
+                        else f"Subset #{idx} (optional)"
+                    )
+                    with gr.Accordion(title, open=primary):
+                        if primary:
+                            with gr.Row():
+                                reg_path(
+                                    f"{prefix}image_dir",
+                                    label="image_dir (resized + cached images)",
+                                    placeholder="post_image_dataset/resized",
+                                )
+                                reg_path(
+                                    "ds_cache_dir",
+                                    label="cache_dir (shared by all subsets; blank = default)",
+                                    placeholder="post_image_dataset/lora",
+                                )
+                        else:
+                            reg_path(
+                                f"{prefix}image_dir",
+                                label="image_dir (blank = unused subset)",
+                                placeholder="this subset's resized+cached images",
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}num_repeats",
+                                gr.Textbox(label="num_repeats", placeholder="1"),
+                            )
+                            reg(
+                                f"{prefix}keep_tokens",
+                                gr.Textbox(label="keep_tokens", placeholder="0"),
+                            )
+                            reg(
+                                f"{prefix}caption_extension",
+                                gr.Textbox(
+                                    label="caption_extension", placeholder=".txt"
+                                ),
+                            )
+                            reg(
+                                f"{prefix}batch_size",
+                                gr.Textbox(
+                                    label="batch_size", placeholder="(dataset default)"
+                                ),
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}caption_dropout_rate",
+                                gr.Textbox(
+                                    label="caption_dropout_rate", placeholder="0.0"
+                                ),
+                            )
+                            reg(
+                                f"{prefix}tiers",
+                                gr.Textbox(
+                                    label="this subset's tiers (blank = all)",
+                                    placeholder="e.g. 1024 or 512,1024",
+                                ),
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}flip_aug",
+                                gr.Checkbox(value=False, label="flip_aug"),
+                            )
+                            reg(
+                                f"{prefix}random_crop",
+                                gr.Checkbox(value=False, label="random_crop"),
+                            )
+                            reg(
+                                f"{prefix}gradient_checkpointing",
+                                gr.Checkbox(
+                                    value=False,
+                                    label="gradient_checkpointing (this subset's tier)",
+                                ),
+                            )
+
+                for _i in range(1, N_SUBSETS + 1):
+                    _subset_block(_i)
+
                 reg_path(
                     "dataset_config",
                     file=True,
-                    label="…or a dataset config TOML (overrides the fields above)",
+                    label="…or a dataset config TOML (overrides the blocks above)",
                     placeholder="path/to/dataset.toml",
                 )
                 gr.Markdown(
-                    "_Blank `image_dir` **and** `dataset_config` → the default "
+                    "_Blank every `image_dir` **and** `dataset_config` → the default "
                     "`base.toml` blueprint (`post_image_dataset/lora`). An explicit "
-                    "`dataset_config` wins over the folder fields._"
+                    "`dataset_config` wins over the blocks above._"
                 )
             # ── Auto-preprocess at train start ──────────────────────────────
             with gr.Accordion("Auto-preprocess at train start", open=False):
@@ -1137,6 +1137,13 @@ def build_app(default_port: int = 7860):
                 if form.get("extra_flags")
                 else ""
             )
+            overflow = form.get("_ds_overflow")
+            if overflow:
+                note += (
+                    f" — ⚠ config has {overflow} subsets but the GUI shows "
+                    f"{N_SUBSETS}; the extras were dropped. Use the `dataset_config` "
+                    "field for that TOML to keep all of them."
+                )
             return updates + [note]
 
         def on_save_config(path, *vals):
