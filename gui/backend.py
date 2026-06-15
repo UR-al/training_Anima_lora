@@ -213,6 +213,11 @@ _CURATED_ARGS = {
     "save_model_as",
     "t5_max_token_length",
     "vae_disable_cache",
+    "metadata_title",
+    "metadata_author",
+    "metadata_description",
+    "metadata_license",
+    "metadata_tags",
     # Model paths — curated in the GENERAL "Model files" controls (dit/te/vae);
     # excluded so they don't also appear as toggleable auto-args.
     "pretrained_model_name_or_path",
@@ -1077,6 +1082,12 @@ def _method_preset_extra(form: dict):
         # misc real flags requested for kohya parity
         ("--save_model_as", "save_model_as"),
         ("--t5_max_token_length", "t5_max_token_length"),
+        # SAI model-spec metadata (stamped into the checkpoint)
+        ("--metadata_title", "metadata_title"),
+        ("--metadata_author", "metadata_author"),
+        ("--metadata_description", "metadata_description"),
+        ("--metadata_license", "metadata_license"),
+        ("--metadata_tags", "metadata_tags"),
         # NOTE: --resume is already emitted near the top of this function (line ~778);
         # do not re-add it here or it doubles.
     ):

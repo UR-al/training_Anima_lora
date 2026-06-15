@@ -91,6 +91,21 @@ _DIRECT_FIELDS = {
     "log_tracker_name",
     "save_model_as",
     "t5_max_token_length",
+    "metadata_title",
+    "metadata_author",
+    "metadata_description",
+    "metadata_license",
+    "metadata_tags",
+    # Accelerate-launch knobs surfaced in the GUI (multi-GPU only). NOT anima train.py
+    # args — kept here so a loaded config populates the field and they're NOT shoved
+    # into extra_flags (which would crash argparse). The backend ignores them on the
+    # default inline path.
+    "num_processes",
+    "num_machines",
+    "num_cpu_threads_per_process",
+    "gpu_ids",
+    "main_process_port",
+    "extra_accelerate_args",
     # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
     # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
     # into extra_flags as bogus train flags).
@@ -116,6 +131,7 @@ _BOOL_FIELDS = {
     "lowram",
     "persistent_data_loader_workers",
     "vae_disable_cache",
+    "multi_gpu",
     "output_config",
     # GUI auto-preprocess orchestration toggles (not train.py args).
     "auto_preprocess",

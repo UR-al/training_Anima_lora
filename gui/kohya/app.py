@@ -452,6 +452,51 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
+            # ── Accelerate launch (kohya parity) ─────────────────────────────
+            with gr.Accordion("Accelerate launch", open=False):
+                gr.Markdown(
+                    "**mixed_precision** is the live training dtype (bf16 default). The "
+                    "rest are `accelerate launch` knobs that apply only to a **multi-GPU "
+                    "/ distributed** run (`ANIMA_ACCELERATE_LAUNCH=1`); the default "
+                    "inline single-GPU path ignores them."
+                )
+                with gr.Row():
+                    reg(
+                        "mixed_precision",
+                        gr.Dropdown(
+                            ["", "bf16", "fp16", "no"],
+                            value="",
+                            label="Mixed precision",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "num_processes",
+                        gr.Textbox(label="Number of processes", placeholder="1"),
+                    )
+                    reg(
+                        "num_machines",
+                        gr.Textbox(label="Number of machines", placeholder="1"),
+                    )
+                    reg(
+                        "num_cpu_threads_per_process",
+                        gr.Textbox(label="CPU threads / process", placeholder="2"),
+                    )
+                with gr.Row():
+                    reg("multi_gpu", gr.Checkbox(value=False, label="Multi GPU"))
+                    reg("gpu_ids", gr.Textbox(label="GPU IDs", placeholder="e.g. 0,1"))
+                    reg(
+                        "main_process_port",
+                        gr.Textbox(label="Main process port", placeholder="0"),
+                    )
+                reg(
+                    "extra_accelerate_args",
+                    gr.Textbox(
+                        label="Extra accelerate launch arguments",
+                        placeholder="--same_network --machine_rank 4",
+                    ),
+                )
+
             # ── Anima model paths (mirrors kohya's class_anima accordion) ────
             with gr.Accordion(
                 "Anima Model Paths (blank = config-chain default)", open=False
@@ -489,6 +534,19 @@ def build_app(default_port: int = 7860):
                         "output_dir",
                         value="output",
                         label="Output base dir",
+                    )
+
+            # ── Metadata (SAI model-spec; stamped into the checkpoint) ───────
+            with gr.Accordion("Metadata", open=False):
+                with gr.Row():
+                    reg("metadata_title", gr.Textbox(label="Metadata title"))
+                    reg("metadata_author", gr.Textbox(label="Metadata author"))
+                reg("metadata_description", gr.Textbox(label="Metadata description"))
+                with gr.Row():
+                    reg("metadata_license", gr.Textbox(label="Metadata license"))
+                    reg(
+                        "metadata_tags",
+                        gr.Textbox(label="Metadata tags (comma-separated)"),
                     )
 
             # ── Dataset (subsets) ───────────────────────────────────────────
@@ -942,15 +1000,6 @@ def build_app(default_port: int = 7860):
             # ── Advanced training details (sd-scripts / LETS knobs) ──────────
             with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
                 with gr.Row():
-                    reg(
-                        "mixed_precision",
-                        gr.Dropdown(
-                            ["", "bf16", "fp16", "no"],
-                            value="",
-                            label="mixed_precision",
-                            allow_custom_value=True,
-                        ),
-                    )
                     reg(
                         "attn_mode",
                         gr.Dropdown(
