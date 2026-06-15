@@ -117,7 +117,7 @@ def build_app(default_port: int = 7860):
             "directly; its log streams below and to the terminal."
         )
 
-        with gr.Tab("LoRA"):
+        with gr.Tab("Model & Output"):
             # ── Method / preset (this repo's core training-selection concept) ──
             with gr.Row():
                 reg(
@@ -185,6 +185,7 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
+        with gr.Tab("LoRA"):
             # ── Basic training params ───────────────────────────────────────
             with gr.Accordion("Basic", open=True):
                 with gr.Row():
@@ -275,8 +276,9 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
+        with gr.Tab("Dataset"):
             # ── Dataset ─────────────────────────────────────────────────────
-            with gr.Accordion("Dataset", open=False):
+            with gr.Accordion("Dataset", open=True):
                 gr.Markdown(
                     "Define **one subset** by folder (the common single-character "
                     "case) — the trainer builds a precached `--dataset_config` from "
@@ -327,8 +329,9 @@ def build_app(default_port: int = 7860):
                     "`dataset_config` wins over the folder fields._"
                 )
 
+        with gr.Tab("Samples"):
             # ── Sample prompts ──────────────────────────────────────────────
-            with gr.Accordion("Sample images", open=False):
+            with gr.Accordion("Sample images", open=True):
                 reg(
                     "sample_prompts",
                     gr.Textbox(
@@ -343,6 +346,7 @@ def build_app(default_port: int = 7860):
                 )
                 save_samples_btn = gr.Button("Save prompts → file")
 
+        with gr.Tab("Training"):
             # ── Advanced / monitor / run ────────────────────────────────────
             with gr.Accordion("Monitor & Run", open=True):
                 with gr.Row():
@@ -431,8 +435,9 @@ def build_app(default_port: int = 7860):
                     ),
                 )
 
+        with gr.Tab("Config"):
             # ── Config file (load / save) — sd-scripts/LETS --config_file ───
-            with gr.Accordion("Config file (load / save)", open=False):
+            with gr.Accordion("Config file (load / save)", open=True):
                 gr.Markdown(
                     "Load a LETS / kohya_ss / anima_lora ``--config_file`` TOML into "
                     "the form (key renames applied; unmapped keys fold into *Extra "
@@ -448,33 +453,33 @@ def build_app(default_port: int = 7860):
                     save_cfg_btn = gr.Button("Save form →", variant="secondary")
                 config_status = gr.Markdown("")
 
-            # ── Actions ─────────────────────────────────────────────────────
-            with gr.Row():
-                print_btn = gr.Button("Print training command", variant="secondary")
-                start_btn = gr.Button("Start training", variant="primary")
-                stop_btn = gr.Button("Stop", variant="stop")
-                status_btn = gr.Button("Refresh status", variant="secondary")
+        # ── Actions (always visible below the tabs, kohya-style) ────────────
+        with gr.Row():
+            print_btn = gr.Button("Print training command", variant="secondary")
+            start_btn = gr.Button("Start training", variant="primary")
+            stop_btn = gr.Button("Stop", variant="stop")
+            status_btn = gr.Button("Refresh status", variant="secondary")
 
-            out_cmd = gr.Code(label="train.py command", language="shell")
-            out_status = gr.JSON(label="Result / status")
+        out_cmd = gr.Code(label="train.py command", language="shell")
+        out_status = gr.JSON(label="Result / status")
 
-            # ── Live training log (the captured terminal output) ────────────
-            # train.py's console log is the sd-scripts RichHandler format. launch()
-            # redirects the child subprocess's stdout/stderr to a logfile, which
-            # server.log_tail() exposes. This panel mirrors the terminal live so
-            # the GUI and the console stay linked.
-            gr.Markdown("### Training log — terminal output (sd-scripts format)")
-            with gr.Row():
-                autorefresh = gr.Checkbox(value=True, label="Auto-refresh (2s)")
-                refresh_log_btn = gr.Button("Refresh log now")
-            out_log = gr.Textbox(
-                label="stdout.log tail (the live console)",
-                lines=22,
-                max_lines=22,
-                autoscroll=True,
-                interactive=False,
-            )
-            log_timer = gr.Timer(2.0)
+        # ── Live training log (the captured terminal output) ────────────────
+        # train.py's console log is the sd-scripts RichHandler format. launch()
+        # redirects the child subprocess's stdout/stderr to a logfile, which
+        # server.log_tail() exposes. This panel mirrors the terminal live so
+        # the GUI and the console stay linked.
+        gr.Markdown("### Training log — terminal output (sd-scripts format)")
+        with gr.Row():
+            autorefresh = gr.Checkbox(value=True, label="Auto-refresh (2s)")
+            refresh_log_btn = gr.Button("Refresh log now")
+        out_log = gr.Textbox(
+            label="stdout.log tail (the live console)",
+            lines=22,
+            max_lines=22,
+            autoscroll=True,
+            interactive=False,
+        )
+        log_timer = gr.Timer(2.0)
 
         # ── Handlers ────────────────────────────────────────────────────────
         def on_print(*vals):
