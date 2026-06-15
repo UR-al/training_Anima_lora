@@ -57,15 +57,20 @@ training_Anima_lora/
 
 ### Migration mapping (current → target)
 
-| Current | Target | Note |
+| Current | Target | Status / Note |
 |---|---|---|
-| `anima_lora/` | `library/api/` | re-export shim at old path during transition |
-| `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | resolver in `library/training/optimizers.py` + `pyproject` updated; shim keeps friendly-name registry |
-| `scripts/webgui/`, `scripts/gradio_gui/` | `gui/webgui/`, `gui/kohya/` | GUI consolidates |
-| `scripts/preprocess/` (cache utils) | `tools/` | sd-scripts `tools/` |
-| `scripts/anima_tagger/`, captioning | `finetune/` | sd-scripts `finetune/` |
-| `scripts/daemon/` | **DELETED** (done 2026-06-15) | training is inline-only; GUI + ComfyUI node `Popen` `train.py` directly |
+| `scripts/webgui/`, `scripts/gradio_gui/` | `gui/webgui/`, `gui/kohya/` | **DONE 2026-06-15** — GUI consolidated under `gui/` |
+| `scripts/anima_tagger/` | `finetune/anima_tagger/` | **DONE 2026-06-15** — captioning *logic* stays in `library.captioning` |
+| `scripts/preprocess/`, `scripts/merge_to_dit.py` | `tools/` | **DONE 2026-06-15** — flat sd-scripts `tools/`, run by path |
+| `scripts/daemon/` | **DELETED** | done 2026-06-15; training inline-only |
+| `anima_lora/` | `library/api/` | **DEFERRED** — public API (`import anima_lora`) + `ROOT`/`.env` anchor + PEP-562; needs re-export shim + local `uv sync` smoke-test (untestable in CI container) |
+| `LoraEasyCustomOptimizer/` | `custom_scheduler/LoraEasyCustomOptimizer/` | **DEFERRED** — not installed (repo-root-on-path only) + absolute self-imports + user-config dotted paths (`…came.CAME`); needs `where=[".","custom_scheduler"]` packaging + local re-sync/smoke-test |
 | `library/`, `networks/`, `train.py` | **unchanged at root** | = sd-scripts layout; preserves dotted `network_module` + LETS config compat |
+
+> **Deferred-moves rationale**: the two remaining moves can't be runtime-verified
+> in the torch-less CI container and have catastrophic-if-wrong blast radius (all
+> optimizer resolution / the public embedder API). They're staged to run together
+> with a local `uv sync` + one-step training smoke-test.
 
 > **On "전면 rename":** the reference repos you chose (sd-scripts, LETS) *use*
 > `library/`/`networks/`. Mirroring them = keep those names. The "clean
