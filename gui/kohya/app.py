@@ -150,6 +150,46 @@ def _assemble_dataset(form: dict) -> None:
         form.pop(k, None)
 
 
+def _pick_path(current: str, *, file: bool) -> str:
+    """Open a NATIVE folder/file dialog on the local machine and return the chosen path,
+    or the current value on cancel / headless / error. The Gradio GUI runs locally, so the
+    dialog pops on the user's own desktop (the kohya_ss browse-button pattern). Fully
+    guarded — a failure just keeps whatever was typed, so manual entry always still works.
+    Set ANIMA_GUI_NO_PICKER=1 (or run headless) to disable."""
+    import os
+    import sys
+
+    current = (current or "").strip()
+    if os.environ.get("ANIMA_GUI_NO_PICKER"):
+        return current
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        return current  # no X display — can't pop a dialog
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", 1)
+        initdir = current if os.path.isdir(current) else (os.path.dirname(current) or os.getcwd())
+        if file:
+            chosen = filedialog.askopenfilename(initialdir=initdir)
+        else:
+            chosen = filedialog.askdirectory(initialdir=initdir)
+        root.destroy()
+        return chosen or current
+    except Exception:
+        return current
+
+
+def _pick_dir(current):
+    return _pick_path(current, file=False)
+
+
+def _pick_file(current):
+    return _pick_path(current, file=True)
+
+
 def build_app(default_port: int = 7860):
     """Construct the Gradio Blocks app. Imports gradio lazily so importing this
     module (and thus tasks.py) never requires the optional dep."""
@@ -169,6 +209,16 @@ def build_app(default_port: int = 7860):
     def reg(key, comp):
         by_key[key] = comp
         return _register(keys, inputs, key, comp)
+
+    def reg_path(key, *, file=False, **tb_kwargs):
+        """Register a path Textbox + a 📁 browse button (native local folder/file dialog).
+        ``file=True`` picks a file, else a directory. Lays them side by side in a Row."""
+        with gr.Row():
+            tb = gr.Textbox(scale=8, **tb_kwargs)
+            btn = gr.Button("📁", scale=0, min_width=46)
+        reg(key, tb)
+        btn.click(_pick_file if file else _pick_dir, inputs=tb, outputs=tb)
+        return tb
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
         gr.Markdown(
@@ -213,38 +263,33 @@ def build_app(default_port: int = 7860):
                             placeholder="(defaults to method name)",
                         ),
                     )
-                    reg(
+                    reg_path(
                         "output_dir",
-                        gr.Textbox(
-                            value="output",
-                            label="Output base dir",
-                        ),
+                        value="output",
+                        label="Output base dir",
                     )
 
             # ── Anima model paths (mirrors kohya's class_anima accordion) ────
             with gr.Accordion(
                 "Anima Model Paths (blank = config-chain default)", open=False
             ):
-                reg(
+                reg_path(
                     "dit_path",
-                    gr.Textbox(
-                        label="DiT checkpoint (--pretrained_model_name_or_path)",
-                        placeholder="Path to the Anima DiT .safetensors",
-                    ),
+                    file=True,
+                    label="DiT checkpoint (--pretrained_model_name_or_path)",
+                    placeholder="Path to the Anima DiT .safetensors",
                 )
-                reg(
+                reg_path(
                     "te_path",
-                    gr.Textbox(
-                        label="Qwen3 text encoder (--qwen3)",
-                        placeholder="Path to Qwen3-0.6B model dir / .safetensors",
-                    ),
+                    file=True,
+                    label="Qwen3 text encoder (--qwen3)",
+                    placeholder="Path to Qwen3-0.6B model dir / .safetensors",
                 )
-                reg(
+                reg_path(
                     "vae_path",
-                    gr.Textbox(
-                        label="VAE (--vae)",
-                        placeholder="Path to the Qwen-Image VAE",
-                    ),
+                    file=True,
+                    label="VAE (--vae)",
+                    placeholder="Path to the Qwen-Image VAE",
                 )
 
         with gr.Tab("LoRA"):
@@ -359,12 +404,12 @@ def build_app(default_port: int = 7860):
                     "subsets, use a `--dataset_config` TOML below or the stdlib web GUI."
                 )
                 with gr.Row():
-                    reg("ds_image_dir", gr.Textbox(
+                    reg_path("ds_image_dir",
                         label="image_dir (resized + cached images)",
-                        placeholder="post_image_dataset/resized"))
-                    reg("ds_cache_dir", gr.Textbox(
+                        placeholder="post_image_dataset/resized")
+                    reg_path("ds_cache_dir",
                         label="cache_dir (pre-cached latents; blank = default)",
-                        placeholder="post_image_dataset/lora"))
+                        placeholder="post_image_dataset/lora")
                 with gr.Row():
                     reg("ds_num_repeats", gr.Textbox(
                         label="num_repeats", placeholder="1"))
@@ -400,12 +445,11 @@ def build_app(default_port: int = 7860):
                     row_count=(0, "dynamic"),
                     label="Additional subsets (image_dir required per row)",
                 ))
-                reg(
+                reg_path(
                     "dataset_config",
-                    gr.Textbox(
-                        label="…or a dataset config TOML (overrides the fields above)",
-                        placeholder="path/to/dataset.toml",
-                    ),
+                    file=True,
+                    label="…or a dataset config TOML (overrides the fields above)",
+                    placeholder="path/to/dataset.toml",
                 )
                 gr.Markdown(
                     "_Blank `image_dir` **and** `dataset_config` → the default "
@@ -441,12 +485,11 @@ def build_app(default_port: int = 7860):
         with gr.Tab("Samples"):
             # ── Sample prompts ──────────────────────────────────────────────
             with gr.Accordion("Sample images", open=True):
-                reg(
+                reg_path(
                     "sample_prompts",
-                    gr.Textbox(
-                        label="Sample prompts file (--sample_prompts)",
-                        placeholder="path/to/prompts.txt",
-                    ),
+                    file=True,
+                    label="Sample prompts file (--sample_prompts)",
+                    placeholder="path/to/prompts.txt",
                 )
                 sample_editor = gr.Textbox(
                     label="…or edit prompts here and Save",
@@ -547,10 +590,9 @@ def build_app(default_port: int = 7860):
                         value=False, label="use_shuffled_caption_variants"))
                     reg("use_shuffled_caption_variants_only", gr.Checkbox(
                         value=False, label="…_variants_only (skip pristine v0)"))
-                with gr.Row():
-                    reg("resume", gr.Textbox(
-                        label="resume (saved training-state dir)",
-                        placeholder="output/ckpt/<name>-state"))
+                reg_path("resume",
+                    label="resume (saved training-state dir)",
+                    placeholder="output/ckpt/<name>-state")
                 gr.Markdown(
                     "*Blank/unchecked → defer to the `base→preset→method` config "
                     "chain. To force a bool **off**, use Extra CLI flags `--no-<flag>`. "
@@ -581,9 +623,11 @@ def build_app(default_port: int = 7860):
                         placeholder="configs/examples/lokr_came.toml",
                         scale=4,
                     )
+                    cfg_browse_btn = gr.Button("📁", scale=0, min_width=46)
                     load_cfg_btn = gr.Button("Load → form", variant="secondary")
                     save_cfg_btn = gr.Button("Save form →", variant="secondary")
                 config_status = gr.Markdown("")
+                cfg_browse_btn.click(_pick_file, inputs=config_path, outputs=config_path)
 
             # ── Queue (saved runs, LoRA_Easy-style) ─────────────────────────
             with gr.Accordion("Queue (saved runs)", open=False):
