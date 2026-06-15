@@ -49,9 +49,10 @@ def decode_latent(
     vae.to(device)
     with torch.no_grad():
         pixels = vae.decode_to_pixels(latent.to(device, dtype=vae.dtype))
-    if (
-        pixels.ndim == 5
-    ):  # remove frame dimension if exists, [B, C, F, H, W] -> [B, C, H, W]
+    # The 3D causal VAE returns 5D (B,C,1,H,W); the image-only 2D VAE
+    # (--qwen_image_vae_2d) returns 4D. Squeeze the frame axis only when present, so
+    # both decode paths yield 4D (B,C,H,W) — keeps the dim-2 boundary safe either way.
+    if pixels.ndim == 5:
         pixels = pixels.squeeze(2)
 
     pixels = pixels.to(
