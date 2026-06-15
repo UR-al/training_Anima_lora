@@ -40,62 +40,54 @@ def _register(keys: list[str], comps: list, key: str, comp):
     return comp
 
 
-# Fields entered as a key|value BLOCK in the GUI (one pair per line, LoRA_Easy
-# style) but consumed by the backend as a space-joined `key=value …` string.
-# Normalized in _collect; round-tripped to block form on config load.
-_ARG_BLOCK_KEYS = (
-    "network_args",
-    "optimizer_args",
-    "lr_scheduler_args",
-    "ab_network_args",
-)
+# Free-arg groups rendered as name → value ROWS (the LoRA_Easy "ADD NETWORK ARG"
+# widget). The GUI shows a fixed pool of rows per group (keys "{group}__k{i}" /
+# "{group}__v{i}"); _collect folds the non-blank rows into the space-joined
+# `key=value …` string the backend reads under the group key, and config-load splits
+# the inline string back into the rows. group → number of rows in the pool.
+_ARG_ROW_GROUPS = {
+    "network_args": 6,
+    "optimizer_args": 5,
+    "lr_scheduler_args": 4,
+    "ab_network_args": 4,
+}
 
 
-def _args_block_to_inline(text) -> str:
-    """key|value BLOCK → the space-joined ``key=value`` string the backend's
-    ``_arg_split`` expects. Tolerant: a legacy single inline line (``a=1 b=2``)
-    or already-``key=value`` lines pass through; blank/``#`` lines are dropped;
-    only the FIRST ``|``/``=`` splits key from value (so ``betas|0.9,0.999`` is
-    one pair); a value containing spaces is auto-quoted so it survives the split."""
-    s = str(text or "").strip()
-    if not s:
-        return ""
-    if "\n" not in s and "|" not in s:  # legacy inline single line — leave as-is
-        return s
+def _arg_rows_to_inline(form: dict, group: str, n: int) -> str:
+    """Collapse a group's name/value rows into ``k1=v1 k2=v2 …`` and POP the row keys
+    from ``form``. A value with spaces is auto-quoted so it survives the backend's
+    _arg_split; a name with no value emits the bare key (flag-style)."""
     toks: list[str] = []
-    for raw in s.replace("\r", "").split("\n"):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    for i in range(1, n + 1):
+        k = str(form.pop(f"{group}__k{i}", "") or "").strip()
+        v = str(form.pop(f"{group}__v{i}", "") or "").strip()
+        if not k:
             continue
-        if "|" in line:
-            k, v = line.split("|", 1)
-            k, v = k.strip(), v.strip()
+        if v == "":
+            toks.append(k)
+        else:
             if " " in v and not (v[:1] in "\"'" and v[-1:] == v[:1]):
                 v = f'"{v}"'
             toks.append(f"{k}={v}")
-        elif "=" in line:  # one or more inline key=value already
-            toks.extend(line.split())
-        else:
-            toks.append(line)
     return " ".join(toks)
 
 
-def _args_inline_to_block(text) -> str:
-    """Inverse for config-load display: space-joined ``key=value`` → ``key|value``
-    lines. Quote-aware so ``caption="a b"`` stays a single ``caption|a b`` row."""
+def _inline_to_arg_rows(text, n: int) -> list:
+    """Inverse for config-load: split a space-joined ``key=value`` string into n
+    (name, value) pairs (quote-aware), padded/truncated to exactly n rows."""
     import shlex
 
     s = str(text or "").strip()
-    if not s or "\n" in s:  # empty or already block form
-        return s
-    try:
-        toks = shlex.split(s)
-    except ValueError:
-        toks = s.split()
-    lines = [
-        f"{t.split('=', 1)[0]}|{t.split('=', 1)[1]}" if "=" in t else t for t in toks
-    ]
-    return "\n".join(lines)
+    rows: list = []
+    if s:
+        try:
+            toks = shlex.split(s)
+        except ValueError:
+            toks = s.split()
+        for t in toks:
+            k, _, v = t.partition("=")
+            rows.append((k, v))
+    return rows[:n] + [("", "")] * max(0, n - len(rows))
 
 
 def _collect(keys: list[str], values) -> dict:
@@ -103,9 +95,10 @@ def _collect(keys: list[str], values) -> dict:
     form = dict(zip(keys, values))
     # Gradio Textbox yields "" for empty; backend treats "" as "use default".
     # Coerce checkbox-style truthiness through untouched (already bool).
-    for k in _ARG_BLOCK_KEYS:  # key|value blocks → inline key=value for the backend
-        if k in form:
-            form[k] = _args_block_to_inline(form[k])
+    for group, n in _ARG_ROW_GROUPS.items():  # name/value rows → inline key=value
+        inline = _arg_rows_to_inline(form, group, n)  # also pops the row keys
+        if inline:
+            form[group] = inline
     _assemble_dataset(form)
     return form
 
@@ -277,6 +270,34 @@ def build_app(default_port: int = 7860):
             show_progress="hidden",
         )
         return tb
+
+    def reg_arg_rows(group, *, title):
+        """LoRA_Easy-style "ADD NETWORK ARG" editor: a header + a fixed pool of
+        name → value rows (Enter Arg Name | Enter Arg Value | 🗑 clear). Each row
+        reg()s as ``{group}__k{i}`` / ``{group}__v{i}``; _collect folds the non-blank
+        rows into the inline ``key=value`` string the backend reads under ``group``."""
+        n = _ARG_ROW_GROUPS[group]
+        gr.Markdown(f"**{title}** — one key → value per row (blank rows ignored)")
+        for i in range(1, n + 1):
+            with gr.Row():
+                ktb = gr.Textbox(
+                    placeholder="Enter Arg Name",
+                    show_label=False,
+                    container=False,
+                    scale=5,
+                )
+                vtb = gr.Textbox(
+                    placeholder="Enter Arg Value",
+                    show_label=False,
+                    container=False,
+                    scale=5,
+                )
+                clr = gr.Button("🗑", scale=0, min_width=44)
+            reg(f"{group}__k{i}", ktb)
+            reg(f"{group}__v{i}", vtb)
+            # outputs bind THIS row's components (evaluated at click-registration);
+            # the lambda returns constants, so there's no loop-closure capture bug.
+            clr.click(lambda: ("", ""), outputs=[ktb, vtb], show_progress="hidden")
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
         gr.Markdown(
@@ -584,14 +605,7 @@ def build_app(default_port: int = 7860):
                         allow_custom_value=True,
                     ),
                 )
-                reg(
-                    "network_args",
-                    gr.Textbox(
-                        label="network_args — one key|value per line",
-                        lines=4,
-                        placeholder="conv_dim|8\nconv_alpha|4\nalgo|lokr\nuse_tucker|True",
-                    ),
-                )
+                reg_arg_rows("network_args", title="Network args")
 
             # ── Optimizer & scheduler ───────────────────────────────────────
             with gr.Accordion("Optimizer & Scheduler", open=False):
@@ -619,22 +633,8 @@ def build_app(default_port: int = 7860):
                         "lr_warmup_steps",
                         gr.Textbox(label="LR warmup steps", placeholder="(default)"),
                     )
-                    reg(
-                        "optimizer_args",
-                        gr.Textbox(
-                            label="optimizer_args — one key|value per line",
-                            lines=3,
-                            placeholder="weight_decay|0.01\nbetas|0.9,0.999\nuse_bias_correction|True",
-                        ),
-                    )
-                    reg(
-                        "lr_scheduler_args",
-                        gr.Textbox(
-                            label="lr_scheduler_args — one key|value per line",
-                            lines=2,
-                            placeholder="num_cycles|3\nmin_lr|1e-6",
-                        ),
-                    )
+                reg_arg_rows("optimizer_args", title="Optimizer args")
+                reg_arg_rows("lr_scheduler_args", title="LR scheduler args")
                 # constant→cosine one-shot: hold constant LR for the planned run,
                 # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
                 # Overrides lr_scheduler (which greys out when this is on).
@@ -1197,15 +1197,7 @@ def build_app(default_port: int = 7860):
                         "ab_network_alpha",
                         gr.Textbox(label="network_alpha", placeholder="8"),
                     )
-                with gr.Row():
-                    reg(
-                        "ab_network_args",
-                        gr.Textbox(
-                            label="network_args — one key|value per line",
-                            lines=2,
-                            placeholder="algo|lokr\nfactor|4",
-                        ),
-                    )
+                reg_arg_rows("ab_network_args", title="Auto-batch network args")
                 ab_run_btn = gr.Button("Run auto-batch", variant="primary")
             # ── Masking (tasks.py mask: SAM3 + MIT) ─────────────────────────
             with gr.Accordion("Masking (SAM3 + MIT)", open=False):
@@ -1360,9 +1352,16 @@ def build_app(default_port: int = 7860):
                     form = load_toml_to_form(fh.read())
             except Exception as exc:  # noqa: BLE001
                 return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
-            for k in _ARG_BLOCK_KEYS:  # inline key=value → key|value block for display
-                if k in form:
-                    form[k] = _args_inline_to_block(form[k])
+            for (
+                group,
+                n,
+            ) in _ARG_ROW_GROUPS.items():  # inline key=value → name/value rows
+                if group in form:
+                    for i, (k, v) in enumerate(
+                        _inline_to_arg_rows(form.pop(group), n), 1
+                    ):
+                        form[f"{group}__k{i}"] = k
+                        form[f"{group}__v{i}"] = v
             updates = [
                 gr.update(value=form[k]) if k in form else gr.update() for k in keys
             ]
