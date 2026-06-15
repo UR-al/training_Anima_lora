@@ -667,6 +667,7 @@ def build_app(default_port: int = 7860):
                             ["", "bf16", "fp16", "no"],
                             value="",
                             label="mixed_precision",
+                            allow_custom_value=True,
                         ),
                     )
                     reg(
@@ -675,6 +676,7 @@ def build_app(default_port: int = 7860):
                             ["", "flash", "sdpa", "torch", "sageattn", "flex"],
                             value="",
                             label="attn_mode",
+                            allow_custom_value=True,
                         ),
                     )
                     # torch_compile defaults ON (base.toml) → tri-state so the box can
@@ -685,6 +687,7 @@ def build_app(default_port: int = 7860):
                             ["", "on", "off"],
                             value="",
                             label="torch_compile (blank = default on)",
+                            allow_custom_value=True,
                         ),
                     )
                     reg(
@@ -693,6 +696,7 @@ def build_app(default_port: int = 7860):
                             ["", "bf16", "fp16", "float"],
                             value="",
                             label="save_precision",
+                            allow_custom_value=True,
                         ),
                     )
                 with gr.Row():
@@ -702,6 +706,7 @@ def build_app(default_port: int = 7860):
                             ["", "l2", "huber", "smooth_l1"],
                             value="",
                             label="loss_type",
+                            allow_custom_value=True,
                         ),
                     )
                     reg("huber_c", gr.Textbox(label="huber_c", placeholder="0.1"))
@@ -711,6 +716,7 @@ def build_app(default_port: int = 7860):
                             ["", "constant", "exponential", "snr"],
                             value="",
                             label="huber_schedule",
+                            allow_custom_value=True,
                         ),
                     )
                 with gr.Row():
@@ -720,6 +726,7 @@ def build_app(default_port: int = 7860):
                             ["", "sigmoid", "uniform", "logit_normal", "shift"],
                             value="",
                             label="timestep_sampling",
+                            allow_custom_value=True,
                         ),
                     )
                     reg(
@@ -739,6 +746,7 @@ def build_app(default_port: int = 7860):
                             ],
                             value="",
                             label="weighting_scheme",
+                            allow_custom_value=True,
                         ),
                     )
                 with gr.Row():
@@ -1146,39 +1154,10 @@ def build_app(default_port: int = 7860):
                 return f"❌ save error: {exc}"
             return f"✓ saved → `{p}` (run: `python train.py --config_file {p}`)"
 
-        load_cfg_btn.click(
-            on_load_config, inputs=config_path, outputs=inputs + [config_status]
-        )
-        save_cfg_btn.click(
-            on_save_config, inputs=[config_path, *inputs], outputs=config_status
-        )
-
-        print_btn.click(on_print, inputs=inputs, outputs=out_cmd)
-        start_btn.click(on_start, inputs=inputs, outputs=[out_cmd, out_status])
-        stop_btn.click(on_stop, inputs=None, outputs=[out_cmd, out_status])
-        status_btn.click(on_status, inputs=None, outputs=out_status)
-        ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
-        mask_run_btn.click(on_masking, inputs=inputs, outputs=[out_cmd, out_status])
-        check_update_btn.click(on_check_update, inputs=None, outputs=update_info)
-        update_now_btn.click(
-            on_update_now, inputs=None, outputs=[update_info, update_log]
-        )
-        queue_add_btn.click(on_queue_add, inputs=inputs, outputs=queue_view)
-        queue_run_btn.click(on_queue_run, inputs=None, outputs=[queue_view, out_status])
-        queue_refresh_btn.click(on_queue_refresh, inputs=None, outputs=queue_view)
-        queue_clear_btn.click(on_queue_clear, inputs=None, outputs=queue_view)
-        # `sample_prompts` is registered; locate its component to receive the path.
-        sample_path_comp = inputs[keys.index("sample_prompts")]
-        save_samples_btn.click(
-            on_save_samples,
-            inputs=[inputs[keys.index("output_name")], sample_editor],
-            outputs=sample_path_comp,
-        )
-
-        # ── Conflict / dependency greying (ported from the web GUI's
-        #    CONFLICT_RULES + ARG_DEPS) — disable (and reset) a field when an active
-        #    option makes it a no-op or incompatible. Every relevant change (and the
-        #    initial load) recomputes all targets from the driver values. ──────────
+        # ── Conflict / dependency greying (ported from the web GUI's CONFLICT_RULES
+        #    + ARG_DEPS) — disable (and reset) a field when an active option makes it a
+        #    no-op. Defined here so the config-load .then below can run ONE clean full
+        #    recompute AFTER every value has landed. ──────────────────────────────────
         _dep_drivers = [
             "use_vae_cache",
             "use_text_cache",
@@ -1210,7 +1189,7 @@ def build_app(default_port: int = 7860):
             return [
                 _gray(not use_vae, reset=False),  # random_crop ↮ cached latents
                 _gray(not use_text, reset="0"),  # caption_dropout ↮ cached TE
-                _gray(not use_cc),  # lr_scheduler ← overridden by cc
+                _gray(not use_cc),  # lr_scheduler_type ← overridden by constant→cosine
                 _gray(huber),  # huber_c only for huber/smooth_l1
                 _gray(huber),  # huber_schedule
                 _gray(ts in ("", "sigmoid")),  # sigmoid_scale: sigmoid family
@@ -1220,8 +1199,80 @@ def build_app(default_port: int = 7860):
 
         _dep_in = [by_key[k] for k in _dep_drivers]
         _dep_out = [by_key[k] for k in _dep_targets]
-        for _drv in _dep_in:
-            _drv.change(_recompute_deps, _dep_in, _dep_out)
+
+        # Config load: write every field, THEN one clean full recompute. The per-driver
+        # .change handlers (wired below) also fire while values are being set, but with
+        # allow_custom_value on the constrained dropdowns none of them 422 anymore — so
+        # no target is left stuck on an infinite spinner. (Was the load-hang root cause.)
+        load_cfg_btn.click(
+            on_load_config, inputs=config_path, outputs=inputs + [config_status]
+        ).then(_recompute_deps, _dep_in, _dep_out)
+        save_cfg_btn.click(
+            on_save_config, inputs=[config_path, *inputs], outputs=config_status
+        )
+
+        print_btn.click(on_print, inputs=inputs, outputs=out_cmd)
+        start_btn.click(on_start, inputs=inputs, outputs=[out_cmd, out_status])
+        stop_btn.click(on_stop, inputs=None, outputs=[out_cmd, out_status])
+        status_btn.click(on_status, inputs=None, outputs=out_status)
+        ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
+        mask_run_btn.click(on_masking, inputs=inputs, outputs=[out_cmd, out_status])
+        check_update_btn.click(on_check_update, inputs=None, outputs=update_info)
+        update_now_btn.click(
+            on_update_now, inputs=None, outputs=[update_info, update_log]
+        )
+        queue_add_btn.click(on_queue_add, inputs=inputs, outputs=queue_view)
+        queue_run_btn.click(on_queue_run, inputs=None, outputs=[queue_view, out_status])
+        queue_refresh_btn.click(on_queue_refresh, inputs=None, outputs=queue_view)
+        queue_clear_btn.click(on_queue_clear, inputs=None, outputs=queue_view)
+        # `sample_prompts` is registered; locate its component to receive the path.
+        sample_path_comp = inputs[keys.index("sample_prompts")]
+        save_samples_btn.click(
+            on_save_samples,
+            inputs=[inputs[keys.index("output_name")], sample_editor],
+            outputs=sample_path_comp,
+        )
+
+        # Per-driver SCOPED greying: each driver updates ONLY the target(s) it gates, so
+        # toggling one (e.g. use_text_cache) no longer repaints/flickers the unrelated
+        # huber/sigmoid/logit fields the old shared all-8-outputs handler rewrote. The
+        # output-list length MUST match each lambda's return shape (1 update, or a list).
+        bk = by_key
+        bk["use_vae_cache"].change(
+            lambda v: _gray(not v, reset=False),
+            bk["use_vae_cache"],
+            bk["ds_random_crop"],
+        )
+        bk["use_text_cache"].change(
+            lambda v: _gray(not v, reset="0"),
+            bk["use_text_cache"],
+            bk["ds_caption_dropout_rate"],
+        )
+        bk["use_constantcosine"].change(
+            lambda v: _gray(not v),
+            bk["use_constantcosine"],
+            bk["lr_scheduler_type"],
+        )
+        bk["loss_type"].change(
+            lambda v: [
+                _gray(v in ("huber", "smooth_l1")),
+                _gray(v in ("huber", "smooth_l1")),
+            ],
+            bk["loss_type"],
+            [bk["huber_c"], bk["huber_schedule"]],
+        )
+        bk["timestep_sampling"].change(
+            lambda v: _gray(v in ("", "sigmoid")),
+            bk["timestep_sampling"],
+            bk["sigmoid_scale"],
+        )
+        bk["weighting_scheme"].change(
+            lambda v: [_gray(v == "logit_normal"), _gray(v == "logit_normal")],
+            bk["weighting_scheme"],
+            [bk["logit_mean"], bk["logit_std"]],
+        )
+        # Initial interactive state: one full recompute on app load (the right place to
+        # set all 8 at once); config-load uses the .then chain above for the same.
         demo.load(_recompute_deps, _dep_in, _dep_out)
         # Show the local version on startup WITHOUT a network fetch (offline-safe);
         # the "Check for updates" button does the fetch on demand.
