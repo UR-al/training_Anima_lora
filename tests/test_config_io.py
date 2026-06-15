@@ -119,9 +119,60 @@ def test_save_emits_runnable_toml_and_round_trips():
     assert "--no-masked_loss" in back.get("extra_flags", "")
 
 
+_KOHYA_DATASET = """
+[[datasets]]
+resolution = 960
+batch_size = 2
+  [[datasets.subsets]]
+  image_dir = "C:/data/char"
+  num_repeats = 5
+  keep_tokens = 1
+  caption_extension = ".txt"
+  flip_aug = true
+"""
+
+_ANIMA_DATASET = """
+[[datasets]]
+batch_size = 1
+  [[datasets.subsets]]
+  image_dir = "post_image_dataset/resized"
+  cache_dir = "post_image_dataset/lora"
+  tiers = [512, 1024]
+  batch_size = 4
+"""
+
+
+def test_load_harvests_kohya_dataset_block():
+    form = load_toml_to_form(_KOHYA_DATASET)
+    assert form["ds_image_dir"] == "C:/data/char"
+    assert form["ds_num_repeats"] == "5" and form["ds_keep_tokens"] == "1"
+    assert form["ds_caption_extension"] == ".txt"
+    assert form["ds_batch_size"] == "2"  # dataset-level batch_size
+    assert form["ds_flip_aug"] is True
+    assert form["target_res"] == ["896"]  # kohya resolution 960 → nearest tier
+    # the [[datasets]] section never leaks into the flat router / extra_flags.
+    assert "datasets" not in form.get("extra_flags", "")
+
+
+def test_load_harvests_anima_dataset_tiers():
+    form = load_toml_to_form(_ANIMA_DATASET)
+    assert form["ds_cache_dir"] == "post_image_dataset/lora"
+    assert form["ds_tiers"] == "512,1024"
+    assert form["ds_batch_size"] == "4"  # subset batch_size wins over block
+    assert "target_res" not in form  # no `resolution` key → no tier snap
+
+
+def test_load_without_dataset_leaves_ds_fields_unset():
+    form = load_toml_to_form('optimizer_type = "CAME"\n')
+    assert not any(k.startswith("ds_") for k in form)
+
+
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_maps_dedicated_fields()
     test_load_renames_to_dedicated_fields()
     test_load_drops_and_extra_routing()
     test_save_emits_runnable_toml_and_round_trips()
+    test_load_harvests_kohya_dataset_block()
+    test_load_harvests_anima_dataset_tiers()
+    test_load_without_dataset_leaves_ds_fields_unset()
     print("all config_io round-trip tests passed")

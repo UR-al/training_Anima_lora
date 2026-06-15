@@ -107,21 +107,89 @@ _DROP = {
     "split_attn",
     "lowram",
 }
-# Dataset-blueprint sections are not flat scalars — skip on load.
+# Dataset-blueprint sections are not flat scalars — skip the flat-key routing, but
+# `datasets` is harvested into the ds_* fields first (see _extract_dataset).
 _SKIP_SECTIONS = {"general", "datasets", "subsets"}
 
+# Canonical constant-token resolution tiers (mirror of
+# library.datasets.buckets.ALLOWED_TARGET_RES) — kohya `resolution` snaps to the
+# nearest one for the Dataset tier checkboxes. Kept inline so config_io stays
+# torch-free / import-light.
+_DATASET_TIERS = (512, 768, 896, 1024, 1280, 1536)
 
-def _toml_scalar(v):
-    """Render a scalar TOML value as a CLI token string."""
-    if isinstance(v, bool):  # handled by caller; never reached for the value text
-        return str(v)
-    return str(v)
+
+def _nearest_tier(res) -> int | None:
+    """Snap a kohya ``resolution`` (int or [w,h]) to the nearest constant-token tier."""
+    if isinstance(res, (list, tuple)):
+        res = max(res) if res else None
+    try:
+        r = float(res)
+    except (TypeError, ValueError):
+        return None
+    return min(_DATASET_TIERS, key=lambda t: abs(t - r))
+
+
+def _extract_dataset(data: dict, form: dict) -> None:
+    """Harvest the first ``[[datasets]]`` block + its first subset into the flat
+    ``ds_*`` / ``target_res`` form fields (the single-subset Gradio Dataset panel).
+    Multi-subset / multi-block configs keep only the first subset here — load the
+    full set via ``--dataset_config`` instead. Mutates ``form`` in place."""
+    blocks = data.get("datasets")
+    if not isinstance(blocks, list) or not blocks:
+        return
+    tiers: set[int] = set()
+    block_bs = None
+    first_sub: dict | None = None
+    for blk in blocks:
+        if not isinstance(blk, dict):
+            continue
+        tier = _nearest_tier(blk.get("resolution"))
+        if tier is not None:
+            tiers.add(tier)
+        if block_bs is None and blk.get("batch_size") is not None:
+            block_bs = blk["batch_size"]
+        subs = blk.get("subsets")
+        if first_sub is None and isinstance(subs, list) and subs:
+            if isinstance(subs[0], dict):
+                first_sub = subs[0]
+    if first_sub is not None:
+        s = first_sub
+        if s.get("image_dir"):
+            form["ds_image_dir"] = str(s["image_dir"])
+        if s.get("cache_dir"):
+            form["ds_cache_dir"] = str(s["cache_dir"])
+        for fk, sk in (
+            ("ds_num_repeats", "num_repeats"),
+            ("ds_keep_tokens", "keep_tokens"),
+            ("ds_caption_extension", "caption_extension"),
+            ("ds_caption_dropout_rate", "caption_dropout_rate"),
+        ):
+            if s.get(sk) is not None:
+                form[fk] = str(s[sk])
+        bs = s.get("batch_size", block_bs)
+        if bs is not None:
+            form["ds_batch_size"] = str(bs)
+        for fk, sk in (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop")):
+            if sk in s:
+                form[fk] = bool(s[sk])
+        t = s.get("tiers")
+        if isinstance(t, (list, tuple)) and t:
+            form["ds_tiers"] = ",".join(str(x) for x in t)
+    if tiers:
+        form["target_res"] = [str(t) for t in sorted(tiers)]
 
 
 def load_toml_to_form(toml_text: str) -> dict:
     """Parse a config TOML into the GUI ``form`` dict (see module docstring)."""
     data = tomllib.loads(toml_text)
     data.pop("base_config", None)  # inheritance ref — we flatten, ignore it
+
+    form: dict = {}
+    extra: list[str] = []  # CLI tokens for the extra_flags field
+
+    # 0) Harvest the dataset blueprint into the ds_* / target_res panel, then drop
+    #    the (nested) sections so the flat-key router below never sees them.
+    _extract_dataset(data, form)
     for sec in _SKIP_SECTIONS:
         data.pop(sec, None)
 
@@ -135,9 +203,6 @@ def load_toml_to_form(toml_text: str) -> dict:
             norm["t_max"] = round(float(value) / 1000.0, 6)
         else:
             norm[_RENAME.get(key, key)] = value
-
-    form: dict = {}
-    extra: list[str] = []  # CLI tokens for the extra_flags field
 
     def emit(flag_key: str, value) -> None:
         """Append a ``--key value`` (or bool) token pair to extra."""
