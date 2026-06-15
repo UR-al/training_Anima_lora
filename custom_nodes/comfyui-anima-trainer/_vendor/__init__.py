@@ -1,4 +1,4 @@
-"""Bundled stdlib daemon-client subset of anima_lora.
-
-Synced by scripts/sync_vendor.py — do not edit by hand.
+"""Reserved for bundled stdlib subsets of anima_lora (synced by
+scripts/sync_vendor.py). Currently empty — the node runs training as a direct
+subprocess and bundles no client.
 """

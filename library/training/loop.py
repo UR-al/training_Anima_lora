@@ -620,7 +620,7 @@ def _log_step(
         logs["router_H"] = f"{_router_H_cached:.3f}"
     state.progress_bar.set_postfix(refresh=False, **{**max_mean_logs, **logs})
 
-    # The Phase-0 progress sink (GUI / daemon progress bar tails progress.jsonl)
+    # The progress sink (the GUI progress bar tails progress.jsonl)
     # needs `step` events even with no tracker configured. When tracking, the
     # step_logging call below already feeds the sink via dispatch_logs; emit a
     # lightweight event directly only when untracked, so the bar advances

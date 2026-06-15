@@ -7,7 +7,8 @@ repo's** ``train.py --method <name> --preset <name>`` rather than kohya's
 backend in :mod:`scripts.webgui.server` (``options`` / ``build_command`` /
 ``launch`` / ``status`` / ``stop``) — so the dropdowns are populated from the
 live registries (methods, presets, the ~89-optimizer zoo, schedulers) and the
-Start button submits to the same training daemon as ``make lora --queue``.
+Start button runs ``train.py`` directly as a subprocess (inline, like
+``make lora``).
 
 Started via ``python tasks.py gradio-gui`` (or ``make gradio-gui``). Requires the
 optional ``gradio`` extra (``uv sync --extra gradio``); the import is lazy so the

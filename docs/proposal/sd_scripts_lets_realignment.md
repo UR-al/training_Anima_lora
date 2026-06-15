@@ -64,7 +64,7 @@ training_Anima_lora/
 | `scripts/webgui/`, `scripts/gradio_gui/` | `gui/webgui/`, `gui/kohya/` | GUI consolidates |
 | `scripts/preprocess/` (cache utils) | `tools/` | sd-scripts `tools/` |
 | `scripts/anima_tagger/`, captioning | `finetune/` | sd-scripts `finetune/` |
-| `scripts/daemon/` | removed from GUI flow | GUI launches `python train.py --config_file …` directly (no daemon) |
+| `scripts/daemon/` | **DELETED** (done 2026-06-15) | training is inline-only; GUI + ComfyUI node `Popen` `train.py` directly |
 | `library/`, `networks/`, `train.py` | **unchanged at root** | = sd-scripts layout; preserves dotted `network_module` + LETS config compat |
 
 > **On "전면 rename":** the reference repos you chose (sd-scripts, LETS) *use*

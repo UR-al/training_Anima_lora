@@ -1,6 +1,6 @@
 # Trainer-node-only training defaults.
 #
-# These are merged into the daemon training `overrides` (see nodes.py
+# These are merged into the training `overrides` (see nodes.py
 # `_load_node_defaults`), sitting *below* the explicit UI fields (rank / epochs
 # / lr / model) so anything the user types in the node still wins, but *above*
 # the gpu-tier hardware overrides (the `gpu` dropdown) and the

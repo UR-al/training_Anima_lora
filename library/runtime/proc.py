@@ -2,13 +2,12 @@
 
 On Windows, ``subprocess`` launches of a *console* program (``git``,
 ``nvidia-smi``, ``powershell`` …) flash a console window on screen unless
-``CREATE_NO_WINDOW`` is passed. The daemon's GPU-occupancy poll and the
-per-checkpoint ModelSpec git query fire repeatedly, so on Windows users see a
-terminal blink several times whenever a checkpoint is written — cosmetic but
-alarming.
+``CREATE_NO_WINDOW`` is passed. The per-checkpoint ModelSpec git query fires
+repeatedly, so on Windows users see a terminal blink whenever a checkpoint is
+written — cosmetic but alarming.
 
-This is distinct from the *job launcher* (``scripts/daemon/proc.py``), which
-spawns the trainer under ``pythonw.exe``: ``CREATE_NO_WINDOW`` doesn't survive
+This is distinct from the *GUI subprocess launcher* (the web GUI may spawn the
+trainer under ``pythonw.exe`` on Windows): ``CREATE_NO_WINDOW`` doesn't survive
 the uv venv ``python.exe`` trampoline re-exec, so that path needs a different
 fix. ``CREATE_NO_WINDOW`` *does* work for direct console executables, which is
 exactly what these short-lived metadata/probe calls invoke.

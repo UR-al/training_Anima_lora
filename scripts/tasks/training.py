@@ -175,8 +175,7 @@ def _easy_train_extra(adapter: str, extra) -> list[str]:
 
     # Write the blueprint-only dataset config under the slug base dir (a gitignored
     # data dir that exists once preprocess has run). Regenerated each invocation so
-    # it tracks the source file, and stable-pathed so the --queue daemon path can
-    # re-read it later.
+    # it tracks the source file, and stable-pathed so it can be re-read later.
     base_dir = ROOT / base
     base_dir.mkdir(parents=True, exist_ok=True)
     ds_path = base_dir / "dataset_config.toml"

@@ -5,7 +5,7 @@ Layout modelled on the kohya_ss GUI (source-model paths + an Anima accordion +
 basic / network / optimizer / dataset / sample / advanced sections), but every
 control feeds the ``form`` dict consumed by :mod:`scripts.webgui.server`, whose
 ``build_command`` emits the exact ``train.py --method … --preset …`` invocation
-and whose ``launch`` submits it to the training daemon. No kohya ``sd-scripts``
+and whose ``launch`` runs it as a direct subprocess. No kohya ``sd-scripts``
 code path is involved — the GUI is a front-end re-skin over our own backend.
 """
 
@@ -60,8 +60,8 @@ def build_app(default_port: int = 7860):
             "# Anima LoRA Trainer\n"
             "Gradio front-end (kohya-style layout) driving **this repo's** "
             "`train.py --method <name> --preset <name>`. Blank fields defer to the "
-            "`base.toml → preset → method` config chain. Start submits to the "
-            "training daemon (survives closing this tab)."
+            "`base.toml → preset → method` config chain. Start runs train.py "
+            "directly; its log streams below and to the terminal."
         )
 
         with gr.Tab("LoRA"):
@@ -257,13 +257,6 @@ def build_app(default_port: int = 7860):
             with gr.Accordion("Monitor & Run", open=True):
                 with gr.Row():
                     reg(
-                        "daemon",
-                        gr.Checkbox(
-                            value=True,
-                            label="Run via daemon (detached; survives close)",
-                        ),
-                    )
-                    reg(
                         "monitor",
                         gr.Checkbox(value=False, label="Web loss monitor (--monitor)"),
                     )
@@ -300,11 +293,11 @@ def build_app(default_port: int = 7860):
             out_cmd = gr.Code(label="train.py command", language="shell")
             out_status = gr.JSON(label="Result / status")
 
-            # ── Live training log (the daemon-captured terminal output) ─────
-            # train.py's console log is the sd-scripts RichHandler format; when
-            # the run goes through the daemon, its stdout/stderr is captured to
-            # <job>/stdout.log, which server.log_tail() exposes. This panel
-            # mirrors the terminal live so the GUI and the console stay linked.
+            # ── Live training log (the captured terminal output) ────────────
+            # train.py's console log is the sd-scripts RichHandler format. launch()
+            # redirects the child subprocess's stdout/stderr to a logfile, which
+            # server.log_tail() exposes. This panel mirrors the terminal live so
+            # the GUI and the console stay linked.
             gr.Markdown("### Training log — terminal output (sd-scripts format)")
             with gr.Row():
                 autorefresh = gr.Checkbox(value=True, label="Auto-refresh (2s)")

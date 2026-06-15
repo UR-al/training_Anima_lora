@@ -1,7 +1,7 @@
 """Optional progress callback for the cache functions.
 
-The cache loops live in ``library/`` and must run headless (daemon, tests,
-embedding code), so they never create a progress bar themselves. A caller that
+The cache loops live in ``library/`` and must run headless (GUI subprocess,
+tests, embedding code), so they never create a progress bar themselves. A caller that
 *does* want one passes a ``progress`` callback; the CLI wrappers pass
 :func:`tqdm_progress`. The protocol is intentionally tiny:
 
@@ -12,11 +12,11 @@ item with ``advance=1`` (and an optional ``detail`` postfix). Cache functions
 guard on ``progress is None``, so omitting it is a clean no-op.
 
 Structured side-channel (``ANIMA_PROGRESS_JSONL``): when that env var is set
-(the training daemon points it at a preprocess command job's ``progress.jsonl``
-— see ``scripts/daemon/manager.py::_build_cmd``), the same callback *also*
+(a consumer — e.g. the web GUI — points it at a preprocess run's
+``progress.jsonl``), the same callback *also*
 appends throttled ``{"ev":"preprocess","phase":desc,"done":k,"total":N}`` lines
 so the web GUI can render a real progress bar instead of scraping tqdm text. It
-deliberately never emits an ``"ev":"run_end"`` line, so the daemon's exit-code
+deliberately never emits an ``"ev":"run_end"`` line, so any exit-code
 finalization is untouched. Unset (plain CLI / tests) → pure tqdm, zero overhead.
 """
 
@@ -55,7 +55,7 @@ def tqdm_progress(desc: str) -> ProgressFn:
             return
         state["emit"] = now
         rec = {
-            "ev": "preprocess",  # never "run_end" — keeps daemon finalize exit-code driven
+            "ev": "preprocess",  # never "run_end" — leaves exit-code finalization untouched
             "phase": desc,
             "done": int(state["done"]),
             "total": state["total"],

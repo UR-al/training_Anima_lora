@@ -1,7 +1,7 @@
-"""Structured training-progress sink (Phase 0 of the daemon plan).
+"""Structured training-progress sink.
 
 Writes a JSONL event stream next to the checkpoint so any consumer (the GUI
-progress bar, the future training daemon, an MCP client) can follow a run by
+progress bar, an MCP client) can follow a run by
 tailing one file instead of regex-parsing tqdm stdout. Append-only,
 line-buffered, main-process only. One event per line:
 
@@ -106,8 +106,8 @@ class ProgressSink:
         ``<output_dir>/../logs/<output_name>.progress.jsonl`` (default on) — a
         sibling ``logs/`` dir so the checkpoint dir holds only model artifacts.
         Explicit empty / ``none`` / ``off`` → disabled. Any other value → that
-        literal path. (The daemon always passes an explicit per-job path, so this
-        derived default only governs inline CLI runs.)
+        literal path. (A consumer may pass an explicit path; the derived default
+        governs plain CLI / GUI runs.)
         """
         explicit = getattr(args, "progress_jsonl", None)
         if explicit is not None:

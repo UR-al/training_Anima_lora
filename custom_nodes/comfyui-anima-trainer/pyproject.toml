@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-animalora-trainer"
-description = "Supported by anima_lora trainer daemon, this introduces simplified comfyui ui for training in background."
+description = "Simplified ComfyUI node that trains an Anima LoRA in a direct subprocess and returns a ready-to-use MODEL."
 version = "0.1.0"
 license = { file = "LICENSE" }
 dependencies = []

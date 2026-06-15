@@ -28,14 +28,13 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[2]
 HTML_FILE = Path(__file__).resolve().parent / "index.html"
 
-# Last launch this panel issued (direct Popen and/or a daemon job id).
+# Last launch this panel issued (a direct subprocess.Popen + its log file).
 _STATE: dict = {
     "proc": None,
     "cmd": None,
     "monitor_url": None,
     "started_at": None,
-    "daemon_job": None,
-    "daemon_base": None,
+    "log_path": None,
 }
 
 
@@ -730,8 +729,8 @@ def options() -> dict:
 # Command building + launch
 # --------------------------------------------------------------------------- #
 def _method_preset_extra(form: dict):
-    """(method, preset, extra) from the form — shared by the preview, the direct
-    Popen path, and the daemon-submit path."""
+    """(method, preset, extra) from the form — shared by the preview and the
+    direct Popen launch path."""
     method = (form.get("method") or "lora").strip()
     preset = (form.get("preset") or "default").strip()
     # A LyCORIS network can't ride the `lora` method (it carries native-adapter
@@ -920,7 +919,7 @@ def _method_preset_extra(form: dict):
 
 
 def build_command(form: dict) -> list[str]:
-    """The exact train.py launch command (preview / direct-Popen path)."""
+    """The exact train.py launch command (preview / launch path)."""
     from scripts.tasks._common import build_launch_cmd, build_method_args
 
     method, preset, extra = _method_preset_extra(form)
@@ -1018,234 +1017,6 @@ def _build_precached_config(form: dict) -> str | None:
     return str(path)
 
 
-def _dataset_fingerprint(entries) -> str:
-    """A fast signature of an auto-preprocess run: the manifest entries (all
-    settings — tiers, min_pixels, random_crop, cache/resized dirs) PLUS a
-    stat-only fingerprint of every source image (relpath, size, mtime). No image
-    decode — just os.walk + os.stat — so it's cheap to recompute each launch.
-    Changing a setting OR adding/removing/editing an image flips the hash.
-    """
-    import hashlib
-    import json as _json
-
-    exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif")
-    parts = [_json.dumps(entries, sort_keys=True, default=str)]
-    for src in sorted({e.get("src") for e in entries if e.get("src")}):
-        files = []
-        try:
-            for root, _dirs, names in os.walk(src):
-                for n in names:
-                    if n.lower().endswith(exts):
-                        fp = os.path.join(root, n)
-                        try:
-                            stt = os.stat(fp)
-                            rel = os.path.relpath(fp, src).replace("\\", "/")
-                            files.append((rel, stt.st_size, int(stt.st_mtime)))
-                        except OSError:
-                            pass
-        except OSError:
-            pass
-        files.sort()
-        parts.append(src + "::" + repr(files))
-    return hashlib.sha1("\n".join(parts).encode("utf-8", "replace")).hexdigest()
-
-
-def _caches_ready(prep: dict) -> bool:
-    """True iff a prior preprocess of this EXACT spec finished — i.e. the marker
-    file exists, its stored signature matches the current one, and the cache root
-    is still present. Lets launch() skip the preprocess job and train directly.
-    """
-    marker, sig = prep.get("_marker"), prep.get("_sig")
-    if not marker or not sig:
-        return False
-    path = marker if os.path.isabs(marker) else str(ROOT / marker)
-    if not os.path.isfile(path) or not os.path.isdir(os.path.dirname(path)):
-        return False
-    try:
-        import json as _json
-
-        return _json.loads(open(path, encoding="utf-8").read()).get("sig") == sig
-    except (OSError, ValueError):
-        return False
-
-
-def _prepare_auto_preprocess(form: dict) -> dict:
-    """Set up the auto-preprocess→train daemon chain from the form.
-
-    Resizes/caches (and optionally masks) a RAW image folder at training start —
-    like latent caching, but kicked off automatically. Returns the command-job
-    spec (``argv`` + ``extra_env``) for ``submit_command``; the caller chains the
-    train job after it via ``chain_train``. Also REWRITES ``form['dataset_config']``
-    to the auto-generated config pointing at the to-be-created cache dirs, so the
-    chained train job reads the fresh caches. Returns ``{"error": …}`` on a bad
-    folder.
-
-    Mechanism: a CONFIG_FILE snapshot redirects source/resized/cache/mask dirs
-    (+ target_res tiers) so the standard ``preprocess`` / ``mask`` pipeline runs
-    against the user's folder without editing configs/. Both preprocess and mask
-    read these path overrides; masking self-skips via RUN_SAM_MASK/RUN_MIT_MASK.
-    """
-    import json as _json
-    import toml as _toml
-
-    subs = _dataset_subsets(form)
-    if not subs:
-        return {"error": "Auto-preprocess is on but no dataset subset / image folder is set."}
-    for s in subs:
-        if not Path(s["image_dir"]).is_dir():
-            return {"error": f"Image folder not found: {s['image_dir']}"}
-
-    # Everything generated for this run lives under cache/<output_name>/: the
-    # VAE/TE/PE caches (split into vae/te/pe subfolders automatically by
-    # resolve_cache_path under each subset's cache_dir), plus resized/ and
-    # masks/. Keyed on output_name so a run's data is self-contained per the
-    # requested layout.
-    name = _safe_name(form.get("output_name") or form.get("ds_name") or "gui")
-    base_resized = f"cache/{name}/resized"
-    base_cache = f"cache/{name}"
-    base_mask = f"cache/{name}/masks"
-    masking = bool(form.get("mask_enable"))
-    tiers = sorted(int(t) for t in (form.get("target_res") or []) if str(t).strip()) or [1024]
-    multiscale = bool(form.get("multiscale")) and len(tiers) >= 2
-    bs = int(form.get("ds_batch") or 1)
-
-    # per-tier skip edges (multi-scale): explicit ms_skip "tier:edge,…", else auto
-    # (next-lower tier), unless "skip upscaling" is off (force every image in).
-    skip_map: dict[int, int] = {}
-    for part in str(form.get("ms_skip") or "").split(","):
-        if ":" in part:
-            tk, sk = part.split(":", 1)
-            try:
-                skip_map[int(tk)] = int(sk)
-            except ValueError:
-                pass
-    no_skip = form.get("ms_skip_upscale") is False
-
-    def _skip_minpx(tier: int) -> int:
-        # skip edge keyed by the tier's place in the GLOBAL tier list (so per-subset
-        # tier choices still get the right next-lower-tier auto threshold).
-        if no_skip:
-            return 0
-        if tier in skip_map:
-            edge = skip_map[tier]
-        else:
-            gi = tiers.index(tier) if tier in tiers else 0
-            edge = 0 if gi == 0 else tiers[gi - 1]
-        return edge * edge
-
-    entries: list[dict] = []
-    datasets: list[dict] = []
-    for i, s in enumerate(subs):
-        block_common = {k: s[k] for k in ("num_repeats", "keep_tokens", "caption_extension", "caption_dropout_rate") if s.get(k) not in (None, "")}
-        if s.get("flip_aug"):
-            block_common["flip_aug"] = True
-        # random_crop is BAKED into the resized PNG at preprocess time (it can't act
-        # on the fixed cached latents training reads), so it rides the resize ENTRY,
-        # not the training subset block.
-        rc_entry: dict = {}
-        if s.get("random_crop"):
-            rc_entry["random_crop"] = True
-            if s.get("random_crop_padding_percent") not in (None, ""):
-                rc_entry["random_crop_padding_percent"] = s["random_crop_padding_percent"]
-        sub_bs = int(s.get("batch_size") or bs)  # per-subset batch, else dataset default
-        # per-subset tiers (multi-scale) — intersect with the globally-enabled tiers;
-        # blank falls back to all of them. Lets a subset target one resolution with
-        # its own batch/repeat (kohya per-block parity).
-        sub_tiers = [t for t in (s.get("tiers") or tiers) if t in tiers] or tiers
-        if multiscale:
-            for t in sub_tiers:
-                rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
-                mdir = f"{base_mask}/{i}/{t}" if masking else None
-                e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                     "target_res": str(t), "min_pixels": _skip_minpx(t), **rc_entry}
-                if mdir:
-                    e["mask"] = mdir
-                entries.append(e)
-                blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
-                if mdir:
-                    blk["mask_dir"] = mdir
-                datasets.append({"batch_size": sub_bs, "subsets": [blk]})
-        else:
-            rdir, cdir = f"{base_resized}/{i}", f"{base_cache}/{i}"
-            mdir = f"{base_mask}/{i}" if masking else None
-            e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                 "target_res": " ".join(str(t) for t in sub_tiers),
-                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000,
-                 **rc_entry}
-            if mdir:
-                e["mask"] = mdir
-            entries.append(e)
-            blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True, **block_common}
-            if mdir:
-                blk["mask_dir"] = mdir
-            datasets.append({"batch_size": sub_bs, "subsets": [blk]})
-
-    # training dataset config → the (to-be-created) cache dirs
-    ds_toml = _toml.dumps({"datasets": datasets})
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    ds_path = DATASET_DIR / f"{name}_auto.toml"
-    ds_path.write_text(ds_toml, encoding="utf-8")
-    form["dataset_config"] = str(ds_path)
-
-    # preprocess manifest (one entry per subset × tier)
-    manifest: dict = {
-        "caption_shuffle_variants": str(form.get("caption_shuffle_variants") or "4"),
-        "caption_tag_dropout_rate": str(form.get("caption_tag_dropout_rate") or "0.1"),
-        "entries": entries,
-    }
-    for mk, fk in (("vae", "vae_path"), ("qwen3", "te_path"), ("dit", "dit_path")):
-        v = (form.get(fk) or "").strip()
-        if v:
-            manifest[mk] = v
-    # REPA v2: if the form's network_args carry use_repa, tell the manifest loop
-    # to also cache PE-Spatial features (so the chained train job finds them).
-    na_kv = dict(
-        tok.split("=", 1)
-        for tok in str(form.get("network_args") or "").split()
-        if "=" in tok
-    )
-    if na_kv.get("use_repa", "").strip().lower() in ("1", "true", "yes"):
-        manifest["use_repa"] = True
-        manifest["repa_encoder"] = na_kv.get("repa_encoder") or "pe_spatial"
-    STORE_DIR.mkdir(parents=True, exist_ok=True)
-    mf_path = STORE_DIR / f"manifest_{name}.json"
-    mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
-
-    # Completion marker + signature: the preprocess task writes `marker` (under the
-    # cache root) containing `sig` on full success; a later launch with the SAME
-    # sig (settings + source files unchanged) skips preprocess and trains directly.
-    sig = _dataset_fingerprint(entries)
-    # Absolute so the daemon (which writes it from its OWN cwd) and the GUI (which
-    # reads it via _caches_ready) resolve to the SAME file even across checkouts —
-    # a relative path silently diverges and forces a needless re-preprocess.
-    marker = str(ROOT / base_cache / ".anima_preprocess.json")
-    env = {
-        "MANIFEST_FILE": str(mf_path),
-        "PREPROCESS_MARKER": marker,
-        "PREPROCESS_SIG": sig,
-    }
-    if masking:
-        env["RUN_SAM_MASK"] = "1" if form.get("mask_sam") else "0"
-        env["RUN_MIT_MASK"] = "1" if form.get("mask_mit") else "0"
-        if str(form.get("mit_text_threshold") or "").strip():
-            env["MIT_TEXT_THRESHOLD"] = str(form["mit_text_threshold"])
-        if str(form.get("mit_dilate") or "").strip():
-            env["MIT_DILATE"] = str(form["mit_dilate"])
-        if form.get("mask_sam") and str(form.get("sam3_path") or "").strip():
-            env["SAM3_CHECKPOINT"] = str(form["sam3_path"]).strip()
-    return {
-        "argv": ["tasks.py", "preprocess-manifest"],
-        "extra_env": env,
-        "dataset_config": str(ds_path),
-        "training_toml": ds_toml,
-        "masking": masking,
-        "multiscale": multiscale,
-        "target": "preprocess-manifest",
-        "_marker": marker,
-        "_sig": sig,
-    }
-
-
 def _autobatch_argv(form: dict):
     """Build the ``tasks.py bench-autobatch`` argv from the self-contained ab_* GUI
     fields. Returns (argv, error): error is non-None when nothing to search."""
@@ -1298,161 +1069,79 @@ def _autobatch_argv(form: dict):
 
 
 def bench_autobatch(form: dict) -> dict:
-    """Submit a daemon ``bench-autobatch`` command job — auto-find the max feasible
-    batch per resolution for the given network / optimizer / grad-ckpt. Streams to
-    the cmd log like a run; the frontier table prints at the end. Daemon-queued so
-    it doesn't collide with a training job."""
-    argv, err = _autobatch_argv(form)
-    if err:
-        return {"error": err}
-    from scripts.daemon import client as _dc
-
-    try:
-        cl = _dc.ensure_daemon(expected_root=str(ROOT))
-        resp = cl.submit_command(label="bench-autobatch", argv=argv)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"daemon submit failed: {exc}"}
-    _STATE["live_cmd"] = True
-    _STATE["run_name"] = "bench-autobatch"
-    _start_progress_stream(0.5)
-    return {"ok": True, "job_id": resp.get("job_id"), "argv": argv}
+    """bench-autobatch needed the (now-removed) job queue to run without colliding
+    with a training run, so it is no longer available from the web GUI. Run it from
+    the CLI instead (``make bench-autobatch`` / ``python tasks.py bench-autobatch``)."""
+    return {"error": "bench-autobatch required the daemon, which has been removed"}
 
 
 def launch(form: dict) -> dict:
+    """Spawn ``train.py`` as a direct child subprocess and capture its console to a
+    logfile under ``output/logs/`` (so the Gradio/web live-log panel can tail it).
+
+    This is the only launch path — the run lives for as long as the GUI process
+    does (it is a child of it). Auto-preprocess can no longer chain into training
+    (that needed the removed job queue): preprocess separately first.
+    """
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
-        return {"ok": False, "error": "A direct run is already in progress."}
+        return {"ok": False, "error": "A run is already in progress."}
 
-    # Auto-preprocess: rewrite form['dataset_config'] to the fresh-cache config and
-    # build the preprocess command-job spec, to be chained → train via the daemon.
-    prep = None
+    # Auto-preprocess used to chain preprocess → train through the job queue. With
+    # only a single blocking subprocess there's no way to sequence the two, so refuse
+    # cleanly and tell the user to run preprocessing on its own first.
     if form.get("auto_preprocess"):
-        prep = _prepare_auto_preprocess(form)
-        if prep.get("error"):
-            return {"ok": False, "error": prep["error"]}
-    elif form.get("subsets") and not (form.get("dataset_config") or "").strip():
-        # Auto-preprocess OFF + a dataset defined → treat the subsets as already
-        # resized + cached and build the dataset config straight from them.
+        return {
+            "ok": False,
+            "error": "Auto-preprocess (preprocess → train chaining) needed the job "
+            "queue, which has been removed. Run preprocessing separately first "
+            "(make preprocess / the Preprocess panel), then launch training with the "
+            "resulting caches.",
+        }
+    if form.get("subsets") and not (form.get("dataset_config") or "").strip():
+        # A dataset is defined → treat the subsets as already resized + cached and
+        # build the dataset config straight from them.
         pc = _build_precached_config(form)
         if pc:
             form["dataset_config"] = pc
 
     if form.get("dry_run"):
-        cmd = " ".join(build_command(form))
-        if prep:
-            pj = "tasks.py " + " ".join(prep["argv"][1:])
-            envs = " ".join(f"{k}={v}" for k, v in prep["extra_env"].items())
-            cmd = (
-                f"# 1) preprocess job (daemon): {pj}\n#    env: {envs}\n"
-                f"#    dataset → {prep['dataset_config']}\n# 2) then chains → train:\n{cmd}"
-            )
-        return {"ok": True, "dry_run": True, "command": cmd}
+        return {"ok": True, "dry_run": True, "command": " ".join(build_command(form))}
 
-    method, preset, extra = _method_preset_extra(form)
     mon = _monitor_url(form)
-    cmd_str = " ".join(build_command(form))
-    fallback_note = None
-
-    # Robust path (default): submit to the local training daemon — detached, so
-    # training SURVIVES the GUI closing; it also queues + captures logs. Same
-    # path as `make lora --queue`. Falls back to a direct Popen if unreachable.
-    if form.get("daemon", True):
-        try:
-            from scripts.daemon import client as _dc
-
-            # Pin the daemon to THIS checkout. Without expected_root the GUI would
-            # attach to whatever daemon answers the shared ~/.anima pidfile —
-            # including one from a different/older anima_lora checkout, which then
-            # runs our job with ITS code (e.g. "Unknown command: preprocess-manifest")
-            # and it dies instantly. expected_root makes the client shut down an
-            # idle foreign-root daemon and spawn one rooted here (it raises instead
-            # if that daemon still has live jobs, rather than stealing them).
-            cl = _dc.ensure_daemon(expected_root=str(ROOT))
-            did_prep = bool(prep) and not _caches_ready(prep)
-            if did_prep:
-                # preprocess command-job → auto-chains the train job on success
-                # (manager._finalize). One Start click; both phases survive close.
-                resp = cl.submit_command(
-                    label=prep["target"],
-                    argv=prep["argv"],
-                    extra_env=prep["extra_env"],
-                    chain_train={"method": method, "preset": preset, "extra": extra},
-                )
-                note = "auto-preprocess → train chain submitted"
-            else:
-                # No preprocess needed: either auto-preprocess is off, or the cache
-                # is already complete for this exact spec (marker matched) → train
-                # straight away, skipping the 1–2 min re-scan.
-                resp = cl.submit(method=method, preset=preset, extra=extra)
-                note = (
-                    "caches already complete → preprocess skipped, training directly"
-                    if prep
-                    else None
-                )
-            _STATE.update(
-                proc=None,
-                cmd=None,
-                started_at=None,
-                monitor_url=mon,
-                daemon_job=resp.get("job_id"),
-                daemon_base=getattr(cl, "base", None),
-            )
-            # Real-time tqdm bar in the GUI's cmd window (LoRA_Easy-style \r live
-            # gauge), unless the user turned it off. Default on.
-            _STATE["live_cmd"] = form.get("live_cmd_progress", True) is not False
-            _STATE["run_name"] = (form.get("output_name") or "").strip() or "training"
-            if _STATE["live_cmd"]:
-                _start_progress_stream(form.get("cmd_progress_interval") or 0.5)
-            else:
-                _stop_progress_stream()
-            return {
-                "ok": True,
-                "daemon": True,
-                "job_id": resp.get("job_id"),
-                "daemon_base": getattr(cl, "base", None),
-                "monitor_url": mon,
-                "preprocess": did_prep,
-                "command": cmd_str,
-                "note": note,
-            }
-        except Exception as exc:  # noqa: BLE001 — fall back to a direct spawn
-            fallback_note = f"daemon unavailable ({exc}); ran directly instead"
-
-    # Direct-spawn fallback can't express the preprocess→train chain (no job queue).
-    if prep:
-        return {
-            "ok": False,
-            "error": "Auto-preprocess needs the daemon (it chains "
-            "preprocess → train). Enable 'Run via daemon' or preprocess manually.",
-        }
-
     cmd = build_command(form)
+    cmd_str = " ".join(cmd)
+
+    # Capture the child's stdout+stderr (the sd-scripts RichHandler console) to a
+    # logfile so the GUI live-log panel (log_tail) can mirror the terminal.
+    name = _safe_name((form.get("output_name") or "").strip() or "training")
+    log_dir = ROOT / "output" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"webgui_{name}.log"
+
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
     try:
-        proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
+        logf = open(log_path, "w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(
+            cmd, cwd=str(ROOT), env=env, stdout=logf, stderr=subprocess.STDOUT
+        )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"failed to spawn: {exc}"}
     _STATE.update(
-        proc=proc, cmd=cmd, started_at=time.time(), monitor_url=mon, daemon_job=None
+        proc=proc,
+        cmd=cmd,
+        started_at=time.time(),
+        monitor_url=mon,
+        log_path=str(log_path),
     )
     return {
         "ok": True,
         "command": cmd_str,
         "pid": proc.pid,
         "monitor_url": mon,
-        "note": fallback_note,
+        "log_path": str(log_path),
     }
-
-
-def _pct(done, total):
-    """done/total → an int 0–100, or None when either is missing/zero."""
-    try:
-        if total and float(total) > 0:
-            return max(0, min(100, round(float(done) * 100.0 / float(total))))
-    except (TypeError, ValueError):
-        pass
-    return None
 
 
 def _log_tail(stdout_path, n: int = 12):
@@ -1476,262 +1165,10 @@ def _log_tail(stdout_path, n: int = 12):
     return out[-n:]
 
 
-def _report_and_tail(job, n: int = 40):
-    """Tail a failed daemon job's ``stdout.log`` AND print it once to the webgui's
-    own console (stderr), so the terminal running the GUI shows WHY a job died.
-
-    Daemon jobs run windowless (pythonw, no console), so their only record is the
-    per-job log file — the GUI process is the one with a terminal. Deduped per
-    (job_id, state) so the 2-second status poll doesn't spam the same traceback.
-    Returns the tail (also surfaced to the browser as ``error_log``).
-    """
-    import sys as _sys
-
-    tail = _log_tail(job.get("stdout_path"), n=n)
-    jid = job.get("id") or job.get("job_id")
-    state = job.get("state")
-    seen = _STATE.setdefault("_reported_errs", set())
-    key = (jid, state)
-    if jid and key not in seen:
-        seen.add(key)
-        err = job.get("error")
-        body = "\n".join(tail) or "(no stdout captured)"
-        _sys.stderr.write(
-            f"\n{'=' * 72}\n[webgui] daemon job {jid} {str(state).upper()}"
-            f"{(' — ' + err) if err else ''}\n  log: {job.get('stdout_path')}\n"
-            f"  --- last {len(tail)} log line(s) ---\n{body}\n{'=' * 72}\n"
-        )
-        _sys.stderr.flush()
-    return tail
-
-
-def _extract_tqdm_line(stdout_path):
-    """The latest tqdm progress line — of ANY kind (training, sampling, loading) —
-    in a job's stdout.log, for the throttled new-line fallback used when the live
-    tail is off. Sampling is no longer filtered out, so a sample pass is visible.
-
-    The daemon runs train.py detached (stdout → file); tqdm rewrites its bar in
-    place with \\r, so scan from the end for the most recent line carrying it/s or
-    s/it + an N/total fraction. ``None`` if there isn't one yet.
-    """
-    if not stdout_path:
-        return None
-    try:
-        data = Path(stdout_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    lines = [s.strip() for s in data.replace("\r", "\n").split("\n")]
-    for seg in reversed(lines):
-        if seg and ("it/s" in seg or "s/it" in seg) and "/" in seg:
-            return seg
-    return None
-
-
-def _report_progress(job):
-    """Throttled (~3s) NEW-LINE progress mirror — the fallback when the live \\r
-    streamer is OFF. Skipped when ``_STATE['live_cmd']`` (the streamer owns the
-    console then, so we don't double-print)."""
-    if _STATE.get("live_cmd"):
-        return
-    line = _extract_tqdm_line(job.get("stdout_path"))
-    if not line:
-        return
-    st = _STATE.setdefault("_prog", {"t": 0.0, "line": None})
-    now = time.time()
-    if line == st.get("line") or (now - st.get("t", 0.0)) < 3.0:
-        return
-    st["t"], st["line"] = now, line
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
-
-
-_progress_gen = 0
-
-
-def _stop_progress_stream():
-    """Bump the generation so any running live-progress thread exits promptly."""
-    global _progress_gen
-    _progress_gen += 1
-
-
-def _start_progress_stream(interval=0.5):
-    """Tail the ACTIVE daemon job's stdout.log to the webgui console in REAL TIME —
-    a full, auto-scrolling training log (loading, training, AND sampling / decode
-    lines, nothing filtered), the way a normal trainer's console reads. Replaces the
-    old single-line \\r gauge so a sample pass is visible instead of hidden. Prints a
-    header with the run's output_name so logs are identifiable. Runs in a daemon
-    thread that follows whichever job is active; a new run (or stop) bumps the
-    generation → the old tailer exits; it also self-exits ~12s after nothing runs.
-    """
-    global _progress_gen
-    _progress_gen += 1
-    gen = _progress_gen
-    interval = max(0.1, min(float(interval or 0.5), 5.0))
-
-    def _loop():
-        from scripts.daemon import client as _dc
-
-        pos = {}  # stdout_path → byte offset already mirrored
-        header_for = None  # active job id we've printed a header for
-        idle, err_last = 0.0, None
-        while gen == _progress_gen:
-            try:
-                cl = _dc.DaemonClient()
-                active = (cl.health() or {}).get("active_job")
-                err_last = None  # daemon reachable → clear any prior error note
-                if not active:
-                    idle += interval
-                    if idle > 12.0:  # nothing running for a while → run finished
-                        break
-                    time.sleep(interval)
-                    continue
-                idle = 0.0
-                path = (cl.get(active) or {}).get("stdout_path")
-                if not path:
-                    time.sleep(interval)
-                    continue
-                if active != header_for:
-                    # New job: print a header + start tailing from the CURRENT end so
-                    # a reconnect doesn't replay the whole log (a fresh launch's log is
-                    # near-empty, so this still catches it from the top).
-                    header_for = active
-                    name = _STATE.get("run_name") or "training"
-                    sys.stdout.write(f"\n=== Real-time training logs — {name} ===\n")
-                    sys.stdout.flush()
-                    try:
-                        pos[path] = os.path.getsize(path)
-                    except OSError:
-                        pos[path] = 0
-                try:
-                    with open(path, "rb") as f:
-                        f.seek(pos.get(path, 0))
-                        chunk = f.read()
-                        pos[path] = f.tell()
-                except OSError:
-                    time.sleep(interval)
-                    continue
-                if chunk:
-                    if gen != _progress_gen:  # superseded mid-iteration → stop writing
-                        break
-                    # Write raw (keep \r) so a tqdm bar updates IN PLACE (one climbing
-                    # line) while real log lines (\n) scroll — the native trainer
-                    # console look: loading/sampling bars don't pile up line-by-line.
-                    sys.stdout.write(chunk.decode("utf-8", "replace"))
-                    sys.stdout.flush()
-            except Exception as exc:  # noqa: BLE001 — best-effort console mirror
-                # Never crash the GUI over a transient daemon hiccup, but surface it
-                # ONCE (deduped) so a frozen tail is debuggable instead of silent.
-                msg = f"{type(exc).__name__}: {exc}"
-                if msg != err_last:
-                    err_last = msg
-                    try:
-                        sys.stderr.write(f"\n[log stream] {msg}\n")
-                        sys.stderr.flush()
-                    except Exception:  # noqa: BLE001
-                        pass
-            time.sleep(interval)
-        try:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-        except Exception:  # noqa: BLE001
-            pass
-
-    threading.Thread(target=_loop, daemon=True).start()
-
-
-def _train_phase(cl, train_id, out, job=None):
-    """Fill ``out`` from a daemon train job's state (running → embed monitor)."""
-    try:
-        tj = job if job is not None else (cl.get(train_id) or {})
-    except Exception:  # noqa: BLE001 — daemon best-effort
-        tj = {}
-    st = tj.get("state")
-    out["training"] = {"job_id": train_id, "state": st}
-    if st == "running":
-        out["phase"] = "training"
-        out["training_started"] = True
-        _report_progress(tj)  # mirror progress to the GUI's cmd window
-    elif st == "queued":
-        out["phase"] = "train_queued"
-    elif st == "done":
-        out["phase"] = "done"
-    elif st == "stopped":
-        out["phase"] = "stopped"
-    elif st == "error":
-        out["phase"] = "error"
-        out["error_log"] = _report_and_tail(tj)
-    else:
-        out["phase"] = "training"  # unknown, but a train job exists
-    return out
-
-
-def _daemon_phase(tracked_job_id):
-    """Resolve the live phase of a daemon run (preprocess → chained train).
-
-    ``tracked_job_id`` is whatever ``launch()`` recorded in ``_STATE`` — the
-    preprocess command job when auto-preprocess is on, else the train job
-    itself. Returns the phase model the frontend renders: a preprocess progress
-    bar that auto-hands-off to the embedded monitor the moment training starts.
-    Best-effort: daemon down / unknown job → an inert ``{phase: None}`` so the
-    legacy poll fields still drive the UI.
-    """
-    out = {
-        "phase": None,
-        "preprocess": None,
-        "training": None,
-        "training_started": False,
-    }
-    try:
-        from scripts.daemon import client as _dc
-
-        cl = _dc.DaemonClient()
-        if cl.health() is None:
-            return out
-        job = cl.get(tracked_job_id) or {}
-    except Exception:  # noqa: BLE001 — daemon is optional infra here
-        return out
-    # Bail only on the daemon's 404 shape ({"error":"no such job"} — no state).
-    # A REAL job that FAILED also carries an `error` field, and we very much want
-    # to surface THAT (don't conflate "job not found" with "job errored").
-    if not job or not job.get("state"):
-        return out
-    if job.get("kind") == "command":
-        state = job.get("state")
-        latest = job.get("latest") or {}
-        out["preprocess"] = {
-            "state": state,
-            "phase_label": latest.get("phase"),
-            "done": latest.get("done"),
-            "total": latest.get("total"),
-            "percent": _pct(latest.get("done"), latest.get("total")),
-            "log_tail": _log_tail(job.get("stdout_path"))
-            if state in ("queued", "running")
-            else [],
-        }
-        if state in ("queued", "running"):
-            out["phase"] = "preprocess"
-            return out
-        if state == "stopped":
-            out["phase"] = "stopped"
-            return out
-        if state == "error":
-            out["phase"] = "error"
-            out["error_log"] = _report_and_tail(job)
-            return out
-        # preprocess done → follow the chained training job, if one was spawned
-        chained = job.get("chained_job_id")
-        if chained:
-            return _train_phase(cl, chained, out)
-        out["phase"] = "done"
-        return out
-    # the tracked job is itself a train job (no preprocess step)
-    return _train_phase(cl, tracked_job_id, out, job=job)
-
-
 def status() -> dict:
     proc = _STATE.get("proc")
     running = proc is not None and proc.poll() is None
-    out = {
+    return {
         "running": running,
         "pid": proc.pid if proc else None,
         "returncode": (proc.poll() if proc else None) if not running else None,
@@ -1740,24 +1177,12 @@ def status() -> dict:
         "elapsed": (time.time() - _STATE["started_at"])
         if _STATE.get("started_at") and running
         else None,
-        "daemon_job": _STATE.get("daemon_job"),
-        "daemon_base": _STATE.get("daemon_base"),
+        "log_path": _STATE.get("log_path"),
     }
-    # Enrich with the daemon phase model (preprocess bar → training hand-off)
-    # whenever a daemon job is tracked. Guarded so a daemon hiccup can never
-    # break the status poll the whole UI depends on.
-    djob = _STATE.get("daemon_job")
-    if djob:
-        try:
-            out.update(_daemon_phase(djob))
-        except Exception:  # noqa: BLE001
-            pass
-    return out
 
 
 def stop() -> dict:
-    _stop_progress_stream()  # halt the live cmd bar
-    # Direct-Popen path (daemon disabled): terminate the spawned process.
+    # Direct-Popen path (the only path): terminate the spawned process.
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
         try:
@@ -1765,78 +1190,21 @@ def stop() -> dict:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "stopped": "direct"}
-
-    # Daemon path (the default): the job runs DETACHED in the daemon, so
-    # _STATE['proc'] is None — terminating it does nothing. Tell the daemon to
-    # stop the run instead. We stop the tracked job, its chained follow-on, AND
-    # the currently active job, so a running preprocess/train is killed (tree +
-    # GPU freed) and a still-queued follow-on can't sneak through. (Stopping a
-    # preprocess before it finishes also blocks the chain: the manager only
-    # enqueues the train job when the command job reaches `done`.)
-    djob = _STATE.get("daemon_job")
-    if djob:
-        try:
-            from scripts.daemon import client as _dc
-
-            cl = _dc.DaemonClient()
-            if cl.health() is None:
-                return {"ok": False, "error": "training daemon not reachable"}
-            ids = [djob]
-            job = cl.get(djob) or {}
-            if job.get("chained_job_id"):
-                ids.append(job["chained_job_id"])
-            active = (cl.health() or {}).get("active_job")
-            if active:
-                ids.append(active)
-            stopped = []
-            for jid in dict.fromkeys(i for i in ids if i):
-                try:
-                    r = cl.stop(jid) or {}
-                    stopped.append({"job": jid, "state": r.get("state")})
-                except Exception:  # noqa: BLE001 — already terminal / gone
-                    pass
-            return {"ok": True, "stopped": "daemon", "jobs": stopped}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"daemon stop failed: {exc}"}
-
     return {"ok": False, "error": "no run in progress"}
 
 
 def log_tail(n: int = 80) -> dict:
     """Last ``n`` lines of the active run's captured console output.
 
-    When training runs via the daemon (the GUI default), the daemon redirects
-    train.py's stdout/stderr — i.e. the exact sd-scripts-formatted RichHandler
-    console log — to ``<job>/stdout.log``. This returns that tail so a GUI can
-    mirror the terminal live. A direct-spawn run writes straight to the GUI's
-    own terminal (no capture file), so there's nothing to tail. Best-effort:
-    never raises, so a poll loop can call it freely.
+    ``launch()`` redirects the child train.py's stdout/stderr — the exact
+    sd-scripts-formatted RichHandler console log — to a logfile under
+    ``output/logs/``. This returns that tail so a GUI can mirror the terminal
+    live. Best-effort: never raises, so a poll loop can call it freely.
     """
-    djob = _STATE.get("daemon_job")
-    if not djob:
-        proc = _STATE.get("proc")
-        if proc is not None and proc.poll() is None:
-            return {"ok": True, "lines": [], "note": "direct run — see the terminal"}
-        return {"ok": True, "lines": []}
-    try:
-        from scripts.daemon import client as _dc
-
-        cl = _dc.DaemonClient()
-        if cl.health() is None:
-            return {"ok": True, "lines": [], "note": "daemon not reachable"}
-        job = cl.get(djob) or {}
-        path = job.get("stdout_path")
-        # An auto-preprocess job chains a train job: once the train phase is live,
-        # prefer ITS log so the panel follows the hand-off instead of freezing on
-        # the finished preprocess output.
-        chained = job.get("chained_job_id")
-        if chained:
-            cjob = cl.get(chained) or {}
-            if cjob.get("stdout_path") and cjob.get("state") not in (None, "queued"):
-                path = cjob.get("stdout_path")
-        return {"ok": True, "lines": _log_tail(path, n=n), "path": path}
-    except Exception as exc:  # noqa: BLE001 — a log poll must never throw
-        return {"ok": False, "error": str(exc), "lines": []}
+    path = _STATE.get("log_path")
+    if not path:
+        return {"ok": True, "lines": [], "note": "training logs stream to the terminal"}
+    return {"ok": True, "lines": _log_tail(path, n=n), "path": path}
 
 
 # --------------------------------------------------------------------------- #
@@ -1899,23 +1267,31 @@ def queue_clear() -> dict:
 
 
 def queue_run() -> dict:
-    """Submit every queued job to the training daemon in order (it then runs
-    them sequentially). The queue is left intact — clear it if you want."""
-    results = []
-    for item in queue_list():
-        form = dict(item.get("form") or {})
-        form["daemon"] = True
-        form.pop("dry_run", None)
-        r = launch(form)
-        results.append(
-            {
-                "name": item.get("name"),
-                "ok": bool(r.get("ok")),
-                "job_id": r.get("job_id"),
-                "error": r.get("error"),
-            }
-        )
-    return {"ok": True, "submitted": results}
+    """Launch the FIRST queued job as a direct subprocess and return.
+
+    With the job queue removed there is only a single blocking-ish child process
+    at a time, so we can't fan out the whole queue at once. Launch the first job
+    (if nothing is already running) and report it; the queue is left intact —
+    re-run after it finishes for the next one, or clear it."""
+    proc = _STATE.get("proc")
+    if proc is not None and proc.poll() is None:
+        return {"ok": False, "error": "A run is already in progress."}
+    q = queue_list()
+    if not q:
+        return {"ok": False, "error": "queue is empty"}
+    item = q[0]
+    form = dict(item.get("form") or {})
+    form.pop("dry_run", None)
+    r = launch(form)
+    return {
+        "ok": bool(r.get("ok")),
+        "launched": {
+            "name": item.get("name"),
+            "ok": bool(r.get("ok")),
+            "pid": r.get("pid"),
+            "error": r.get("error"),
+        },
+    }
 
 
 def config_list() -> list:

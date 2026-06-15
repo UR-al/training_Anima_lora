@@ -16,7 +16,7 @@ Run `run_gui.bat` (or `python tasks.py webgui`) to open a browser control panel 
 
 - Pick **method / preset / optimizer (~89) / scheduler** from dropdowns; set rank, LR, epochs, dataset, seed, optimizer/scheduler args.
 - **Preview the command**, then **Start** / **Stop**.
-- **Runs through the training daemon by default**, so training survives closing the page (and queues + captures logs).
+- **Runs `train.py` as a direct subprocess** and captures its stdout/stderr to a logfile under `output/logs/` (tailed live in the panel). Closing the page does not stop the run, but there is no job queue — start runs one at a time.
 - One-click link to the **live monitor** (loss/LR/sample dashboard, resumes the curve on `--resume`).
 
 ## CLI

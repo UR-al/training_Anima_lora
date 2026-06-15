@@ -3,7 +3,7 @@
 Orchestration extracted from ``preprocess/cache_pe_encoder.py`` (see
 ``docs/proposal/tooling_architecture.md`` §A). The script keeps only argparse +
 encoder load; the walk → group → batched-encode → idempotent-save loop, and the
-centroid pooling pass, live here so the daemon / tests / embedding code can
+centroid pooling pass, live here so the GUI / tests / embedding code can
 drive them without a CLI attached.
 """
 

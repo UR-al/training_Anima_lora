@@ -11,15 +11,18 @@ Design notes:
   a MODEL socket; instead it loads the chosen Anima checkpoint itself **after**
   training finishes and returns a patched MODEL — a drop-in for
   ``UNETLoader → Anima Adapter Loader``.
-- **Daemon required.** Training always runs in the local training daemon's own
-  detached subprocess (out of the ComfyUI process). If the daemon isn't up this
-  node errors out rather than auto-starting it.
+- **Direct subprocess.** Training runs as a plain ``subprocess`` (preprocess
+  then ``train.py``) spawned from the anima_lora repo root, out of the ComfyUI
+  process, so a CUDA OOM / segfault kills only the child — not ComfyUI. The
+  ComfyUI worker blocks until it finishes (ComfyUI nodes run synchronously).
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 import os
+import subprocess
+import sys
 
 import folder_paths  # ComfyUI builtin
 
@@ -135,38 +138,107 @@ def _comfy_model_path(folder: str, preferred: str) -> str | None:
     return None
 
 
-def _resolve_daemon_client():
-    """Return the bundled stdlib ``DaemonClient`` class.
+def _overrides_to_argv(overrides: dict) -> list[str]:
+    """Flatten an ``overrides`` dict into ``--key value`` ``train.py`` argv.
 
-    The trainer node is self-contained: it talks to a running Anima daemon over
-    localhost HTTP through the pure-stdlib client vendored under ``_vendor/``
-    (kept verbatim-in-sync with the live ``scripts/daemon/client.py`` by
-    ``scripts/sync_vendor.py``). We import it via a *relative* import so we
-    never bind the generic top-level ``scripts`` name — the old live-first probe
-    did ``import scripts.daemon.client`` against a ``../..`` it assumed was the
-    repo, which is ComfyUI's root in a standalone install; that poisoned
-    ``sys.modules['scripts']`` with some unrelated on-path package and broke the
-    vendor fallback too (``ModuleNotFoundError: scripts.daemon``).
-
-    The client never *starts* a daemon — it only talks to one. Its
-    ``config.discover_pidfile`` finds a running daemon's pidfile (the per-user
-    ``~/.anima/daemon.json`` mirror, ``$ANIMA_DAEMON_PIDFILE``,
-    ``$ANIMA_LORA_ROOT``, or an in-repo path) to follow even an ephemeral
-    fallback port; failing all that it uses ``127.0.0.1:8765`` (override with
-    ``$ANIMA_DAEMON_PORT``).
+    Mirrors ``scripts/tasks/training.py::_toml_table_to_argv``: bools become a
+    bare ``--flag`` when true (omitted when false), lists/tuples spread into
+    ``--key v1 v2``, scalars become ``--key str(value)``. These are appended to
+    the ``train.py`` command after ``--method``/``--preset``/``--methods_subdir``
+    so the CLI-overrides-win merge chain applies them on top of the gui-method
+    config — exactly the precedence chained CLI overrides have.
     """
-    from ._vendor.scripts.daemon.client import DaemonClient
+    argv: list[str] = []
+    for key, val in overrides.items():
+        flag = f"--{key}"
+        if isinstance(val, bool):
+            if val:
+                argv.append(flag)
+        elif isinstance(val, (list, tuple)):
+            argv.append(flag)
+            argv.extend(str(v) for v in val)
+        else:
+            argv.append(flag)
+            argv.append(str(val))
+    return argv
 
-    return DaemonClient
+
+def _run_subprocess(argv: list[str], *, root: str, log_path: str, label: str) -> None:
+    """Run ``argv`` from ``root`` to completion, teeing output to ``log_path``.
+
+    Streams the child's combined stdout/stderr both to the ComfyUI console (so
+    per-step logs show live) and to ``log_path``. Polls ComfyUI's interrupt flag
+    each line and, on Cancel, terminates the child and raises
+    ``InterruptProcessingException`` so the node is marked cancelled. On a
+    non-zero exit, raises ``RuntimeError`` carrying the tail of the captured log
+    (so a failed run surfaces its stdout tail directly in the ComfyUI error).
+    """
+    import comfy.model_management
+
+    # Inherit the parent env; ensure unbuffered child stdio so the live console
+    # tail isn't chunked, and that the venv's bin dir is on PATH for any
+    # console-script grandchildren the trainer spawns.
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    venv_bin = os.path.dirname(sys.executable)
+    if venv_bin and venv_bin not in env.get("PATH", "").split(os.pathsep):
+        env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+
+    print(f"[Anima Trainer] {label}: {' '.join(argv)}", flush=True)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    tail: list[str] = []
+    with open(log_path, "w", encoding="utf-8", errors="replace") as logfh:
+        proc = subprocess.Popen(
+            argv,
+            cwd=root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                logfh.write(line)
+                logfh.flush()
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                tail.append(line)
+                if len(tail) > 40:
+                    del tail[0]
+                if comfy.model_management.processing_interrupted():
+                    print(
+                        f"[Anima Trainer] interrupted — terminating {label} "
+                        "subprocess",
+                        flush=True,
+                    )
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    raise comfy.model_management.InterruptProcessingException()
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+        rc = proc.wait()
+
+    if rc != 0:
+        raise RuntimeError(
+            f"{label} subprocess failed (exit {rc}). See the log: {log_path}\n"
+            f"--- last lines ---\n{''.join(tail).rstrip()}"
+        )
 
 
 def _trainer_tmp_root() -> str:
-    """Where single-image-mode datasets are staged before submission.
+    """Where single-image-mode datasets are staged before training.
 
     Prefers the repo's ``output/tmp_trainer`` (so it's covered by the repo
     gitignore and easy to prune), but falls back to ComfyUI's temp dir when the
-    node is installed outside the anima_lora tree — the daemon reads it over a
-    plain filesystem path either way (same machine, localhost-only).
+    node is installed outside the anima_lora tree — the training subprocess
+    reads it over a plain filesystem path either way (same machine).
     """
     try:
         return os.path.join(_anima_lora_root(), "output", "tmp_trainer")
@@ -175,7 +247,7 @@ def _trainer_tmp_root() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Train via daemon → block until done → return saved safetensors path
+# Train via direct subprocess → block until done → return saved safetensors path
 # ---------------------------------------------------------------------------
 
 
@@ -190,35 +262,26 @@ def _train_and_save(
     mask=None,
     mask_dir: str = "",
 ) -> str:
-    """Submit training to the local daemon and block until done.
+    """Train in a direct subprocess and block until done.
 
     Either an ``image`` + ``prompt`` (single-image mode) or a ``dataset_dir``
     (directory mode) supplies the data; ``prepare_dataset_dir`` picks the mode.
     An optional ``mask`` (MASK tensor, single-image) or ``mask_dir`` (directory)
     turns on masked loss.
 
-    The daemon runs ``accelerate launch … train.py`` in its **own** detached
-    subprocess, so a CUDA OOM / segfault kills only the job — not ComfyUI. This
-    call polls ``GET /jobs/{id}`` and drives a ``ProgressBar`` until the job
-    reaches a terminal state, then returns the absolute path of the saved
-    safetensors.
-
-    Raises ``RuntimeError`` if the daemon is not already running — this node
-    does not auto-start it.
+    Spawns two subprocesses from the anima_lora repo root, out of the ComfyUI
+    process (so a CUDA OOM / segfault kills only the child): first
+    ``tasks.py preprocess-config …`` (bucket-resize + VAE/TE cache the dataset),
+    then ``train.py --method tlora --preset … --methods_subdir gui-methods …``
+    with the UI fields folded in as CLI overrides. Blocks until each finishes,
+    raising ``RuntimeError`` with the log tail on a non-zero exit, then returns
+    the absolute path of the saved safetensors.
     """
     import comfy.model_management
 
     from .dataset_prep import prepare_dataset_dir
 
-    # Daemon must already be up. We do NOT auto-start it here.
-    DaemonClient = _resolve_daemon_client()
-    client = DaemonClient()
-    if client.health() is None:
-        raise RuntimeError(
-            "Anima training daemon is not running. Start it with `make daemon` "
-            "(or `python tasks.py daemon`) from the anima_lora/ directory, then "
-            "re-run this node."
-        )
+    root = _anima_lora_root()
 
     # image set → single-image mode (writes the IMAGE batch + caption sidecars);
     # dataset_dir set → directory mode (user's dir of images + .txt sidecars).
@@ -254,14 +317,14 @@ def _train_and_save(
         overrides["masked_loss"] = True
 
     print(
-        f"[Anima Trainer] submitting method={method} preset={preset} "
+        f"[Anima Trainer] training method={method} preset={preset} "
         f"images={n_images}{' +masks' if resolved_mask_dir else ''} "
         f"→ {output_name}.safetensors",
         flush=True,
     )
 
     # Free ComfyUI-held VRAM so the (separate) training process has room for its
-    # own DiT + optimizer state. The daemon spawns the job; we just watch.
+    # own DiT + optimizer state. The child subprocesses are the only GPU users.
     comfy.model_management.unload_all_models()
     try:
         import gc
@@ -274,18 +337,20 @@ def _train_and_save(
     except Exception:
         pass
 
+    log_dir = os.path.join(_trainer_tmp_root(), "logs")
+
     # train.py refuses to run on an incomplete latent/TE cache, and the temp
-    # dir starts empty. So we submit a `preprocess-config` *command* job that
-    # bucket-resizes + caches the dataset, carrying a `chain_train` spec: the
-    # daemon enqueues the follow-on training job itself the moment preprocess
-    # succeeds (and persists the link as `chained_job_id`), so the chain
-    # completes even if ComfyUI stops polling. Both run on the daemon's single
-    # serial GPU queue, so they can't fight over VRAM.
+    # dir starts empty. So phase 1 runs `tasks.py preprocess-config` as a direct
+    # subprocess that bucket-resizes + caches the dataset; phase 2 then runs
+    # `train.py` once the caches exist. Both block inline and run serially in
+    # their own process, so a CUDA OOM kills only the child — and they never
+    # fight over VRAM (the trainer subprocess starts after preprocess exits).
     # Cache against the models ComfyUI registers (the DiT the user selected, plus
     # the VAE + text-encoder resolved through folder_paths) so preprocess never
     # assumes a copy under anima_lora/models/. Unresolved ones are simply omitted
     # → preprocess-config falls back to its config-default models/ paths.
     pp_argv = [
+        sys.executable,
         "tasks.py",
         "preprocess-config",
         "--dataset_config",
@@ -303,146 +368,47 @@ def _train_and_save(
     if qwen3_path:
         pp_argv += ["--qwen3", qwen3_path]
 
-    pp_job_id = client.submit_command(
+    # Phase 1: preprocess (bucket-resize + VAE/TE cache the dataset).
+    _run_subprocess(
+        pp_argv,
+        root=root,
+        log_path=os.path.join(log_dir, f"{output_name}_preprocess.log"),
         label="preprocess",
-        argv=pp_argv,
-        chain_train={
-            "method": method,
-            "preset": preset,
-            "methods_subdir": "gui-methods",
-            "overrides": overrides,
-        },
-    )["job_id"]
-    print(f"[Anima Trainer] preprocess queued as job {pp_job_id}", flush=True)
-
-    # Phase 1: wait for preprocess. No progress bar (it emits no step total).
-    pp_job = _poll_job(client, pp_job_id, label="preprocess")
-    pp_state = pp_job.get("state")
-    if pp_state != "done":
-        raise RuntimeError(
-            f"Preprocess job {pp_job_id} ended as '{pp_state}': "
-            f"{pp_job.get('error') or '(no detail)'}. "
-            f"See the job stdout log: {pp_job.get('stdout_path')}"
-        )
-
-    # The daemon stamps the chained training job id on the (now done) command
-    # job. If it's missing the chain didn't fire — fail loudly rather than hang.
-    job_id = pp_job.get("chained_job_id")
-    if not job_id:
-        raise RuntimeError(
-            f"Preprocess job {pp_job_id} finished but did not chain a training "
-            f"job. See the job stdout log: {pp_job.get('stdout_path')}"
-        )
-    print(f"[Anima Trainer] training queued as job {job_id}", flush=True)
-
-    # Phase 2: wait for training, driving a step ProgressBar.
-    expected = os.path.join(output_dir, f"{output_name}.safetensors")
-    job = _poll_job(client, job_id, label="train", with_progress=True)
-    state = job.get("state")
-
-    if state == "done":
-        path = expected if os.path.exists(expected) else job.get("ckpt_path")
-        if not path or not os.path.exists(path):
-            raise RuntimeError(
-                f"Training finished but no checkpoint found (expected {expected}). "
-                f"See the job stdout log: {job.get('stdout_path')}"
-            )
-        print(f"[Anima Trainer] saved {path}", flush=True)
-        return path
-
-    raise RuntimeError(
-        f"Training job {job_id} ended as '{state}': {job.get('error') or '(no detail)'}. "
-        f"See the job stdout log: {job.get('stdout_path')}"
     )
 
+    # Phase 2: training. Same CLI surface the `make lora-gui` path builds —
+    # `train.py --method <m> --preset <p> --methods_subdir gui-methods` with the
+    # UI fields folded in as `--key value` CLI overrides (CLI wins the merge
+    # chain, exactly the precedence the gui-method config expects).
+    train_argv = [
+        sys.executable,
+        "train.py",
+        "--method",
+        method,
+        "--preset",
+        preset,
+        "--methods_subdir",
+        "gui-methods",
+    ]
+    train_argv += _overrides_to_argv(overrides)
 
-def _poll_job(client, job_id: str, *, label: str, with_progress: bool = False) -> dict:
-    """Poll ``GET /jobs/{id}`` until terminal; return the final job dict.
+    _run_subprocess(
+        train_argv,
+        root=root,
+        log_path=os.path.join(log_dir, f"{output_name}_train.log"),
+        label="train",
+    )
 
-    Prints state transitions tagged with ``label``. When ``with_progress`` is
-    set, lazily sizes a ComfyUI ``ProgressBar`` from the job's ``total_steps``
-    (read from its progress.jsonl) and advances it by ``global_step``.
-
-    If the user hits ComfyUI's interrupt (Cancel) button while we're blocked
-    here, the daemon job is detached and keeps burning the GPU regardless. So we
-    poll ``processing_interrupted()`` each tick and, when set, abort the job via
-    ``client.stop(job_id)`` — the same call ``make daemon-kill JOB=<id>`` makes —
-    before re-raising ``InterruptProcessingException`` so ComfyUI marks the node
-    cancelled.
-    """
-    import time
-
-    import comfy.model_management
-    import comfy.utils
-
-    pbar = None
-    total = None
-    last_state = None
-    while True:
-        if comfy.model_management.processing_interrupted():
-            print(
-                f"[Anima Trainer] interrupted — aborting {label} job {job_id} "
-                f"(daemon stays up)",
-                flush=True,
-            )
-            try:
-                client.stop(job_id)
-            except Exception as e:  # best-effort; still surface the interrupt
-                print(
-                    f"[Anima Trainer] failed to stop job {job_id}: {e}",
-                    flush=True,
-                )
-            raise comfy.model_management.InterruptProcessingException()
-
-        try:
-            job = client.get(job_id)
-        except Exception as e:  # daemon hiccup — keep polling briefly
-            print(f"[Anima Trainer] poll error ({label}): {e}", flush=True)
-            time.sleep(2.0)
-            continue
-
-        state = job.get("state")
-        if state != last_state:
-            print(f"[Anima Trainer] {label} job {job_id}: {state}", flush=True)
-            last_state = state
-
-        if with_progress:
-            if total is None:
-                total = _read_total_steps(job.get("progress_path"))
-                if total:
-                    pbar = comfy.utils.ProgressBar(total)
-            step = (job.get("latest") or {}).get("global_step")
-            if pbar is not None and isinstance(step, int):
-                pbar.update_absolute(min(step, total), total)
-
-        if state in ("done", "error", "stopped"):
-            return job
-        time.sleep(1.5)
-
-
-def _read_total_steps(progress_path) -> int | None:
-    """Read ``total_steps`` from the run_start line of a job's progress.jsonl.
-
-    The daemon and ComfyUI share a machine, so reading the local file is the
-    cheapest way to size the progress bar without bloating the HTTP API.
-    """
-    if not progress_path or not os.path.isfile(progress_path):
-        return None
-    try:
-        import json
-
-        with open(progress_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if '"run_start"' not in line:
-                    continue
-                rec = json.loads(line)
-                if rec.get("ev") == "run_start":
-                    val = rec.get("total_steps")
-                    return int(val) if val else None
-    except (OSError, ValueError):
-        return None
-    return None
+    # train.py writes `<output_dir>/<output_name>.safetensors` at the end; we set
+    # both above, so the path is deterministic.
+    expected = os.path.join(output_dir, f"{output_name}.safetensors")
+    if not os.path.exists(expected):
+        raise RuntimeError(
+            f"Training finished but no checkpoint found (expected {expected}). "
+            f"See the train log: {os.path.join(log_dir, output_name + '_train.log')}"
+        )
+    print(f"[Anima Trainer] saved {expected}", flush=True)
+    return expected
 
 
 def _load_anima_model(anima_model: str):
@@ -601,9 +567,10 @@ class AnimaLoRATrainer:
         "Train an Anima T-LoRA + OrthoLoRA from a single image + caption, then "
         "load the chosen base checkpoint and return it with the trained LoRA "
         "applied — a drop-in for the Anima Adapter Loader's MODEL output. "
-        "Optionally accepts a MASK to train with masked loss. Training runs in "
-        "the local Anima daemon (errors if the daemon isn't running); the UI "
-        "stays responsive and a progress bar tracks the run."
+        "Optionally accepts a MASK to train with masked loss. Training runs as a "
+        "direct subprocess (preprocess then train.py) spawned from the anima_lora "
+        "repo root; the ComfyUI worker blocks until it finishes. Watch the console "
+        "for per-step logs."
     )
 
     def train(
@@ -760,9 +727,9 @@ class AnimaLoRATrainerFolder:
         "sidecars, then load the chosen base checkpoint and return it with the "
         "trained LoRA applied — a drop-in for the Anima Adapter Loader's MODEL "
         "output. Optionally point it at a folder of `{stem}_mask.png` masks to "
-        "train with masked loss. Training runs in the local Anima daemon (errors "
-        "if the daemon isn't running); the UI stays responsive and a progress "
-        "bar tracks the run."
+        "train with masked loss. Training runs as a direct subprocess (preprocess "
+        "then train.py) spawned from the anima_lora repo root; the ComfyUI worker "
+        "blocks until it finishes. Watch the console for per-step logs."
     )
 
     def train(

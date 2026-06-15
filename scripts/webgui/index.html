@@ -418,14 +418,9 @@
     <div class="row3">
       <div class="chk"><input id="monitor" type="checkbox" checked><label title="Live loss / LR / sample-image dashboard in the browser (--monitor).">Live web monitor</label></div>
       <div><label>Monitor port</label><input id="monitor_port" type="number" value="8766"></div>
-      <div class="chk"><input id="daemon" type="checkbox" checked><label>Run via daemon (survives close)</label></div>
     </div>
     <div class="row">
       <div><label>Monitor / log every N steps <span class="hint">metric + monitor-chart cadence (--log_every_n_steps · blank = 1)</span></label><input id="log_every_n_steps" type="number" min="1" placeholder="1"></div>
-    </div>
-    <div class="row3">
-      <div class="chk"><input id="live_cmd_progress" type="checkbox" checked><label title="Stream the live tqdm bar to the cmd window in real time — updates in place (\\r), LoRA_Easy-style climbing gauge. Off = a new progress line every ~3s.">Live cmd progress bar</label></div>
-      <div><label>cmd refresh (sec) <span class="hint">how often the live bar redraws</span></label><input id="cmd_progress_interval" type="number" step="0.1" min="0.1" value="0.5"></div>
     </div>
     <div class="btns">
       <button class="ghost" onclick="preview()">Preview command</button>
@@ -472,7 +467,7 @@
     </div>
     <p class="hint">Imports a LoRA_Easy / kohya <code>.toml</code>/<code>.json</code> (or an anima dataset toml) and maps it onto the form — incompatible kohya keys (enable_bucket / resolution / shuffle_caption…) are dropped, <code>resolution</code> → nearest tier.</p>
     <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px">
-      <label style="margin:0">Queue — runs top → bottom via the daemon</label>
+      <label style="margin:0">Queue — Run launches the top job as a direct subprocess</label>
       <div style="display:flex;gap:8px"><button class="primary" onclick="runQueue()">▶ Run queue</button><button class="ghost" onclick="clearQueue()">Clear</button></div>
     </div>
     <div id="queue-list"></div>
@@ -515,12 +510,12 @@ const $ = id => document.getElementById(id);
 const FIELDS = ['method','preset','network_dim','network_alpha','max_train_epochs','dataset_config','output_name','seed',
   'network_module','algo','lycoris_preset','network_args_extra',
   'optimizer_type','learning_rate','optimizer_args','lr_scheduler_type','lr_scheduler_args','lr_warmup_steps',
-  'monitor_port','log_every_n_steps','cmd_progress_interval','extra_flags',
+  'monitor_port','log_every_n_steps','extra_flags',
   'output_dir','resume','sample_prompts',
   'dit_path','te_path','vae_path',
   'ds_name','ds_batch','caption_shuffle_variants','caption_tag_dropout_rate','mit_text_threshold','mit_dilate','sam3_path'];
 // checkbox fields collected by .checked
-const CHECKS = ['monitor','daemon','auto_preprocess','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit','live_cmd_progress'];
+const CHECKS = ['monitor','auto_preprocess','drop_lowres','multiscale','ms_skip_upscale','mask_enable','mask_sam','mask_mit'];
 function esc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 function fill(sel,items,cur){ sel.innerHTML=(items||[]).map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join(''); }
 function post(p,b){ return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()); }
@@ -976,14 +971,11 @@ function pickSubset(btn){ const inp=btn.previousElementSibling; const tmp='__sub
 async function preview(){ const r=await post('/api/launch',form({dry_run:true})); showCmd(r.command||('error: '+(r.error||'?'))); }
 async function start(){ const r=await post('/api/launch',form()); if(!r.ok){ showCmd('✗ '+(r.error||'launch failed')); return; }
   $('prep_log').textContent=''; $('prep_log').style.display='none';  // fresh run → clear stale log tail
-  let msg=r.daemon?('submitted to daemon — job '+(r.job_id||'?')):'started';
-  if(r.preprocess) msg+=' (auto-preprocess → train chain)';
-  showCmd(msg+'\n$ '+r.command+(r.note?('\n('+r.note+')'):''));
+  showCmd('started (pid '+(r.pid||'?')+')\n$ '+r.command+(r.log_path?('\nlog: '+r.log_path):''));
   if(r.monitor_url){ const a=$('monlink'); a.href=r.monitor_url; a.style.display='inline'; a.textContent='Open monitor ('+r.monitor_url+') ↗'; } poll(); }
 async function stopRun(){ const r=await post('/api/stop',{});
   if(!r.ok){ showCmd('✗ '+(r.error||'stop failed')); return; }
-  const jobs=(r.jobs||[]).map(j=>j.job+':'+(j.state||'?')).join(', ');
-  showCmd((_lang==='ko'?'■ 정지 요청됨 (데몬 잡 종료)':'■ stop requested (daemon jobs killed)')+(jobs?(' — '+jobs):'')); poll(); }
+  showCmd(_lang==='ko'?'■ 정지 요청됨':'■ stop requested'); poll(); }
 function refreshQueue(){ fetch('/api/queue/list').then(r=>r.json()).then(d=>{ const el=$('queue-list'),q=d.queue||[]; window._q=q;
   if(!q.length){ el.innerHTML='<div class="qempty">queue empty — name a job and "Add to queue".</div>'; return; }
   el.innerHTML=q.map((it,i)=>{ const f=it.form||{}; const sub=[f.optimizer_type,f.network_module,f.algo,f.preset].filter(Boolean).join(' · ');
@@ -993,62 +985,39 @@ function moveQueue(id,dir){ const q=window._q||[],i=q.findIndex(x=>x.id===id),j=
 function removeQueue(id){ post('/api/queue/remove',{id}).then(refreshQueue); }
 function clearQueue(){ post('/api/queue/clear',{}).then(refreshQueue); }
 async function addToQueue(){ await post('/api/queue/add',{name:$('job_name').value,form:form()}); refreshQueue(); }
-async function runQueue(){ const r=await post('/api/queue/run',{}); showCmd('submitted '+(r.submitted||[]).length+' job(s):\n'+(r.submitted||[]).map(s=>`  ${s.ok?'✓':'✗'} ${s.name||''} ${s.job_id?('job '+s.job_id):(s.error||'')}`).join('\n')); poll(); }
+async function runQueue(){ const r=await post('/api/queue/run',{}); const l=r.launched||{};
+  showCmd(r.ok?(`▶ launched: ${l.name||''} (pid ${l.pid||'?'})`):('✗ '+(r.error||l.error||'launch failed'))); poll(); }
 function refreshConfigs(){ fetch('/api/config/list').then(r=>r.json()).then(d=>{ const c=d.configs||[]; $('saved_configs').innerHTML=c.length?c.map(x=>`<option>${esc(x)}</option>`).join(''):'<option value="">(none saved)</option>'; }); }
 async function saveConfig(){ await post('/api/config/save',{name:($('job_name').value||'config'),form:form()}); refreshConfigs(); }
 async function loadConfig(){ const n=$('saved_configs').value; if(!n) return; const r=await(await fetch('/api/config/load?name='+encodeURIComponent(n))).json(); if(r.ok) setForm(r.form); }
 async function delConfig(){ const n=$('saved_configs').value; if(!n) return; await post('/api/config/delete',{name:n}); refreshConfigs(); }
 
-// Render the daemon phase model: a preprocess progress bar → a plain "training…"
-// status. The monitor is NOT embedded — view it via the "Open monitor ↗" link.
+// Render the run state: a plain "training…" / "done" panel. The monitor is NOT
+// embedded — view it via the "Open monitor ↗" link.
 function renderPhase(s){
-  const ko=(_lang==='ko'), panel=$('progress_panel'), ph=s.phase;
-  const trainingText=()=>{ panel.style.display='block'; $('prep_progress').style.display='none';
+  const ko=(_lang==='ko'), panel=$('progress_panel');
+  $('prep_progress').style.display='none';
+  if(s.running){
+    panel.style.display='block';
     $('phase_title').textContent=ko?'🟢 학습 중…  (모니터: 위 “Open monitor ↗”)':'🟢 Training…  (monitor: “Open monitor ↗” above)';
-    $('phase_pct').textContent=''; };
-  if(!ph){  // no daemon phase info (direct Popen / daemon down)
-    if(s.running) trainingText(); else panel.style.display='none';
-    return;
-  }
-  panel.style.display='block';
-  const pp=s.preprocess||{};
-  if(ph==='preprocess'){
-    $('prep_progress').style.display='block';
-    const lab=pp.phase_label||'', pct=pp.percent, bar=$('prep_bar');
-    $('phase_title').textContent=(ko?'전처리 중…':'Preprocessing…')+(lab?(' — '+lab):'');
-    if(pct!=null){ bar.style.width=pct+'%'; bar.style.opacity='1'; $('phase_pct').textContent=pct+'%'+((pp.done!=null&&pp.total!=null)?` (${pp.done}/${pp.total})`:''); }
-    else { bar.style.width='100%'; bar.style.opacity='.4'; $('phase_pct').textContent=ko?'준비 중…':'starting…'; }
-    const log=pp.log_tail||[]; const pre=$('prep_log');
-    if(log.length){ pre.style.display='block'; pre.textContent=log.join('\n'); pre.scrollTop=pre.scrollHeight; }
-    return;
-  }
-  if(ph==='train_queued'){
-    $('prep_progress').style.display='block'; $('prep_bar').style.width='100%'; $('prep_bar').style.opacity='1';
-    $('phase_title').textContent=ko?'전처리 완료 — 학습 대기 중…':'Preprocess done — training queued…'; $('phase_pct').textContent='';
-    return;
-  }
-  if(ph==='training'){ trainingText(); return; }
-  if(ph==='done'){ panel.style.display='block'; $('prep_progress').style.display='none'; $('phase_title').textContent=ko?'✓ 학습 끝!':'✓ Training done!'; $('phase_pct').textContent=''; return; }
-  if(ph==='error'){ $('prep_progress').style.display='block';
-    $('phase_title').textContent=ko?'오류 ✗ — 아래 로그 / 실행 중인 cmd 창 확인':'Error ✗ — see log below / the cmd window';
     $('phase_pct').textContent='';
-    const log=s.error_log||[]; const pre=$('prep_log');
-    if(log.length){ pre.style.display='block'; pre.textContent=log.join('\n'); pre.scrollTop=pre.scrollHeight; }
-    return; }
-  if(ph==='stopped'){ $('phase_title').textContent=ko?'정지됨 ■':'Stopped ■'; $('phase_pct').textContent=''; return; }
+  } else if(s.returncode===0){
+    panel.style.display='block';
+    $('phase_title').textContent=ko?'✓ 학습 끝!':'✓ Training done!'; $('phase_pct').textContent='';
+  } else if(s.returncode!=null){
+    panel.style.display='block';
+    $('phase_title').textContent=(ko?'종료됨 ✗ — cmd 창 / 로그 확인 (code ':'Exited ✗ — see the cmd window / log (code ')+s.returncode+')';
+    $('phase_pct').textContent='';
+  } else {
+    panel.style.display='none';
+  }
 }
 
 async function poll(){ try{ const s=await(await fetch('/api/status')).json();
-  $('dot').className='dot'+((s.running||s.daemon_job)?' run':'');
-  const ko=(_lang==='ko'), ph=s.phase;
-  if(ph==='preprocess'){ const pp=s.preprocess||{}; $('stat').textContent=(ko?'전처리 중':'preprocessing')+(pp.phase_label?(' — '+pp.phase_label):'')+(pp.percent!=null?` ${pp.percent}%`:''); }
-  else if(ph==='train_queued'){ $('stat').textContent=ko?'학습 대기 중':'training queued'; }
-  else if(ph==='training'){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=(ko?'학습 중':'training')+(s.running?` (pid ${s.pid}) — ${m}m ${x}s`:''); }
-  else if(ph==='done'||s.returncode===0){ $('stat').textContent=ko?'완료 ✓':'finished ✓'; }
-  else if(ph==='error'){ $('stat').textContent=ko?'오류 ✗':'error ✗'; }
-  else if(ph==='stopped'){ $('stat').textContent=ko?'정지됨 ■':'stopped ■'; }
-  else if(s.running){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=`training (pid ${s.pid}) — ${m}m ${x}s`; }
-  else if(s.daemon_job){ $('stat').textContent='submitted to daemon — job '+s.daemon_job; }
+  $('dot').className='dot'+(s.running?' run':'');
+  const ko=(_lang==='ko');
+  if(s.running){ const m=Math.floor((s.elapsed||0)/60),x=Math.floor((s.elapsed||0)%60); $('stat').textContent=(ko?'학습 중':'training')+` (pid ${s.pid}) — ${m}m ${x}s`; }
+  else if(s.returncode===0){ $('stat').textContent=ko?'완료 ✓':'finished ✓'; }
   else if(s.returncode!=null){ $('stat').textContent='exited (code '+s.returncode+')'; }
   else $('stat').textContent='idle';
   if(s.monitor_url){ const a=$('monlink'); a.href=s.monitor_url; a.style.display='inline'; }

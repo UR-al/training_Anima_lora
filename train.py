@@ -2502,8 +2502,8 @@ class AnimaTrainer:
         )
         num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
-        # Structured progress sink (Phase 0): a JSONL event stream next to the
-        # checkpoint that the GUI / daemon can tail instead of regex-parsing
+        # Structured progress sink: a JSONL event stream next to the
+        # checkpoint that the GUI can tail instead of regex-parsing
         # tqdm. Main-process only; default on, gated by --progress_jsonl.
         self.progress_sink = None
         if is_main_process:
@@ -2818,13 +2818,12 @@ def build_network_extras() -> dict[str, _config_schema.ConfigKey]:
 def _install_crash_reporter(argv: list[str]) -> None:
     """Record a fatal startup/training exception into ``--progress_jsonl``.
 
-    The daemon launches us windowless under ``pythonw.exe``; that interpreter
-    drops the child's stdout/stderr (only the ``accelerate launch`` *parent*'s
-    output reaches ``stdout.log``), so an uncaught traceback here is lost and the
-    daemon falls back to a generic "process exited (code=1)" with nothing
-    actionable. ``progress.jsonl`` is written by path, not via the dead std
-    streams, so it survives — and it's what the daemon already reads to diagnose
-    a job (``manager._finalize_from_exit`` → ``run_end.error``).
+    A GUI subprocess launcher may launch us windowless under ``pythonw.exe`` on
+    Windows; that interpreter drops the child's stdout/stderr, so an uncaught
+    traceback here is lost and the GUI falls back to a generic "process exited
+    (code=1)" with nothing actionable. ``progress.jsonl`` is written by path, not
+    via the dead std streams, so it survives — and it's what the GUI reads to
+    diagnose a failed run (``run_end.error``).
 
     ``run_scope`` already emits ``run_end(error=…)`` for failures inside the
     training loop, but only *after* ``ProgressSink.run_start`` has fired — late
@@ -2847,7 +2846,7 @@ def _install_crash_reporter(argv: list[str]) -> None:
     prev_hook = sys.excepthook
 
     def _hook(exc_type, exc, tb):
-        # KeyboardInterrupt is a clean stop, handled by run_scope/the daemon's
+        # KeyboardInterrupt is a clean stop, handled by run_scope's
         # stop_requested path — don't mislabel it an error.
         if not issubclass(exc_type, KeyboardInterrupt):
             try:

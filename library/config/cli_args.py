@@ -214,8 +214,7 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         "--monitor_port",
         type=int,
         default=8766,
-        help="port for the web monitor (default 8766; deliberately != the job "
-        "daemon's 8765 so the two never collide on the same box).",
+        help="port for the web monitor (default 8766).",
     )
     parser.add_argument(
         "--monitor_open_browser",

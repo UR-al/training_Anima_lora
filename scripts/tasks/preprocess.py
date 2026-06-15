@@ -425,8 +425,8 @@ def cmd_preprocess(extra):
 def cmd_preprocess_and_mask(extra):
     """Full preprocess (resize + VAE + TE + caption index) THEN SAM3/MIT masking.
 
-    The web GUI's auto-preprocess-at-train-start chain submits this as one daemon
-    command job (then auto-chains the training job). It's a safe superset of
+    The ComfyUI trainer node runs this as a preprocess subprocess before training.
+    It's a safe superset of
     ``preprocess``: masking self-skips when both ``RUN_SAM_MASK`` and
     ``RUN_MIT_MASK`` are off (env-gated inside ``cmd_mask``). ``--target_res`` is a
     resize-only flag the mask scripts don't define, so it's stripped before masking
@@ -703,8 +703,8 @@ def cmd_preprocess_config(extra):
     # A real-time scanner (e.g. Windows Defender) often holds a brief exclusive
     # lock on a *just-created* file, surfaced as PermissionError [Errno 13] on
     # Windows. The ComfyUI trainer node writes this config milliseconds before
-    # the daemon's preprocess job opens it, so retry through that transient lock
-    # rather than failing the whole chain. A genuinely unreadable file still
+    # the preprocess subprocess opens it, so retry through that transient lock
+    # rather than failing the run. A genuinely unreadable file still
     # raises after the budget is spent.
     import time
 
