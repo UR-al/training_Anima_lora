@@ -1802,6 +1802,43 @@ def stop() -> dict:
     return {"ok": False, "error": "no run in progress"}
 
 
+def log_tail(n: int = 80) -> dict:
+    """Last ``n`` lines of the active run's captured console output.
+
+    When training runs via the daemon (the GUI default), the daemon redirects
+    train.py's stdout/stderr — i.e. the exact sd-scripts-formatted RichHandler
+    console log — to ``<job>/stdout.log``. This returns that tail so a GUI can
+    mirror the terminal live. A direct-spawn run writes straight to the GUI's
+    own terminal (no capture file), so there's nothing to tail. Best-effort:
+    never raises, so a poll loop can call it freely.
+    """
+    djob = _STATE.get("daemon_job")
+    if not djob:
+        proc = _STATE.get("proc")
+        if proc is not None and proc.poll() is None:
+            return {"ok": True, "lines": [], "note": "direct run — see the terminal"}
+        return {"ok": True, "lines": []}
+    try:
+        from scripts.daemon import client as _dc
+
+        cl = _dc.DaemonClient()
+        if cl.health() is None:
+            return {"ok": True, "lines": [], "note": "daemon not reachable"}
+        job = cl.get(djob) or {}
+        path = job.get("stdout_path")
+        # An auto-preprocess job chains a train job: once the train phase is live,
+        # prefer ITS log so the panel follows the hand-off instead of freezing on
+        # the finished preprocess output.
+        chained = job.get("chained_job_id")
+        if chained:
+            cjob = cl.get(chained) or {}
+            if cjob.get("stdout_path") and cjob.get("state") not in (None, "queued"):
+                path = cjob.get("stdout_path")
+        return {"ok": True, "lines": _log_tail(path, n=n), "path": path}
+    except Exception as exc:  # noqa: BLE001 — a log poll must never throw
+        return {"ok": False, "error": str(exc), "lines": []}
+
+
 # --------------------------------------------------------------------------- #
 # Queue + saved-config store (persisted JSON, LoRA_Easy-style)
 # --------------------------------------------------------------------------- #

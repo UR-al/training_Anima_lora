@@ -19,11 +19,14 @@ def cmd_gradio_gui(extra):
     while i < len(args):
         a = args[i]
         if a == "--host" and i + 1 < len(args):
-            host = args[i + 1]; i += 2
+            host = args[i + 1]
+            i += 2
         elif a == "--port" and i + 1 < len(args):
-            port = int(args[i + 1]); i += 2
+            port = int(args[i + 1])
+            i += 2
         elif a in ("--no-browser", "--no_browser"):
-            open_browser = False; i += 1
+            open_browser = False
+            i += 1
         else:
             i += 1
     host = os.environ.get("GRADIO_GUI_HOST", host)
