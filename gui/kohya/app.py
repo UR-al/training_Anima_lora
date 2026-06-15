@@ -865,11 +865,30 @@ def build_app(default_port: int = 7860):
 def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) -> None:
     """Launch the Gradio server (blocking)."""
     import inspect
+    import socket
 
-    demo = build_app(default_port=port)
+    # The requested port is commonly taken — 7860 is ALSO gradio/forge-neo's
+    # default, or a prior GUI is still up. Gradio only tries the single port we
+    # pass and hard-fails ("Cannot find empty port in range: 7860-7860"), so scan
+    # upward for the first free one ourselves (mirrors the old web GUI).
+    def _free_port(start: int, span: int = 20) -> int:
+        for p in range(start, start + span):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind((host, p))
+                    return p
+                except OSError:
+                    continue
+        return start  # none free in range — let gradio raise its own message
+
+    bound = _free_port(port)
+    if bound != port:
+        print(f"\n  port {port} is busy (forge-neo/another app) — using {bound}\n")
+
+    demo = build_app(default_port=bound)
     kwargs = {
         "server_name": host,
-        "server_port": port,
+        "server_port": bound,
         "inbrowser": open_browser,
         "show_api": False,  # hide the auto-generated API page
     }
