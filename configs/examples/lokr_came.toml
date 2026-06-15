@@ -1,0 +1,126 @@
+# Faithful translation of a LoRA_Easy_Training_Scripts (LETS) / kohya_ss_anima
+# config into anima_lora's schema — LoKr (LyCORIS) + CAME, sigmoid/logit-normal.
+#
+#   python train.py --config_file configs/examples/lokr_came.toml
+#
+# This mirrors the user's real LETS export. Most keys map 1:1; the handful that
+# rename or move are flagged inline as  ⇐ LETS:<key>.  `base_config` pulls in the
+# shared infra + dataset blueprint; everything below overrides it.
+base_config = "../base.toml"
+
+# ── Adapter: LyCORIS LoKr (networks.lycoris_anima bridge) ───────────────────
+# LETS `network_module` for lokr → this repo's LyCORIS bridge. dim=100000 is the
+# LoKr idiom ("as large as the factorization allows"); factor=N does the real work.
+network_module = "networks.lycoris_anima"
+network_dim    = 100000   # ⇐ LETS:network_dim
+network_alpha  = 1        # ⇐ LETS:network_alpha
+network_train_unet_only = true
+
+# LETS network_args carried verbatim. `preset=unet-transformer-only` = attn+MLP+
+# final (197 modules, no adaln) — the bridge registers Anima's block classes into
+# LyCORIS' preset dict, so the stock preset NAME targets the DiT. `exclude_patterns`
+# is an Anima-specific bridge extension (supported). `torch_compile` is NOT a
+# network_arg here — it's the global `torch_compile=true` from base.toml.
+network_args = [
+  "algo=lokr",
+  "preset=unet-transformer-only",
+  "conv_dim=0",
+  "conv_alpha=0.0",
+  "full_matrix=True",
+  "factor=4",
+  "use_tucker=false",
+  "train_norm=false",
+  "dora_wd=false",
+  "rescaled=false",
+  "use_scalar=false",
+  "bypass_mode=false",
+  "enable_conv=false",
+  "train_llm_adapter=false",
+  "decompose_both=false",
+  "dropout=0.0",
+  "rank_dropout=0.0",
+  "module_dropout=0.0",
+  "exclude_patterns=['.*_te_layers_.*','.*adaln_modulation.*']",
+]
+
+# ── Optimizer: CAME + cautious (from the vendored LoraEasyCustomOptimizer zoo) ─
+# Friendly name "CAME" resolves to the same LoraEasyCustomOptimizer.came.CAME the
+# LETS config names by dotted path — so optimizer_args carry over unchanged.
+optimizer_type = "CAME"          # ⇐ LETS:"LoraEasyCustomOptimizer.came.CAME"
+learning_rate  = 8e-06
+optimizer_args = [
+  "weight_decay=0.0001",
+  "cautious_weight_decay=True",
+  "update_strategy=cautious",
+  "betas=(0.9,0.999,0.9999)",
+  "eps1=1e-30",
+  "eps2=1e-16",
+  "foreach=True",
+]
+max_grad_norm = 1.0
+
+# ── LR schedule ─────────────────────────────────────────────────────────────
+lr_scheduler            = "constant"
+lr_scheduler_num_cycles = 1
+
+# ── Loss: Huber (constant schedule) ─────────────────────────────────────────
+loss_type      = "huber"
+huber_c        = 0.1
+huber_schedule = "constant"
+
+# ── Timestep sampling + flow-matching weighting ─────────────────────────────
+timestep_sampling = "sigmoid"      # ⇐ LETS:timestep_sample_method
+sigmoid_scale     = 1.3
+weighting_scheme  = "logit_normal"
+logit_mean        = 0.0
+logit_std         = 1.0
+# LETS min_timestep=0 / max_timestep=1000 (kohya 0–1000 int) → Anima σ∈[0,1].
+# 0/1000 = full range = the default, so these are informational:
+t_min = 0.0   # ⇐ LETS:min_timestep / 1000
+t_max = 1.0   # ⇐ LETS:max_timestep / 1000
+
+# ── Memory / precision / runtime ────────────────────────────────────────────
+mixed_precision             = "bf16"
+gradient_checkpointing      = true
+gradient_accumulation_steps = 1
+highvram                    = true
+blocks_to_swap              = 0
+attn_mode                   = "flash"   # ⇐ LETS:attn_mode (split_attn has no equiv — flash covers it)
+vae_disable_cache           = true
+use_vae_cache               = true      # ⇐ LETS:cache_latents (+ cache_latents_to_disk)
+qwen3_max_token_length      = 512
+t5_max_token_length         = 512
+
+# Maskless to match the LETS run (no SAM3 masks). base.toml defaults masked_loss=true,
+# which would require cached masks — turn it off here.
+masked_loss = false
+
+# ── Training control ────────────────────────────────────────────────────────
+seed                            = 42
+max_data_loader_n_workers       = 4
+persistent_data_loader_workers  = true
+max_train_epochs                = 50
+
+# ── Saving / sampling ───────────────────────────────────────────────────────
+save_model_as            = "safetensors"
+save_precision           = "bf16"
+save_every_n_epochs      = 1
+save_state               = true
+save_last_n_epochs_state = 1
+output_config            = true         # ⇐ LETS:save_toml
+output_name              = "anima_lokr_came"
+sample_sampler           = "euler"      # ⇐ LETS:sample_sampler (Anima: euler/er_sde/lcm)
+sample_every_n_epochs    = 1
+
+# ── Not translatable (handled differently in anima_lora) ────────────────────
+# • batch_size=2, resolution=1024  → the dataset blueprint in base.toml
+#   ([[datasets]] batch_size / the resized cache). Edit base.toml's [[datasets]]
+#   or your --dataset_config to set batch_size=2.
+# • enable_bucket / min_bucket_reso=256 / max_bucket_reso=4096 /
+#   bucket_reso_steps=64 / bucket_no_upscale / multires_training=true → anima_lora
+#   uses CONSTANT-TOKEN bucketing baked into the cache at preprocess time. Express
+#   the 256–4096 multi-res spread with preprocess tiers (configs/preprocess.toml
+#   target_res, or `make preprocess --target_res 512 768 1024 1280 1536`); training
+#   then auto-discovers the cached tiers. No train-time bucket args needed.
+# • xformers / prior_loss_weight / max_token_length / no_half_vae → no equivalent
+#   (xformers→flash, the rest are kohya-diffusion concepts not used by the DiT).
