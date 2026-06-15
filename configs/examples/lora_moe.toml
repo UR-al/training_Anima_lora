@@ -1,0 +1,33 @@
+# Pure --config_file run — routed (MoE-style) LoRA, sd-scripts/LETS style.
+#
+#   python train.py --config_file configs/examples/lora_moe.toml
+#
+# Same as lora.toml but exercises the three-axis routing surface entirely through
+# network_args (the sd-scripts/LETS way — no method TOML). The trainer forwards
+# these to networks.lora_anima.create_network via net_kwargs.
+#
+#   use_moe_style   = false | "shared_A" | "independent_A"
+#   route_per_layer = true | false
+#   router_source   = "none" | "input" | "sigma" | "fei" | "crossattn_emb"
+base_config = "../base.toml"  # resolved relative to this file (configs/examples/)
+
+network_module = "networks.lora_anima"
+network_dim    = 32
+network_alpha  = 32
+network_args   = [
+    "use_moe_style=shared_A",
+    "route_per_layer=true",
+    "router_source=fei",
+]
+
+optimizer_type   = "CAME"
+learning_rate    = 1e-4
+lr_scheduler     = "cosine"
+lr_warmup_steps  = 0.05
+max_train_epochs = 16
+
+output_name = "anima_lora_moe_example"
+output_dir  = "output/ckpt"
+
+# monitor      = true
+# monitor_port = 8766

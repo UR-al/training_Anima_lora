@@ -1,0 +1,38 @@
+# Pure --config_file run — sd-scripts / LoRA_Easy_Training_Scripts (LETS) style.
+#
+# No --method / --preset needed; everything rides one TOML, exactly like a
+# sd-scripts/LETS config. Routing is carried by network_module + network_args.
+#
+#   python train.py --config_file configs/examples/lora.toml
+#   # multi-GPU:  accelerate launch train.py --config_file configs/examples/lora.toml
+#
+# `base_config` pulls in the shared infra + dataset blueprint from base.toml
+# (resolved by library.config.io._load_toml_with_base), so this file only needs
+# to carry what differs. Delete the line and inline the [[datasets]] block for a
+# fully self-contained config.
+base_config = "../base.toml"  # resolved relative to this file (configs/examples/)
+
+# ── Adapter (sd-scripts convention: importlib network_module + create_network) ──
+network_module = "networks.lora_anima"
+network_dim    = 32
+network_alpha  = 32
+# Plain LoRA stack (no MoE routing). The three-axis routing surface lives in
+# network_args — see configs/examples/lora_moe.toml for the routed variant.
+network_args   = ["use_moe_style=false"]
+
+# ── Optimizer / schedule ──────────────────────────────────────────────────
+optimizer_type   = "AdamW"
+learning_rate    = 2e-5
+lr_scheduler     = "cosine"
+lr_warmup_steps  = 0.05
+max_train_epochs = 16
+
+# ── Output ────────────────────────────────────────────────────────────────
+output_name = "anima_lora_example"
+output_dir  = "output/ckpt"
+
+# ── Monitoring (AnimaLoraToolkit dashboard on a separate port) ─────────────
+# Uncomment to open the live loss/LR dashboard at http://127.0.0.1:8766 while
+# the run logs to the terminal (sd-scripts style).
+# monitor      = true
+# monitor_port = 8766

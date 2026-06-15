@@ -1,16 +1,17 @@
-# sd-scripts / LETS realignment — target structure proposal (v2)
+# sd-scripts / LETS realignment — target structure proposal (v3, CONFIRMED)
 
-Status: **DRAFT for approval** (structure target first, then GUI on top).
-Date: 2026-06-15. Supersedes v1.
+Status: **CONFIRMED** (structure agreed; execution proceeds in phases).
+Date: 2026-06-15. Supersedes v1/v2.
 
-## The blueprint: a 4-donor layered fusion
+## The blueprint: a 4-donor layered fusion (with pinned references)
 
-| Layer | Donor | Style we adopt |
+| Layer | Donor reference | Style we adopt |
 |---|---|---|
-| **GUI** | kohya_ss GUI | kohya `kohya_gui/` LoRA + Utilities tab frame |
+| **GUI** | `Source2Spy/kohya_ss_anima` (kohya_ss, anima-aware) | kohya `kohya_gui/` LoRA + Utilities tab frame |
+| **Folder structure** | `kohya-ss/sd-scripts` + `67372a/LoRA_Easy_Training_Scripts` | mirror their layout — **do not invent names** |
 | **Training config** | sd-scripts + LETS | one plain TOML (`network_module` + `network_args` carry routing), `save_toml`/`load_toml`, runnable as `train.py --config_file …` |
-| **Training engine** | anima_lora (sorryhyun) | **this repo** — `train.py` + `library/` + `networks/` |
-| **Monitoring** | AnimaLoraToolkit (Moeblack) | already merged → `library/monitoring/` (`--monitor`, separate port) |
+| **Training engine** | `sorryhyun/anima_lora` | **this repo** — `train.py` + `library/` + `networks/` |
+| **Monitoring** | `Moeblack/AnimaLoraToolkit` | already merged → `library/monitoring/` (`--monitor`, separate port) |
 
 ## Reference layouts (cloned + inspected 2026-06-15)
 
@@ -81,20 +82,30 @@ loader, routing via `network_args`). The GUI's `modules/` writes this TOML
 (`save_toml`) exactly like LETS `TomlFunctions`. `--method`/`--preset` stay as an
 optional convenience layer. Ship `configs/examples/*.toml` (pure-config runnable).
 
-## Daemon
+## Daemon — FULL removal (confirmed)
 
-Removed from the GUI/training flow — GUI runs `train.py --config_file` directly,
-logs to the terminal, monitoring via the separate `--monitor` port. (`scripts/daemon`
-+ `--queue` + ComfyUI trainer node decided separately; not used by the new GUI.)
+The daemon is **removed outright**, not just from the GUI flow:
+- delete `scripts/daemon/`;
+- drop `--queue` from `scripts/tasks/_common.py` (inline `build_launch_cmd` path
+  becomes the only launch);
+- switch `scripts/webgui/server.py` `launch()` to the direct `Popen` path (it
+  currently defaults to daemon-submit);
+- the ComfyUI trainer node (`custom_nodes/comfyui-anima-trainer/`) loses its
+  backend — rewire to a direct subprocess or drop the node;
+- remove the `server.log_tail` daemon tail + the gradio terminal-mirror panel
+  added earlier.
 
-## Decisions still needed
+GUI runs `python train.py --config_file …` directly; logs go to the terminal;
+monitoring is the separate `--monitor` port.
 
-1. **Confirm: mirror sd-scripts/LETS names** (keep `library`/`networks` at root)
-   — recommended — **or** still rename them to custom names (diverges, breaks
-   dotted paths; if so, give the names).
-2. **`scripts/` reorg depth**: move only the sd-scripts-equivalent utilities to
-   `tools/`+`finetune/` now, leaving orchestration (`scripts/tasks/`) in place
-   (recommended), or fully dissolve `scripts/`?
+## Confirmed decisions
+
+1. **Names = mirror sd-scripts/LETS** — keep `library/`/`networks/` at root
+   (they are the reference names; preserves dotted `network_module` + LETS config
+   compat). No custom renames.
+2. **`scripts/` reorg**: move only the sd-scripts-equivalent utilities to
+   `tools/`+`finetune/`; orchestration (`scripts/tasks/`) stays (it backs `make`).
+3. **Daemon**: full removal (above).
 
 ## Phasing (after approval)
 
