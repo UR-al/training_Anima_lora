@@ -147,12 +147,11 @@ batch_size = 1
 
 def test_load_harvests_kohya_dataset_block():
     form = load_toml_to_form(_KOHYA_DATASET)
-    s = form["subsets"][0]
-    assert s["image_dir"] == "C:/data/char"
-    assert s["num_repeats"] == 5 and s["keep_tokens"] == 1
-    assert s["caption_extension"] == ".txt"
-    assert s["batch_size"] == 2  # dataset-level batch_size falls through
-    assert s["flip_aug"] is True
+    assert form["ds_image_dir"] == "C:/data/char"
+    assert form["ds_num_repeats"] == "5" and form["ds_keep_tokens"] == "1"
+    assert form["ds_caption_extension"] == ".txt"
+    assert form["ds_batch_size"] == "2"  # dataset-level batch_size
+    assert form["ds_flip_aug"] is True
     assert form["target_res"] == ["896"]  # kohya resolution 960 → nearest tier
     # the [[datasets]] section never leaks into the flat router / extra_flags.
     assert "datasets" not in form.get("extra_flags", "")
@@ -160,19 +159,15 @@ def test_load_harvests_kohya_dataset_block():
 
 def test_load_harvests_anima_dataset_tiers():
     form = load_toml_to_form(_ANIMA_DATASET)
-    s = form["subsets"][0]
-    assert (
-        form["ds_cache_dir"] == "post_image_dataset/lora"
-    )  # shared cache_dir surfaced
-    assert s["cache_dir"] == "post_image_dataset/lora"
-    assert s["tiers"] == [512, 1024]
-    assert s["batch_size"] == 4  # subset batch_size wins over block
+    assert form["ds_cache_dir"] == "post_image_dataset/lora"
+    assert form["ds_tiers"] == "512,1024"
+    assert form["ds_batch_size"] == "4"  # subset batch_size wins over block
     assert "target_res" not in form  # no `resolution` key → no tier snap
 
 
-def test_load_without_dataset_leaves_subsets_unset():
+def test_load_without_dataset_leaves_ds_fields_unset():
     form = load_toml_to_form('optimizer_type = "CAME"\n')
-    assert "subsets" not in form and not any(k.startswith("ds_") for k in form)
+    assert not any(k.startswith("ds_") for k in form)
 
 
 def test_load_constantcosine_fields():
@@ -231,24 +226,22 @@ batch_size = 4
 """
 
 
-def test_load_multi_subset_fills_subsets_list():
+def test_load_multi_subset_fills_blocks():
     form = load_toml_to_form(_MULTI_SUBSET)
-    subs = form["subsets"]
-    assert len(subs) == 3
-    # subset #1 (batch_size falls through from its owning [[datasets]] block)
-    assert subs[0]["image_dir"] == "data/main"
-    assert subs[0]["num_repeats"] == 5
-    assert subs[0]["batch_size"] == 2
-    # subset #2
-    assert subs[1]["image_dir"] == "data/reg"
-    assert subs[1]["flip_aug"] is True
-    assert subs[1]["tiers"] == [512, 1024]
-    assert subs[1]["batch_size"] == 2
+    # subset #1 → primary ds_* block (batch_size from its owning [[datasets]] block)
+    assert form["ds_image_dir"] == "data/main"
+    assert form["ds_num_repeats"] == "5"
+    assert form["ds_batch_size"] == "2"
+    # subset #2 → ds2_* block
+    assert form["ds2_image_dir"] == "data/reg"
+    assert form["ds2_flip_aug"] is True
+    assert form["ds2_tiers"] == "512,1024"
+    assert form["ds2_batch_size"] == "2"  # first block's batch_size
     # per-subset gradient_checkpointing restored by tier match (512,1024 ⊂ edges)
-    assert subs[1]["gradient_checkpointing"] is True
-    # subset #3 (second [[datasets]] block, batch_size 4)
-    assert subs[2]["image_dir"] == "data/third"
-    assert subs[2]["batch_size"] == 4
+    assert form["ds2_gradient_checkpointing"] is True
+    # subset #3 → ds3_* block (second [[datasets]] block, batch_size 4)
+    assert form["ds3_image_dir"] == "data/third"
+    assert form["ds3_batch_size"] == "4"
     # gradient_checkpointing_resolutions is consumed (NOT echoed into extra_flags)
     assert "gradient_checkpointing_resolutions" not in (form.get("extra_flags") or "")
 
@@ -260,9 +253,9 @@ if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_save_emits_runnable_toml_and_round_trips()
     test_load_harvests_kohya_dataset_block()
     test_load_harvests_anima_dataset_tiers()
-    test_load_without_dataset_leaves_subsets_unset()
+    test_load_without_dataset_leaves_ds_fields_unset()
+    test_load_multi_subset_fills_blocks()
     test_load_constantcosine_fields()
     test_load_auto_preprocess_orchestration_keys()
     test_load_resume_and_caption_variant_fields()
-    test_load_multi_subset_fills_subsets_list()
     print("all config_io round-trip tests passed")

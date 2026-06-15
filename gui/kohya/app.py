@@ -40,45 +40,27 @@ def _register(keys: list[str], comps: list, key: str, comp):
     return comp
 
 
-# Dynamic name→value / subset ROW editors (the LoRA_Easy "ADD" widget). Each is backed
-# by a gr.State list-of-dicts that reg_dynamic_rows() registers under a key — so
-# _collect reads form[key] = list[dict] directly; ADD/🗑 mutate the State + re-render.
-# These map to the inline `key=value` string / form["subsets"] the backend already
-# consumes (build_command / _dataset_subsets are unchanged).
-_ARG_ROW_STATES = {
-    "network_args_rows": "network_args",
-    "optimizer_args_rows": "optimizer_args",
-    "lr_scheduler_args_rows": "lr_scheduler_args",
-    "ab_network_args_rows": "ab_network_args",
+# Free-arg groups rendered as name → value ROWS (the LoRA_Easy "ADD NETWORK ARG"
+# widget). The GUI shows a fixed pool of rows per group (keys "{group}__k{i}" /
+# "{group}__v{i}"); _collect folds the non-blank rows into the space-joined
+# `key=value …` string the backend reads under the group key, and config-load splits
+# the inline string back into the rows. group → number of rows in the pool.
+_ARG_ROW_GROUPS = {
+    "network_args": 6,
+    "optimizer_args": 5,
+    "lr_scheduler_args": 4,
+    "ab_network_args": 4,
 }
 
 
-def _split_inline_args(text) -> list:
-    """Quote-aware split of a space-joined ``key=value`` string → [(k, v), …] (no
-    padding) — repopulates the dynamic arg rows on config load."""
-    import shlex
-
-    s = str(text or "").strip()
-    if not s:
-        return []
-    try:
-        toks = shlex.split(s)
-    except ValueError:
-        toks = s.split()
-    out = []
-    for t in toks:
-        k, _, v = t.partition("=")
-        out.append((k, v))
-    return out
-
-
-def _rows_to_inline(rows) -> str:
-    """[{"k":..,"v":..}, …] → ``k1=v1 k2=v2 …`` (value with spaces auto-quoted so it
-    survives the backend's _arg_split; a name with no value emits the bare key)."""
+def _arg_rows_to_inline(form: dict, group: str, n: int) -> str:
+    """Collapse a group's name/value rows into ``k1=v1 k2=v2 …`` and POP the row keys
+    from ``form``. A value with spaces is auto-quoted so it survives the backend's
+    _arg_split; a name with no value emits the bare key (flag-style)."""
     toks: list[str] = []
-    for r in rows or []:
-        k = str((r or {}).get("k", "") or "").strip()
-        v = str((r or {}).get("v", "") or "").strip()
+    for i in range(1, n + 1):
+        k = str(form.pop(f"{group}__k{i}", "") or "").strip()
+        v = str(form.pop(f"{group}__v{i}", "") or "").strip()
         if not k:
             continue
         if v == "":
@@ -90,86 +72,22 @@ def _rows_to_inline(rows) -> str:
     return " ".join(toks)
 
 
-# Per-subset scalar fields: (row key, subset-dict key, caster) + bool keys.
-_SUBSET_SCALARS = (
-    ("num_repeats", "num_repeats", int),
-    ("keep_tokens", "keep_tokens", int),
-    ("caption_extension", "caption_extension", str),
-    ("caption_dropout_rate", "caption_dropout_rate", float),
-    ("batch_size", "batch_size", int),
-)
-_SUBSET_BOOLS = ("flip_aug", "random_crop", "gradient_checkpointing")
+def _inline_to_arg_rows(text, n: int) -> list:
+    """Inverse for config-load: split a space-joined ``key=value`` string into n
+    (name, value) pairs (quote-aware), padded/truncated to exactly n rows."""
+    import shlex
 
-
-def _subset_row() -> dict:
-    """A blank dynamic-subset row (initial state + on ADD)."""
-    return {
-        "image_dir": "",
-        "num_repeats": "",
-        "keep_tokens": "",
-        "caption_extension": "",
-        "batch_size": "",
-        "caption_dropout_rate": "",
-        "tiers": "",
-        "flip_aug": False,
-        "random_crop": False,
-        "gradient_checkpointing": False,
-    }
-
-
-def _subset_rows_to_dicts(rows, cache_dir) -> list:
-    """Dynamic-subset rows → the list[dict] backend._dataset_subsets consumes. Rows
-    with a blank image_dir are skipped; cache_dir (primary-shared) is set on each."""
-    out: list[dict] = []
-    for r in rows or []:
-        img = str((r or {}).get("image_dir", "") or "").strip()
-        if not img:
-            continue
-        sub: dict = {"image_dir": img}
-        for rk, sk, cast in _SUBSET_SCALARS:
-            v = (r or {}).get(rk)
-            if v in (None, ""):
-                continue
-            try:
-                sub[sk] = cast(v)
-            except (TypeError, ValueError):
-                pass
-        for bk in _SUBSET_BOOLS:
-            if (r or {}).get(bk):
-                sub[bk] = True
-        tiers = _tier_list((r or {}).get("tiers"))
-        if tiers:
-            sub["tiers"] = tiers
-        if cache_dir:
-            sub["cache_dir"] = cache_dir
-        out.append(sub)
-    return out
-
-
-def _subsets_to_rows(subsets) -> list:
-    """Inverse for config load: backend subset dicts → dynamic-subset rows."""
-    rows = []
-    for s in subsets or []:
-        if not isinstance(s, dict):
-            continue
-        t = s.get("tiers")
-        rows.append(
-            {
-                "image_dir": str(s.get("image_dir", "") or ""),
-                "num_repeats": str(s.get("num_repeats", "") or ""),
-                "keep_tokens": str(s.get("keep_tokens", "") or ""),
-                "caption_extension": str(s.get("caption_extension", "") or ""),
-                "batch_size": str(s.get("batch_size", "") or ""),
-                "caption_dropout_rate": str(s.get("caption_dropout_rate", "") or ""),
-                "tiers": ",".join(str(x) for x in t)
-                if isinstance(t, (list, tuple))
-                else "",
-                "flip_aug": bool(s.get("flip_aug", False)),
-                "random_crop": bool(s.get("random_crop", False)),
-                "gradient_checkpointing": bool(s.get("gradient_checkpointing", False)),
-            }
-        )
-    return rows
+    s = str(text or "").strip()
+    rows: list = []
+    if s:
+        try:
+            toks = shlex.split(s)
+        except ValueError:
+            toks = s.split()
+        for t in toks:
+            k, _, v = t.partition("=")
+            rows.append((k, v))
+    return rows[:n] + [("", "")] * max(0, n - len(rows))
 
 
 _MISSING = object()
@@ -183,6 +101,8 @@ def _interactive_states(form: dict) -> dict:
     loss = str(form.get("loss_type", "") or "")
     ts = str(form.get("timestep_sampling", "") or "")
     ws = str(form.get("weighting_scheme", "") or "")
+    use_vae = bool(form.get("use_vae_cache"))
+    use_text = bool(form.get("use_text_cache"))
     use_cc = bool(form.get("use_constantcosine"))
     huber = loss in ("huber", "smooth_l1")
 
@@ -193,10 +113,9 @@ def _interactive_states(form: dict) -> dict:
             return {"interactive": False}
         return {"interactive": False, "value": reset}
 
-    # random_crop / caption_dropout are now PER-SUBSET (inside the dynamic subset
-    # rows), so they're no longer greyable standalone components — only the
-    # loss/timestep/weighting/constant-cosine targets remain.
     return {
+        "ds_random_crop": g(use_vae, reset=False),
+        "ds_caption_dropout_rate": g(use_text, reset="0"),
         "lr_scheduler_type": g(not use_cc),
         "huber_c": g(huber),
         "huber_schedule": g(huber),
@@ -206,6 +125,54 @@ def _interactive_states(form: dict) -> dict:
     }
 
 
+def _collect(keys: list[str], values) -> dict:
+    """Zip positional handler args back into the backend `form` dict."""
+    form = dict(zip(keys, values))
+    # Gradio Textbox yields "" for empty; backend treats "" as "use default".
+    # Coerce checkbox-style truthiness through untouched (already bool).
+    for group, n in _ARG_ROW_GROUPS.items():  # name/value rows → inline key=value
+        inline = _arg_rows_to_inline(form, group, n)  # also pops the row keys
+        if inline:
+            form[group] = inline
+    _assemble_dataset(form)
+    return form
+
+
+# Per-subset fields. The GUI renders N fixed subset BLOCKS — the primary uses the
+# "ds_" prefix, extras "ds2_"/"ds3_"/… — and each block's image_dir gates whether it
+# becomes a subset. (suffix → subset-dict key, caster) + bool suffixes. The backend
+# consumes the assembled form["subsets"]; cache_dir is primary-only and shared to all
+# subsets (so extras have no cache_dir field). Replaces the old single-primary + one
+# gr.Dataframe grid (which, under Gradio 6.x, could only ever add a single extra row).
+N_SUBSETS = 4  # primary + 3 extras; for more, point the dataset_config field at a TOML
+_DS_PREFIXES = ("ds_",) + tuple(f"ds{i}_" for i in range(2, N_SUBSETS + 1))
+_DS_FIELD_SUFFIXES = (
+    ("num_repeats", "num_repeats", int),
+    ("keep_tokens", "keep_tokens", int),
+    ("caption_extension", "caption_extension", str),
+    ("caption_dropout_rate", "caption_dropout_rate", float),
+    ("batch_size", "batch_size", int),
+)
+_DS_BOOL_SUFFIXES = (
+    ("flip_aug", "flip_aug"),
+    ("random_crop", "random_crop"),
+    ("gradient_checkpointing", "gradient_checkpointing"),
+)
+# Flat per-block keys stripped from the form after assembling form["subsets"], so the
+# backend's auto-arg catch-all never misreads them as train.py flags. ds_name and
+# target_res stay (the backend reads them directly).
+_DS_POP_KEYS = ("ds_cache_dir",) + tuple(
+    f"{p}{suf}"
+    for p in _DS_PREFIXES
+    for suf in (
+        "image_dir",
+        "tiers",
+        *(s for s, _k, _c in _DS_FIELD_SUFFIXES),
+        *(s for s, _k in _DS_BOOL_SUFFIXES),
+    )
+)
+
+
 def _tier_list(text) -> list[int]:
     """Parse a free-form tier string (\"512,1024\" / \"1024\") into ints."""
     import re
@@ -213,22 +180,48 @@ def _tier_list(text) -> list[int]:
     return [int(x) for x in re.findall(r"\d+", str(text or ""))]
 
 
-def _collect(keys: list[str], values) -> dict:
-    """Zip positional handler args back into the backend `form` dict. The dynamic
-    arg-row + subset States arrive as real ``list[dict]`` values (they're in `inputs`),
-    so we fold them into the inline `key=value` string / `form['subsets']` the backend
-    already consumes — build_command / _dataset_subsets are unchanged."""
-    form = dict(zip(keys, values))
-    for state_key, group in _ARG_ROW_STATES.items():  # arg rows → inline key=value
-        rows = form.pop(state_key, None)
-        inline = _rows_to_inline(rows)
-        if inline:
-            form[group] = inline
-    cache_dir = str(form.pop("ds_cache_dir", "") or "").strip()
-    subs = _subset_rows_to_dicts(form.pop("subsets_rows", None), cache_dir)
+def _subset_from_prefix(form: dict, prefix: str):
+    """Build one subset dict from a block's prefixed form fields, or None when the
+    block has no image_dir (an unused block)."""
+    img = str(form.get(f"{prefix}image_dir") or "").strip()
+    if not img:
+        return None
+    sub: dict = {"image_dir": img}
+    for suf, sk, cast in _DS_FIELD_SUFFIXES:
+        v = form.get(f"{prefix}{suf}")
+        if v in (None, ""):
+            continue
+        try:
+            sub[sk] = cast(v)
+        except (TypeError, ValueError):
+            pass
+    for suf, sk in _DS_BOOL_SUFFIXES:
+        if form.get(f"{prefix}{suf}"):
+            sub[sk] = True
+    tiers = _tier_list(form.get(f"{prefix}tiers"))
+    if tiers:
+        sub["tiers"] = tiers
+    return sub
+
+
+def _assemble_dataset(form: dict) -> None:
+    """Fold the N per-subset blocks into ``form['subsets']`` (primary first). The
+    primary subset's cache_dir is shared to every subset (extras have no cache_dir
+    field). No-op when no block has an image_dir (defer to the base.toml blueprint /
+    an explicit --dataset_config). Mutates ``form``."""
+    primary_cache = str(form.get("ds_cache_dir") or "").strip()
+    subs: list[dict] = []
+    for prefix in _DS_PREFIXES:
+        sub = _subset_from_prefix(form, prefix)
+        if sub is None:
+            continue
+        if primary_cache:  # all subsets share the primary subset's cache_dir
+            sub["cache_dir"] = primary_cache
+        subs.append(sub)
     if subs and not form.get("subsets"):
         form["subsets"] = subs
-    return form
+    for k in _DS_POP_KEYS:  # don't leak the flat block helpers to the backend form
+        form.pop(k, None)
 
 
 def _pick_path(current: str, *, file: bool) -> str:
@@ -313,87 +306,33 @@ def build_app(default_port: int = 7860):
         )
         return tb
 
-    def reg_dynamic_rows(
-        key, *, columns, row_factory, add_label, title=None, per_row=99
-    ):
-        """LoRA_Easy-style ADD editor backed by a gr.State list-of-dicts. Registers the
-        State under `key` (so _collect reads form[key] = list[dict]); the ADD button
-        appends a blank row, 🗑 removes a row (>=1 kept), and each field's .input writes
-        back to the State silently (output is the State only → no re-render → no focus
-        loss while typing). The render only re-runs on ADD/DELETE (structural changes).
-        columns: list of (field, kind in {text,checkbox}, label). per_row chunks fields
-        into sub-rows for a card layout (subsets); 99 = one inline row (args)."""
-        if title:
-            gr.Markdown(f"**{title}**")
-        state = gr.State([row_factory()])
-        add_btn = gr.Button(add_label, size="sm")
-
-        @gr.render(inputs=[state])
-        def _draw(rows):
-            rows = rows or [row_factory()]
-            chunks = [columns[i : i + per_row] for i in range(0, len(columns), per_row)]
-            for idx, row in enumerate(rows):
-                with gr.Group():
-                    for ci, chunk in enumerate(chunks):
-                        with gr.Row():
-                            for fname, kind, label in chunk:
-                                if kind == "checkbox":
-                                    comp = gr.Checkbox(
-                                        value=bool(row.get(fname, False)),
-                                        label=label,
-                                        scale=2,
-                                        min_width=130,
-                                    )
-                                else:
-                                    comp = gr.Textbox(
-                                        value=str(row.get(fname, "") or ""),
-                                        placeholder=label,
-                                        show_label=False,
-                                        container=False,
-                                        scale=4,
-                                    )
-
-                                def _wb(val, st, i=idx, f=fname):
-                                    st = list(st)
-                                    if 0 <= i < len(st):
-                                        st[i] = {**st[i], f: val}
-                                    return st
-
-                                comp.input(
-                                    _wb, [comp, state], state, show_progress="hidden"
-                                )
-                            if ci == len(chunks) - 1:  # 🗑 rides the last field-row
-                                del_btn = gr.Button("🗑", scale=0, min_width=44)
-
-                                def _del(st, i=idx):
-                                    st = list(st)
-                                    if 0 <= i < len(st):
-                                        del st[i]
-                                    return st or [row_factory()]
-
-                                del_btn.click(
-                                    _del, state, state, show_progress="hidden"
-                                )
-
-        add_btn.click(
-            lambda st: list(st) + [row_factory()],
-            state,
-            state,
-            show_progress="hidden",
-        )
-        reg(key, state)
-        return state
-
-    def reg_arg_rows(group_state_key, *, title):
-        """Network/optimizer name→value editor (k|v rows) → gr.State under
-        `group_state_key` (e.g. network_args_rows). One inline row per arg + 🗑."""
-        reg_dynamic_rows(
-            group_state_key,
-            columns=[("k", "text", "Enter Arg Name"), ("v", "text", "Enter Arg Value")],
-            row_factory=lambda: {"k": "", "v": ""},
-            add_label="+ Add arg",
-            title=title,
-        )
+    def reg_arg_rows(group, *, title):
+        """LoRA_Easy-style "ADD NETWORK ARG" editor: a header + a fixed pool of
+        name → value rows (Enter Arg Name | Enter Arg Value | 🗑 clear). Each row
+        reg()s as ``{group}__k{i}`` / ``{group}__v{i}``; _collect folds the non-blank
+        rows into the inline ``key=value`` string the backend reads under ``group``."""
+        n = _ARG_ROW_GROUPS[group]
+        gr.Markdown(f"**{title}** — one key → value per row (blank rows ignored)")
+        for i in range(1, n + 1):
+            with gr.Row():
+                ktb = gr.Textbox(
+                    placeholder="Enter Arg Name",
+                    show_label=False,
+                    container=False,
+                    scale=5,
+                )
+                vtb = gr.Textbox(
+                    placeholder="Enter Arg Value",
+                    show_label=False,
+                    container=False,
+                    scale=5,
+                )
+                clr = gr.Button("🗑", scale=0, min_width=44)
+            reg(f"{group}__k{i}", ktb)
+            reg(f"{group}__v{i}", vtb)
+            # outputs bind THIS row's components (evaluated at click-registration);
+            # the lambda returns constants, so there's no loop-closure capture bug.
+            clr.click(lambda: ("", ""), outputs=[ktb, vtb], show_progress="hidden")
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
         gr.Markdown(
@@ -552,11 +491,14 @@ def build_app(default_port: int = 7860):
             # ── Dataset (subsets) ───────────────────────────────────────────
             with gr.Accordion("Dataset (subsets)", open=True):
                 gr.Markdown(
-                    "Define dataset **subsets** (old-GUI / LoRA_Easy style). Start with "
-                    "one; **+ Add subset** appends more, 🗑 removes. Run `make "
-                    "preprocess` first (point `image_dir` at the resized+cached dir), or "
-                    "toggle **Auto-preprocess** below to resize/cache raw folders on "
-                    "Start. `cache_dir` is set once below and **shared by every subset**."
+                    f"Define up to **{N_SUBSETS}** subsets as folder blocks (old-GUI / "
+                    "LoRA_Easy style). **Subset #1** is the primary; the rest are "
+                    "optional (blank `image_dir` = unused). Run `make preprocess` "
+                    "first (point `image_dir` at the resized+cached dir), or toggle "
+                    "**Auto-preprocess** below to resize/cache raw folders on Start. "
+                    "`cache_dir` is set once on the primary and **shared by every "
+                    f"subset**. For more than {N_SUBSETS} subsets, use a "
+                    "`--dataset_config` TOML."
                 )
                 with gr.Row():
                     reg(
@@ -564,11 +506,6 @@ def build_app(default_port: int = 7860):
                         gr.Textbox(
                             label="dataset name (built TOML)", placeholder="my_char"
                         ),
-                    )
-                    reg_path(
-                        "ds_cache_dir",
-                        label="cache_dir (shared; blank = default)",
-                        placeholder="post_image_dataset/lora",
                     )
                 _tiers = [str(t) for t in server.list_target_res_tiers()]
                 reg(
@@ -579,39 +516,102 @@ def build_app(default_port: int = 7860):
                         label="Resolution tiers (constant-token; preprocess --target_res)",
                     ),
                 )
-                reg_dynamic_rows(
-                    "subsets_rows",
-                    title="Subsets — image_dir gates each (blank row = unused)",
-                    columns=[
-                        (
-                            "image_dir",
-                            "text",
-                            "image_dir (resized+cached; raw if auto-preprocess)",
-                        ),
-                        ("num_repeats", "text", "num_repeats"),
-                        ("keep_tokens", "text", "keep_tokens"),
-                        ("caption_extension", "text", "caption_extension (.txt)"),
-                        ("batch_size", "text", "batch_size"),
-                        ("caption_dropout_rate", "text", "caption_dropout_rate"),
-                        ("tiers", "text", "tiers (blank=all; e.g. 512,1024)"),
-                        ("flip_aug", "checkbox", "flip_aug"),
-                        ("random_crop", "checkbox", "random_crop"),
-                        ("gradient_checkpointing", "checkbox", "grad ckpt (this tier)"),
-                    ],
-                    row_factory=_subset_row,
-                    add_label="+ Add subset",
-                    per_row=4,
-                )
+
+                def _subset_block(idx: int) -> None:
+                    """Register one subset block's fields. Primary (idx==1) carries the
+                    shared cache_dir; extras don't. reg() keeps keys+inputs in lockstep,
+                    so ds{idx}_* round-trip through _collect / on_load_config unchanged."""
+                    prefix = "ds_" if idx == 1 else f"ds{idx}_"
+                    primary = idx == 1
+                    title = (
+                        "Subset #1 (primary)"
+                        if primary
+                        else f"Subset #{idx} (optional)"
+                    )
+                    with gr.Accordion(title, open=primary):
+                        if primary:
+                            with gr.Row():
+                                reg_path(
+                                    f"{prefix}image_dir",
+                                    label="image_dir (resized + cached images)",
+                                    placeholder="post_image_dataset/resized",
+                                )
+                                reg_path(
+                                    "ds_cache_dir",
+                                    label="cache_dir (shared by all subsets; blank = default)",
+                                    placeholder="post_image_dataset/lora",
+                                )
+                        else:
+                            reg_path(
+                                f"{prefix}image_dir",
+                                label="image_dir (blank = unused subset)",
+                                placeholder="this subset's resized+cached images",
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}num_repeats",
+                                gr.Textbox(label="num_repeats", placeholder="1"),
+                            )
+                            reg(
+                                f"{prefix}keep_tokens",
+                                gr.Textbox(label="keep_tokens", placeholder="0"),
+                            )
+                            reg(
+                                f"{prefix}caption_extension",
+                                gr.Textbox(
+                                    label="caption_extension", placeholder=".txt"
+                                ),
+                            )
+                            reg(
+                                f"{prefix}batch_size",
+                                gr.Textbox(
+                                    label="batch_size", placeholder="(dataset default)"
+                                ),
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}caption_dropout_rate",
+                                gr.Textbox(
+                                    label="caption_dropout_rate", placeholder="0.0"
+                                ),
+                            )
+                            reg(
+                                f"{prefix}tiers",
+                                gr.Textbox(
+                                    label="this subset's tiers (blank = all)",
+                                    placeholder="e.g. 1024 or 512,1024",
+                                ),
+                            )
+                        with gr.Row():
+                            reg(
+                                f"{prefix}flip_aug",
+                                gr.Checkbox(value=False, label="flip_aug"),
+                            )
+                            reg(
+                                f"{prefix}random_crop",
+                                gr.Checkbox(value=False, label="random_crop"),
+                            )
+                            reg(
+                                f"{prefix}gradient_checkpointing",
+                                gr.Checkbox(
+                                    value=False,
+                                    label="gradient_checkpointing (this subset's tier)",
+                                ),
+                            )
+
+                for _i in range(1, N_SUBSETS + 1):
+                    _subset_block(_i)
+
                 reg_path(
                     "dataset_config",
                     file=True,
-                    label="…or a dataset config TOML (overrides the subsets above)",
+                    label="…or a dataset config TOML (overrides the blocks above)",
                     placeholder="path/to/dataset.toml",
                 )
                 gr.Markdown(
                     "_Blank every `image_dir` **and** `dataset_config` → the default "
                     "`base.toml` blueprint (`post_image_dataset/lora`). An explicit "
-                    "`dataset_config` wins over the subsets above._"
+                    "`dataset_config` wins over the blocks above._"
                 )
             # ── Auto-preprocess at train start ──────────────────────────────
             with gr.Accordion("Auto-preprocess at train start", open=False):
@@ -698,7 +698,7 @@ def build_app(default_port: int = 7860):
                         allow_custom_value=True,
                     ),
                 )
-                reg_arg_rows("network_args_rows", title="Network args")
+                reg_arg_rows("network_args", title="Network args")
 
             # ── Optimizer & scheduler ───────────────────────────────────────
             with gr.Accordion("Optimizer & Scheduler", open=False):
@@ -753,8 +753,8 @@ def build_app(default_port: int = 7860):
                         "lr_warmup_steps",
                         gr.Textbox(label="LR warmup steps", placeholder="(default)"),
                     )
-                reg_arg_rows("optimizer_args_rows", title="Optimizer args")
-                reg_arg_rows("lr_scheduler_args_rows", title="LR scheduler args")
+                reg_arg_rows("optimizer_args", title="Optimizer args")
+                reg_arg_rows("lr_scheduler_args", title="LR scheduler args")
                 # constant→cosine one-shot: hold constant LR for the planned run,
                 # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
                 # Overrides lr_scheduler (which greys out when this is on).
@@ -1330,7 +1330,7 @@ def build_app(default_port: int = 7860):
                         "ab_network_alpha",
                         gr.Textbox(label="network_alpha", placeholder="8"),
                     )
-                reg_arg_rows("ab_network_args_rows", title="Auto-batch network args")
+                reg_arg_rows("ab_network_args", title="Auto-batch network args")
                 ab_run_btn = gr.Button("Run auto-batch", variant="primary")
             # ── Masking (tasks.py mask: SAM3 + MIT) ─────────────────────────
             with gr.Accordion("Masking (SAM3 + MIT)", open=False):
@@ -1485,19 +1485,16 @@ def build_app(default_port: int = 7860):
                     form = load_toml_to_form(fh.read())
             except Exception as exc:  # noqa: BLE001
                 return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
-            # inline key=value → dynamic arg-row State lists.
-            for state_key, group in _ARG_ROW_STATES.items():
+            for (
+                group,
+                n,
+            ) in _ARG_ROW_GROUPS.items():  # inline key=value → name/value rows
                 if group in form:
-                    rows = [
-                        {"k": k, "v": v}
-                        for (k, v) in _split_inline_args(form.pop(group))
-                    ]
-                    form[state_key] = rows or [{"k": "", "v": ""}]
-            # subset dicts → dynamic subset-row State list (returning a new list value
-            # for the State re-renders the rows with the loaded values automatically).
-            if "subsets" in form:
-                rows = _subsets_to_rows(form.pop("subsets"))
-                form["subsets_rows"] = rows or [_subset_row()]
+                    for i, (k, v) in enumerate(
+                        _inline_to_arg_rows(form.pop(group), n), 1
+                    ):
+                        form[f"{group}__k{i}"] = k
+                        form[f"{group}__v{i}"] = v
             # Fold the dep-greying interactive states into THIS load's output (no
             # secondary .change/.then event → no spinner-wedging race on load).
             interactive = _interactive_states(form)
@@ -1514,6 +1511,13 @@ def build_app(default_port: int = 7860):
                 if form.get("extra_flags")
                 else ""
             )
+            overflow = form.get("_ds_overflow")
+            if overflow:
+                note += (
+                    f" — ⚠ config has {overflow} subsets but the GUI shows "
+                    f"{N_SUBSETS}; the extras were dropped. Use the `dataset_config` "
+                    "field for that TOML to keep all of them."
+                )
             return updates + [note]
 
         def on_save_config(path, *vals):
@@ -1535,16 +1539,17 @@ def build_app(default_port: int = 7860):
         #    + ARG_DEPS) — disable (and reset) a field when an active option makes it a
         #    no-op. Defined here so the config-load .then below can run ONE clean full
         #    recompute AFTER every value has landed. ──────────────────────────────────
-        # random_crop / caption_dropout are now PER-SUBSET (in the dynamic subset
-        # rows), so they're no longer greyable standalone components — drivers reduce
-        # to the loss/timestep/weighting/constant-cosine set.
         _dep_drivers = [
+            "use_vae_cache",
+            "use_text_cache",
             "use_constantcosine",
             "loss_type",
             "timestep_sampling",
             "weighting_scheme",
         ]
         _dep_targets = [
+            "ds_random_crop",
+            "ds_caption_dropout_rate",
             "lr_scheduler_type",
             "huber_c",
             "huber_schedule",
@@ -1560,9 +1565,11 @@ def build_app(default_port: int = 7860):
                 return gr.update(interactive=False, value=reset)
             return gr.update(interactive=False)
 
-        def _recompute_deps(use_cc, loss, ts, ws):
+        def _recompute_deps(use_vae, use_text, use_cc, loss, ts, ws):
             huber = loss in ("huber", "smooth_l1")
             return [
+                _gray(not use_vae, reset=False),  # random_crop ↮ cached latents
+                _gray(not use_text, reset="0"),  # caption_dropout ↮ cached TE
                 _gray(not use_cc),  # lr_scheduler_type ← overridden by constant→cosine
                 _gray(huber),  # huber_c only for huber/smooth_l1
                 _gray(huber),  # huber_schedule
@@ -1617,6 +1624,16 @@ def build_app(default_port: int = 7860):
         # huber/sigmoid/logit fields the old shared all-8-outputs handler rewrote. The
         # output-list length MUST match each lambda's return shape (1 update, or a list).
         bk = by_key
+        bk["use_vae_cache"].change(
+            lambda v: _gray(not v, reset=False),
+            bk["use_vae_cache"],
+            bk["ds_random_crop"],
+        )
+        bk["use_text_cache"].change(
+            lambda v: _gray(not v, reset="0"),
+            bk["use_text_cache"],
+            bk["ds_caption_dropout_rate"],
+        )
         bk["use_constantcosine"].change(
             lambda v: _gray(not v),
             bk["use_constantcosine"],
@@ -1640,8 +1657,8 @@ def build_app(default_port: int = 7860):
             bk["weighting_scheme"],
             [bk["logit_mean"], bk["logit_std"]],
         )
-        # Initial interactive state: one full recompute on app load; config-load folds
-        # the same greying into on_load_config's own output (no secondary event).
+        # Initial interactive state: one full recompute on app load (the right place to
+        # set all 8 at once); config-load uses the .then chain above for the same.
         demo.load(_recompute_deps, _dep_in, _dep_out)
         # Show the local version on startup WITHOUT a network fetch (offline-safe);
         # the "Check for updates" button does the fetch on demand.
