@@ -35,7 +35,59 @@ def _collect(keys: list[str], values) -> dict:
     form = dict(zip(keys, values))
     # Gradio Textbox yields "" for empty; backend treats "" as "use default".
     # Coerce checkbox-style truthiness through untouched (already bool).
+    _assemble_dataset(form)
     return form
+
+
+# Flat dataset-field key → (subset-dict key, caster). The Gradio app exposes one
+# subset (the common single-folder LoRA case); the backend's _dataset_subsets
+# list-branch consumes the assembled form["subsets"]. Multi-subset datasets use a
+# --dataset_config TOML (or the stdlib web GUI's subset cards).
+_DS_SUBSET_FIELDS = (
+    ("ds_num_repeats", "num_repeats", int),
+    ("ds_keep_tokens", "keep_tokens", int),
+    ("ds_caption_extension", "caption_extension", str),
+    ("ds_caption_dropout_rate", "caption_dropout_rate", float),
+    ("ds_batch_size", "batch_size", int),
+)
+_DS_SUBSET_BOOLS = (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop"))
+_DS_POP_KEYS = (
+    "ds_image_dir", "ds_cache_dir", "ds_tiers",
+    *(k for k, _s, _c in _DS_SUBSET_FIELDS),
+    *(k for k, _s in _DS_SUBSET_BOOLS),
+)
+
+
+def _assemble_dataset(form: dict) -> None:
+    """Fold the flat ``ds_*`` dataset fields into ``form['subsets']`` (a single
+    subset) so the backend builds a precached dataset config from it. No-op when
+    no image_dir is given (defer to base.toml blueprint / an explicit
+    --dataset_config). Mutates ``form`` in place."""
+    import re
+
+    img = str(form.get("ds_image_dir") or "").strip()
+    if img and not form.get("subsets"):
+        sub: dict = {"image_dir": img}
+        cache = str(form.get("ds_cache_dir") or "").strip()
+        if cache:
+            sub["cache_dir"] = cache
+        for fk, sk, cast in _DS_SUBSET_FIELDS:
+            v = form.get(fk)
+            if v in (None, ""):
+                continue
+            try:
+                sub[sk] = cast(v)
+            except (TypeError, ValueError):
+                pass
+        for fk, sk in _DS_SUBSET_BOOLS:
+            if form.get(fk):
+                sub[sk] = True
+        tiers = [int(x) for x in re.findall(r"\d+", str(form.get("ds_tiers") or ""))]
+        if tiers:
+            sub["tiers"] = tiers
+        form["subsets"] = [sub]
+    for k in _DS_POP_KEYS:  # don't leak the flat helpers to the backend form
+        form.pop(k, None)
 
 
 def build_app(default_port: int = 7860):
@@ -225,17 +277,54 @@ def build_app(default_port: int = 7860):
 
             # ── Dataset ─────────────────────────────────────────────────────
             with gr.Accordion("Dataset", open=False):
+                gr.Markdown(
+                    "Define **one subset** by folder (the common single-character "
+                    "case) — the trainer builds a precached `--dataset_config` from "
+                    "it on Start. Run `make preprocess` **first**: point `image_dir` "
+                    "at the resized+cached dir (or set `cache_dir`). For multiple "
+                    "subsets, use a `--dataset_config` TOML below or the stdlib web GUI."
+                )
+                with gr.Row():
+                    reg("ds_image_dir", gr.Textbox(
+                        label="image_dir (resized + cached images)",
+                        placeholder="post_image_dataset/resized"))
+                    reg("ds_cache_dir", gr.Textbox(
+                        label="cache_dir (pre-cached latents; blank = default)",
+                        placeholder="post_image_dataset/lora"))
+                with gr.Row():
+                    reg("ds_num_repeats", gr.Textbox(
+                        label="num_repeats", placeholder="1"))
+                    reg("ds_keep_tokens", gr.Textbox(
+                        label="keep_tokens", placeholder="0"))
+                    reg("ds_caption_extension", gr.Textbox(
+                        label="caption_extension", placeholder=".txt"))
+                    reg("ds_batch_size", gr.Textbox(
+                        label="batch_size", placeholder="1"))
+                with gr.Row():
+                    reg("ds_caption_dropout_rate", gr.Textbox(
+                        label="caption_dropout_rate", placeholder="0.0"))
+                    reg("ds_flip_aug", gr.Checkbox(value=False, label="flip_aug"))
+                    reg("ds_random_crop", gr.Checkbox(value=False, label="random_crop"))
+                    reg("ds_name", gr.Textbox(
+                        label="dataset name (built TOML)", placeholder="my_char"))
+                _tiers = [str(t) for t in server.list_target_res_tiers()]
+                reg("target_res", gr.CheckboxGroup(
+                    _tiers, value=[t for t in ("896", "1024") if t in _tiers],
+                    label="Resolution tiers (constant-token; preprocess --target_res)"))
+                reg("ds_tiers", gr.Textbox(
+                    label="this subset's tiers (multi-scale; blank = all)",
+                    placeholder="e.g. 1024 or 512,1024"))
                 reg(
                     "dataset_config",
                     gr.Textbox(
-                        label="Dataset config TOML (blank = base.toml blueprint)",
+                        label="…or a dataset config TOML (overrides the fields above)",
                         placeholder="path/to/dataset.toml",
                     ),
                 )
                 gr.Markdown(
-                    "_Leave blank to use the default `base.toml` dataset blueprint "
-                    "(`post_image_dataset/lora` caches). Point at a `--dataset_config` "
-                    "TOML for a custom blueprint. Run `make preprocess` first._"
+                    "_Blank `image_dir` **and** `dataset_config` → the default "
+                    "`base.toml` blueprint (`post_image_dataset/lora`). An explicit "
+                    "`dataset_config` wins over the folder fields._"
                 )
 
             # ── Sample prompts ──────────────────────────────────────────────
@@ -390,6 +479,15 @@ def build_app(default_port: int = 7860):
         # ── Handlers ────────────────────────────────────────────────────────
         def on_print(*vals):
             form = _collect(keys, vals)
+            # Mirror launch(): subsets → a precached --dataset_config, so the preview
+            # shows the same command Start would run. (launch rebuilds it itself.)
+            if form.get("subsets") and not (form.get("dataset_config") or "").strip():
+                try:
+                    pc = server._build_precached_config(form)
+                    if pc:
+                        form["dataset_config"] = pc
+                except Exception:  # noqa: BLE001, S110  (preview-only; ignore)
+                    pass
             try:
                 return " ".join(server.build_command(form))
             except Exception as exc:  # noqa: BLE001
