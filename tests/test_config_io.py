@@ -36,10 +36,13 @@ optimizer_args = ["weight_decay=0.0001", "update_strategy=cautious"]
 loss_type = "huber"
 huber_c = 0.1
 save_toml = true
+save_state = true
 timestep_sample_method = "sigmoid"
 sigmoid_scale = 1.3
 weighting_scheme = "logit_normal"
 attn_mode = "flash"
+qwen3_max_token_length = 512
+vae_batch_size = 1
 enable_bucket = true
 max_bucket_reso = 4096
 pretrained_model_name_or_path = "C:/anima.safetensors"
@@ -62,16 +65,31 @@ def test_load_maps_dedicated_fields():
     assert "algo=lokr" not in form.get("extra_flags", "")
 
 
-def test_load_applies_lets_renames_and_drops():
-    ef = load_toml_to_form(_LETS)["extra_flags"]
-    assert "--timestep_sampling sigmoid" in ef       # timestep_sample_method →
-    assert "--use_vae_cache" in ef                   # cache_latents →
-    assert "--output_config" in ef                   # save_toml →
-    assert "--t_min 0.0" in ef and "--t_max 1.0" in ef  # 0/1000 ÷1000 → σ∈[0,1]
-    assert "--sigmoid_scale 1.3" in ef
-    assert "--loss_type huber" in ef and "--huber_c 0.1" in ef
-    # kohya AR-bucketing keys have no anima_lora equivalent → dropped.
+def test_load_renames_to_dedicated_fields():
+    """LETS renames + training knobs land in dedicated form fields (Phase 1b)."""
+    form = load_toml_to_form(_LETS)
+    assert form["timestep_sampling"] == "sigmoid"  # timestep_sample_method →
+    assert form["sigmoid_scale"] == "1.3"
+    assert form["weighting_scheme"] == "logit_normal"
+    assert form["loss_type"] == "huber" and form["huber_c"] == "0.1"
+    assert form["attn_mode"] == "flash" and form["mixed_precision"] == "bf16"
+    assert form["qwen3_max_token_length"] == "512"
+    # 0/1000 ÷1000 → flow-matching σ, as dedicated t_min/t_max fields.
+    assert form["t_min"] == "0.0" and form["t_max"] == "1.0"
+    # bool renames → checkbox fields.
+    assert form["use_vae_cache"] is True  # cache_latents →
+    assert form["output_config"] is True  # save_toml →
+    assert form["save_state"] is True
+    assert form["gradient_checkpointing"] is True
+
+
+def test_load_drops_and_extra_routing():
+    form = load_toml_to_form(_LETS)
+    ef = form.get("extra_flags", "")
+    # kohya AR-bucketing keys have no anima_lora equivalent → dropped entirely.
     assert "enable_bucket" not in ef and "max_bucket_reso" not in ef
+    # a key with no dedicated field still round-trips via Extra CLI flags.
+    assert "--vae_batch_size 1" in ef
 
 
 def test_save_emits_runnable_toml_and_round_trips():
@@ -94,13 +112,16 @@ def test_save_emits_runnable_toml_and_round_trips():
     assert back["optimizer_type"] == "CAME"
     assert back["network_dim"] == "100000"
     assert "algo=lokr" in back["network_args"]
-    ef = back.get("extra_flags", "")
-    assert "--huber_c 0.1" in ef
-    assert "--no-masked_loss" in ef  # false bool preserved as a negation
+    # loss_type/huber_c/use_vae_cache are dedicated fields after Phase 1b.
+    assert back["loss_type"] == "huber" and back["huber_c"] == "0.1"
+    assert back["use_vae_cache"] is True
+    # masked_loss has no dedicated field → round-trips via Extra CLI flags.
+    assert "--no-masked_loss" in back.get("extra_flags", "")
 
 
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_load_maps_dedicated_fields()
-    test_load_applies_lets_renames_and_drops()
+    test_load_renames_to_dedicated_fields()
+    test_load_drops_and_extra_routing()
     test_save_emits_runnable_toml_and_round_trips()
     print("all config_io round-trip tests passed")

@@ -783,6 +783,43 @@ def _method_preset_extra(form: dict):
     add("--qwen3", "te_path")
     add("--vae", "vae_path")
 
+    # sd-scripts / LETS training knobs with dedicated GUI fields (Phase 1b). Each
+    # emits only when the field is non-blank, so blanks defer to the config chain.
+    for _flag, _key in (
+        ("--mixed_precision", "mixed_precision"),
+        ("--max_grad_norm", "max_grad_norm"),
+        ("--gradient_accumulation_steps", "gradient_accumulation_steps"),
+        ("--loss_type", "loss_type"),
+        ("--huber_c", "huber_c"),
+        ("--huber_schedule", "huber_schedule"),
+        ("--timestep_sampling", "timestep_sampling"),
+        ("--sigmoid_scale", "sigmoid_scale"),
+        ("--weighting_scheme", "weighting_scheme"),
+        ("--logit_mean", "logit_mean"),
+        ("--logit_std", "logit_std"),
+        ("--attn_mode", "attn_mode"),
+        ("--blocks_to_swap", "blocks_to_swap"),
+        ("--t_min", "t_min"),
+        ("--t_max", "t_max"),
+        ("--qwen3_max_token_length", "qwen3_max_token_length"),
+        ("--save_every_n_epochs", "save_every_n_epochs"),
+        ("--save_precision", "save_precision"),
+    ):
+        add(_flag, _key)
+
+    # Boolean checkboxes → emit the affirmative flag only when checked; an
+    # unchecked box defers to the config-chain default (to *force* a bool off, use
+    # the Extra CLI flags field with --no-<flag>).
+    for _flag, _key in (
+        ("--gradient_checkpointing", "gradient_checkpointing"),
+        ("--network_train_unet_only", "network_train_unet_only"),
+        ("--use_vae_cache", "use_vae_cache"),
+        ("--save_state", "save_state"),
+        ("--output_config", "output_config"),
+    ):
+        if form.get(_key):
+            extra.append(_flag)
+
     sched = (form.get("lr_scheduler_type") or "").strip()
     # Built-in schedulers go through --lr_scheduler; dotted-path customs through
     # --lr_scheduler_type (the resolver branch). Heuristic: a "." => custom.

@@ -21,7 +21,7 @@ import tomllib
 
 import toml
 
-# ── TOML key → GUI form field (verbatim value) ──────────────────────────────
+# ── TOML key → GUI form field (verbatim string value) ───────────────────────
 _DIRECT_FIELDS = {
     "method",
     "preset",
@@ -37,10 +37,37 @@ _DIRECT_FIELDS = {
     "output_dir",
     "dataset_config",
     "log_every_n_steps",
-    "monitor",
     "monitor_host",
     "monitor_port",
     "lr_warmup_steps",
+    # sd-scripts / LETS training knobs with dedicated GUI fields (Phase 1b)
+    "mixed_precision",
+    "max_grad_norm",
+    "gradient_accumulation_steps",
+    "loss_type",
+    "huber_c",
+    "huber_schedule",
+    "timestep_sampling",
+    "sigmoid_scale",
+    "weighting_scheme",
+    "logit_mean",
+    "logit_std",
+    "attn_mode",
+    "blocks_to_swap",
+    "t_min",
+    "t_max",
+    "qwen3_max_token_length",
+    "save_every_n_epochs",
+    "save_precision",
+}
+# Boolean form fields (rendered as checkboxes; value kept as bool, not str).
+_BOOL_FIELDS = {
+    "monitor",
+    "gradient_checkpointing",
+    "network_train_unet_only",
+    "use_vae_cache",
+    "save_state",
+    "output_config",
 }
 # Model-path renames (kohya/LETS name → our form field).
 _MODEL_PATHS = {
@@ -98,6 +125,17 @@ def load_toml_to_form(toml_text: str) -> dict:
     for sec in _SKIP_SECTIONS:
         data.pop(sec, None)
 
+    # 1) Normalize LETS/kohya keys into our arg space *before* routing, so renamed
+    #    keys land in their dedicated fields (not extra_flags).
+    norm: dict = {}
+    for key, value in data.items():
+        if key == "min_timestep":  # kohya 0–1000 int → flow-matching σ∈[0,1]
+            norm["t_min"] = round(float(value) / 1000.0, 6)
+        elif key == "max_timestep":
+            norm["t_max"] = round(float(value) / 1000.0, 6)
+        else:
+            norm[_RENAME.get(key, key)] = value
+
     form: dict = {}
     extra: list[str] = []  # CLI tokens for the extra_flags field
 
@@ -112,28 +150,29 @@ def load_toml_to_form(toml_text: str) -> dict:
             extra.append(f"--{flag_key}")
             extra.append(str(value))
 
-    # Special: kohya 0–1000 int timestep range → flow-matching σ∈[0,1].
-    if "min_timestep" in data:
-        emit("t_min", round(float(data.pop("min_timestep")) / 1000.0, 6))
-    if "max_timestep" in data:
-        emit("t_max", round(float(data.pop("max_timestep")) / 1000.0, 6))
-
-    # lr_scheduler / lr_scheduler_type both feed the single form field.
-    sched = data.pop("lr_scheduler_type", None) or data.pop("lr_scheduler", None)
+    # 2) lr_scheduler / lr_scheduler_type both feed the single form field.
+    sched = norm.pop("lr_scheduler_type", None) or norm.pop("lr_scheduler", None)
     if sched is not None:
         form["lr_scheduler_type"] = str(sched)
 
-    for key, value in data.items():
+    # 3) Route each normalized key.
+    for key, value in norm.items():
         if key in _MODEL_PATHS:
             form[_MODEL_PATHS[key]] = str(value)
         elif key in _LIST_FIELDS:
-            form[key] = " ".join(str(x) for x in value) if isinstance(value, (list, tuple)) else str(value)
+            form[key] = (
+                " ".join(str(x) for x in value)
+                if isinstance(value, (list, tuple))
+                else str(value)
+            )
+        elif key in _BOOL_FIELDS:
+            form[key] = bool(value)
         elif key in _DIRECT_FIELDS:
-            form[key] = value if key == "monitor" else str(value)
+            form[key] = str(value)
         elif key in _DROP:
             continue
         else:
-            emit(_RENAME.get(key, key), value)
+            emit(key, value)
 
     if extra:
         form["extra_flags"] = " ".join(extra)

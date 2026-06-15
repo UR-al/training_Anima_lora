@@ -275,12 +275,70 @@ def build_app(default_port: int = 7860):
                         gr.Textbox(label="Log every N steps", placeholder="(default)"),
                     )
 
+            # ── Training details (sd-scripts / LETS knobs → dedicated fields) ─
+            with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
+                with gr.Row():
+                    reg("mixed_precision", gr.Dropdown(
+                        ["", "bf16", "fp16", "no"], value="", label="mixed_precision"))
+                    reg("attn_mode", gr.Dropdown(
+                        ["", "flash", "sdpa", "torch", "sageattn", "flex"],
+                        value="", label="attn_mode"))
+                    reg("save_precision", gr.Dropdown(
+                        ["", "bf16", "fp16", "float"], value="", label="save_precision"))
+                with gr.Row():
+                    reg("loss_type", gr.Dropdown(
+                        ["", "l2", "huber", "smooth_l1"], value="", label="loss_type"))
+                    reg("huber_c", gr.Textbox(label="huber_c", placeholder="0.1"))
+                    reg("huber_schedule", gr.Dropdown(
+                        ["", "constant", "exponential", "snr"], value="",
+                        label="huber_schedule"))
+                with gr.Row():
+                    reg("timestep_sampling", gr.Dropdown(
+                        ["", "sigmoid", "uniform", "logit_normal", "shift"],
+                        value="", label="timestep_sampling"))
+                    reg("sigmoid_scale", gr.Textbox(
+                        label="sigmoid_scale", placeholder="1.0"))
+                    reg("weighting_scheme", gr.Dropdown(
+                        ["", "logit_normal", "mode", "cosmap", "sigma_sqrt", "none"],
+                        value="", label="weighting_scheme"))
+                with gr.Row():
+                    reg("logit_mean", gr.Textbox(label="logit_mean", placeholder="0.0"))
+                    reg("logit_std", gr.Textbox(label="logit_std", placeholder="1.0"))
+                    reg("t_min", gr.Textbox(label="t_min (σ 0–1)", placeholder="0.0"))
+                    reg("t_max", gr.Textbox(label="t_max (σ 0–1)", placeholder="1.0"))
+                with gr.Row():
+                    reg("max_grad_norm", gr.Textbox(
+                        label="max_grad_norm", placeholder="1.0"))
+                    reg("gradient_accumulation_steps", gr.Textbox(
+                        label="grad_accum_steps", placeholder="1"))
+                    reg("blocks_to_swap", gr.Textbox(
+                        label="blocks_to_swap", placeholder="0"))
+                    reg("qwen3_max_token_length", gr.Textbox(
+                        label="qwen3_max_token_length", placeholder="512"))
+                with gr.Row():
+                    reg("save_every_n_epochs", gr.Textbox(
+                        label="save_every_n_epochs", placeholder="1"))
+                with gr.Row():
+                    reg("gradient_checkpointing", gr.Checkbox(
+                        value=False, label="gradient_checkpointing"))
+                    reg("network_train_unet_only", gr.Checkbox(
+                        value=False, label="network_train_unet_only"))
+                    reg("use_vae_cache", gr.Checkbox(
+                        value=False, label="use_vae_cache (cache_latents)"))
+                    reg("save_state", gr.Checkbox(value=False, label="save_state"))
+                    reg("output_config", gr.Checkbox(
+                        value=False, label="output_config (save_toml)"))
+                gr.Markdown(
+                    "*Blank/unchecked → defer to the `base→preset→method` config "
+                    "chain. To force a bool **off**, use Extra CLI flags `--no-<flag>`.*"
+                )
+
             with gr.Accordion("Extra CLI flags", open=False):
                 reg(
                     "extra_flags",
                     gr.Textbox(
                         label="Raw extra args appended verbatim",
-                        placeholder="--max_grad_norm 1.0 --gradient_checkpointing",
+                        placeholder="--no-masked_loss --network_weights path.safetensors",
                     ),
                 )
 
