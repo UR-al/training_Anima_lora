@@ -552,16 +552,25 @@ def build_app(default_port: int = 7860):
                 for _i in range(1, N_SUBSETS + 1):
                     _subset_block(_i)
 
-                reg_path(
+                dataset_config_tb = reg_path(
                     "dataset_config",
                     file=True,
-                    label="…or a dataset config TOML (overrides the blocks above)",
+                    label="…or a dataset config TOML",
                     placeholder="path/to/dataset.toml",
                 )
+                load_ds_cfg_btn = gr.Button(
+                    "📥 Load dataset_config → fill subsets", variant="secondary"
+                )
+                ds_cfg_status = gr.Markdown("")
                 gr.Markdown(
-                    "_Blank every `image_dir` **and** `dataset_config` → the default "
-                    "`base.toml` blueprint (`post_image_dataset/lora`). An explicit "
-                    "`dataset_config` wins over the blocks above._"
+                    "_**Load dataset_config → fill subsets** parses a LoRA_Easy / anima "
+                    "dataset TOML (`[[datasets]]` blocks: image_dir / num_repeats / "
+                    "keep_tokens / caption_extension; `resolution` → tier) into the "
+                    "subset blocks above + Resolution tiers, then clears the path so "
+                    "those subsets drive training. (Same image_dir across resolutions → "
+                    "one subset + the union of tiers — anima's multiscale equivalent; "
+                    "`skip_image_resolution` has no anima arg and is dropped.) Blank "
+                    "every `image_dir` → the default `base.toml` blueprint._"
                 )
             # ── Auto-preprocess at train start ──────────────────────────────
             with gr.Accordion("Auto-preprocess at train start", open=False):
@@ -669,20 +678,20 @@ def build_app(default_port: int = 7860):
                             value="",
                             label="LR scheduler (blank = config default)",
                             allow_custom_value=True,
+                            info="use_constantcosine을 켜면 비활성화됩니다(스케줄러를 대체)",
                         ),
                     )
-                # Per-optimizer / per-scheduler arg help (backend.optimizer_arg_help):
-                # selecting either dropdown lists its accepted args + plain-language desc.
-                opt_help = gr.Markdown(
-                    "_Select an optimizer or scheduler to see its arguments._"
-                )
 
-                def _fmt_opt_help(name):
-                    r = server.optimizer_arg_help((name or "").strip())
+                # Per-optimizer / per-scheduler arg help (backend.optimizer_arg_help):
+                # optimizer help expands on the LEFT, scheduler help on the RIGHT.
+                def _fmt_opt_help(name, *, kind="optimizer"):
+                    name = (name or "").strip()
+                    if not name:
+                        return f"_pick a {kind} above to see its arguments_"
+                    r = server.optimizer_arg_help(name)
                     if not r.get("ok"):
                         return r.get("note") or f"_no help for `{name}`_"
-                    head = r.get("cls") or name
-                    lines = [f"**{head}**"]
+                    lines = [f"**{r.get('cls') or name}**"]
                     if r.get("note"):
                         lines.append(r["note"])
                     for a in r.get("args", []):
@@ -692,11 +701,21 @@ def build_app(default_port: int = 7860):
                         lines.append(f"- `{a['name']}`{dv}{req} — {a.get('desc', '')}")
                     return "\n".join(lines)
 
+                _opt0 = optimizers[0] if optimizers else "AdamW"
+                with gr.Row():
+                    opt_help = gr.Markdown(
+                        _fmt_opt_help(_opt0), label="Optimizer args"
+                    )  # initial = the default optimizer's args (shown immediately)
+                    sched_help = gr.Markdown(
+                        _fmt_opt_help("", kind="scheduler"), label="Scheduler args"
+                    )
                 by_key["optimizer_type"].change(
                     _fmt_opt_help, by_key["optimizer_type"], opt_help
                 )
                 by_key["lr_scheduler_type"].change(
-                    _fmt_opt_help, by_key["lr_scheduler_type"], opt_help
+                    lambda n: _fmt_opt_help(n, kind="scheduler"),
+                    by_key["lr_scheduler_type"],
+                    sched_help,
                 )
                 with gr.Row():
                     reg(
@@ -1001,7 +1020,10 @@ def build_app(default_port: int = 7860):
                     reg(
                         "huber_c",
                         gr.Textbox(
-                            label="huber_c", placeholder="0.1", interactive=False
+                            label="huber_c",
+                            placeholder="0.1",
+                            interactive=False,
+                            info="loss_type이 huber / smooth_l1일 때만 사용됩니다",
                         ),
                     )
                     reg(
@@ -1012,6 +1034,7 @@ def build_app(default_port: int = 7860):
                             label="huber_schedule",
                             allow_custom_value=True,
                             interactive=False,
+                            info="loss_type이 huber / smooth_l1일 때만 사용됩니다",
                         ),
                     )
                 with gr.Row():
@@ -1026,7 +1049,11 @@ def build_app(default_port: int = 7860):
                     )
                     reg(
                         "sigmoid_scale",
-                        gr.Textbox(label="sigmoid_scale", placeholder="1.0"),
+                        gr.Textbox(
+                            label="sigmoid_scale",
+                            placeholder="1.0",
+                            info="timestep_sampling이 sigmoid(또는 미지정)일 때만 사용됩니다",
+                        ),
                     )
                     reg(
                         "weighting_scheme",
@@ -1049,13 +1076,19 @@ def build_app(default_port: int = 7860):
                     reg(
                         "logit_mean",
                         gr.Textbox(
-                            label="logit_mean", placeholder="0.0", interactive=False
+                            label="logit_mean",
+                            placeholder="0.0",
+                            interactive=False,
+                            info="weighting_scheme이 logit_normal일 때만 사용됩니다",
                         ),
                     )
                     reg(
                         "logit_std",
                         gr.Textbox(
-                            label="logit_std", placeholder="1.0", interactive=False
+                            label="logit_std",
+                            placeholder="1.0",
+                            interactive=False,
+                            info="weighting_scheme이 logit_normal일 때만 사용됩니다",
                         ),
                     )
                     reg("t_min", gr.Textbox(label="t_min (σ 0–1)", placeholder="0.0"))
@@ -1483,6 +1516,49 @@ def build_app(default_port: int = 7860):
                 )
             return updates + [note]
 
+        def on_load_dataset_config(path):
+            """Parse a dataset_config TOML's [[datasets]] blocks into the subset blocks
+            + Resolution tiers, then clear the dataset_config path so the filled subsets
+            drive training (a LoRA_Easy dataset TOML isn't anima-native, so we convert
+            it rather than pass it through)."""
+            p = (path or "").strip()
+            if not p:
+                return [gr.update() for _ in keys] + [
+                    "⚠ enter a dataset_config path first"
+                ]
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    f2 = load_toml_to_form(fh.read())
+            except Exception as exc:  # noqa: BLE001
+                return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
+            wanted = {
+                k: v
+                for k, v in f2.items()
+                if k == "target_res" or k.split("_")[0] in ("ds", "ds2", "ds3", "ds4")
+            }
+            updates = []
+            for k in keys:
+                if k == "dataset_config":
+                    updates.append(gr.update(value=""))  # filled subsets are the source
+                elif k in wanted:
+                    updates.append(gr.update(value=wanted[k]))
+                else:
+                    updates.append(gr.update())
+            n = sum(
+                1
+                for k, v in wanted.items()
+                if k.endswith("image_dir") and str(v).strip()
+            )
+            tiers = wanted.get("target_res") or []
+            note = (
+                f"✓ filled {n} subset(s)"
+                + (f" + tiers {','.join(tiers)}" if tiers else "")
+                + f" from `{p}` — dataset_config path cleared so these subsets train."
+                if n
+                else f"⚠ no `[[datasets]]` subsets found in `{p}`"
+            )
+            return updates + [note]
+
         def on_save_config(path, *vals):
             """Current form → a runnable --config_file TOML on disk."""
             import os
@@ -1517,6 +1593,11 @@ def build_app(default_port: int = 7860):
         # cascade and left huber_c/sigmoid_scale/… stuck on a spinner.
         load_cfg_btn.click(
             on_load_config, inputs=config_path, outputs=inputs + [config_status]
+        )
+        load_ds_cfg_btn.click(
+            on_load_dataset_config,
+            inputs=dataset_config_tb,
+            outputs=inputs + [ds_cfg_status],
         )
         save_cfg_btn.click(
             on_save_config, inputs=[config_path, *inputs], outputs=config_status

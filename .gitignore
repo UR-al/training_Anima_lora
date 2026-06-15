@@ -45,5 +45,6 @@ near_twins_temp.toml
 # web monitor runtime state (regenerated each run)
 library/monitoring/monitor_data/
 smoke_data/
-# web GUI queue + saved-config store (local runtime data)
+# GUI queue + saved-config + precached-dataset store (local runtime data)
+gui/store/
 gui/webgui/store/

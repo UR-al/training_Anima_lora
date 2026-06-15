@@ -290,10 +290,23 @@ def _extract_dataset(data: dict, form: dict) -> None:
             for s in subs:
                 if isinstance(s, dict):
                     pairs.append((s, blk.get("batch_size")))
-    for prefix, (s, block_bs) in zip(_DS_PREFIXES, pairs):
+    # Dedup by image_dir: a LoRA_Easy multiscale dataset_config lists the SAME folder
+    # under N [[datasets]] blocks (one per resolution). Anima expresses that as ONE
+    # subset + the union of tiers in target_res (choose_edge assigns each image to the
+    # tier that resizes it least) — so collapse same-folder subsets to the first.
+    seen: set = set()
+    deduped: list = []
+    for s, bs in pairs:
+        img = str(s.get("image_dir") or "").strip()
+        if img and img in seen:
+            continue
+        if img:
+            seen.add(img)
+        deduped.append((s, bs))
+    for prefix, (s, block_bs) in zip(_DS_PREFIXES, deduped):
         _fill_subset_block(form, prefix, s, block_bs, gc_edges)
-    if len(pairs) > _DS_N_SUBSETS:
-        form["_ds_overflow"] = len(pairs)  # surfaced as a load note by on_load_config
+    if len(deduped) > _DS_N_SUBSETS:
+        form["_ds_overflow"] = len(deduped)  # surfaced as a load note by on_load_config
     if tiers:
         form["target_res"] = [str(t) for t in sorted(tiers)]
 
