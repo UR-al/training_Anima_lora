@@ -535,6 +535,54 @@ def build_app(default_port: int = 7860):
                     save_cfg_btn = gr.Button("Save form →", variant="secondary")
                 config_status = gr.Markdown("")
 
+        with gr.Tab("Utils"):
+            gr.Markdown(
+                "Utilities run as **direct subprocesses** (`tasks.py …`), like "
+                "training — **mutually exclusive** with a training run (one at a "
+                "time). Output streams to the training-log panel below; use **Stop** "
+                "to cancel."
+            )
+            # ── Auto-batch search (tasks.py bench-autobatch) ────────────────
+            with gr.Accordion("Auto-batch (max batch-size search)", open=True):
+                _ab_tiers = [str(t) for t in server.list_target_res_tiers()]
+                reg("ab_res", gr.CheckboxGroup(
+                    _ab_tiers, value=[t for t in ("1024",) if t in _ab_tiers],
+                    label="Resolutions to search (--res)"))
+                with gr.Row():
+                    reg("ab_max_batch", gr.Textbox(
+                        label="max batch (--max-batch)", placeholder="8"))
+                    reg("ab_optimizer_type", gr.Textbox(
+                        label="optimizer_type", placeholder="AdamW"))
+                    reg("ab_blocks_to_swap", gr.Textbox(
+                        label="blocks_to_swap", placeholder="0"))
+                    reg("ab_compile", gr.Checkbox(value=False, label="--compile"))
+                with gr.Row():
+                    reg("ab_network_module", gr.Textbox(
+                        label="network_module", placeholder="networks.lora_anima"))
+                    reg("ab_network_dim", gr.Textbox(
+                        label="network_dim", placeholder="16"))
+                    reg("ab_network_alpha", gr.Textbox(
+                        label="network_alpha", placeholder="8"))
+                with gr.Row():
+                    reg("ab_network_args", gr.Textbox(
+                        label="network_args (k=v …)", placeholder="algo=lokr factor=4"))
+                ab_run_btn = gr.Button("Run auto-batch", variant="primary")
+            # ── Masking (tasks.py mask: SAM3 + MIT) ─────────────────────────
+            with gr.Accordion("Masking (SAM3 + MIT)", open=False):
+                gr.Markdown(
+                    "Masks the configured resized dir → `post_image_dataset/masks/` "
+                    "(dirs from `preprocess.toml`/`base.toml`). SAM3 needs "
+                    "`models/sam3/`; MIT needs `models/mit/model.pth`."
+                )
+                with gr.Row():
+                    reg("mask_sam", gr.Checkbox(value=True, label="SAM3 (RUN_SAM_MASK)"))
+                    reg("mask_mit", gr.Checkbox(value=True, label="MIT (RUN_MIT_MASK)"))
+                    reg("mit_text_threshold", gr.Textbox(
+                        label="MIT text threshold", placeholder="(default)"))
+                    reg("mit_dilate", gr.Textbox(
+                        label="MIT dilate", placeholder="(default)"))
+                mask_run_btn = gr.Button("Run masking", variant="primary")
+
         # ── Actions (always visible below the tabs, kohya-style) ────────────
         with gr.Row():
             print_btn = gr.Button("Print training command", variant="secondary")
@@ -595,6 +643,20 @@ def build_app(default_port: int = 7860):
         def on_status():
             return server.status()
 
+        def _run_util(fn, *vals):
+            form = _collect(keys, vals)
+            try:
+                res = fn(form)
+            except Exception as exc:  # noqa: BLE001
+                res = {"ok": False, "error": str(exc)}
+            return res.get("command", ""), res
+
+        def on_autobatch(*vals):
+            return _run_util(server.bench_autobatch, *vals)
+
+        def on_masking(*vals):
+            return _run_util(server.run_masking, *vals)
+
         def on_save_samples(name, text):
             res = server.save_sample_prompts(name or "sample", text or "")
             # Push the written path into the sample_prompts field on success.
@@ -653,6 +715,8 @@ def build_app(default_port: int = 7860):
         start_btn.click(on_start, inputs=inputs, outputs=[out_cmd, out_status])
         stop_btn.click(on_stop, inputs=None, outputs=[out_cmd, out_status])
         status_btn.click(on_status, inputs=None, outputs=out_status)
+        ab_run_btn.click(on_autobatch, inputs=inputs, outputs=[out_cmd, out_status])
+        mask_run_btn.click(on_masking, inputs=inputs, outputs=[out_cmd, out_status])
         # Live log: tick every 2s while Auto-refresh is on; the checkbox toggles
         # the timer so the poll stops when the panel isn't being watched.
         log_timer.tick(on_log_tick, inputs=None, outputs=out_log)

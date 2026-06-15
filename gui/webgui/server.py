@@ -1125,11 +1125,64 @@ def _autobatch_argv(form: dict):
     return argv, None
 
 
+def _spawn_util(argv: list[str], name: str, env_extra: dict | None = None) -> dict:
+    """Launch a ``tasks.py <subcommand>`` argv as a direct subprocess with log
+    capture — the post-daemon utility path (mirrors :func:`launch`). Refuses if a
+    run is already in progress (single subprocess at a time, training-exclusive).
+    ``argv[0]`` is the repo-relative program, e.g. ``"tasks.py"``. Output streams to
+    the same ``_STATE['log_path']`` the live-log panel tails."""
+    proc = _STATE.get("proc")
+    if proc is not None and proc.poll() is None:
+        return {"ok": False, "error": "A run is already in progress."}
+    cmd = [sys.executable, *argv]
+    log_dir = ROOT / "output" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"webgui_{_safe_name(name)}.log"
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    if env_extra:
+        env.update({k: str(v) for k, v in env_extra.items()})
+    try:
+        logf = open(log_path, "w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(
+            cmd, cwd=str(ROOT), env=env, stdout=logf, stderr=subprocess.STDOUT
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"failed to spawn: {exc}"}
+    _STATE.update(
+        proc=proc, cmd=cmd, started_at=time.time(),
+        monitor_url=None, log_path=str(log_path),
+    )
+    return {"ok": True, "command": " ".join(cmd), "pid": proc.pid,
+            "log_path": str(log_path)}
+
+
 def bench_autobatch(form: dict) -> dict:
-    """bench-autobatch needed the (now-removed) job queue to run without colliding
-    with a training run, so it is no longer available from the web GUI. Run it from
-    the CLI instead (``make bench-autobatch`` / ``python tasks.py bench-autobatch``)."""
-    return {"error": "bench-autobatch required the daemon, which has been removed"}
+    """Run ``tasks.py bench-autobatch`` (max-batch search) as a direct subprocess.
+    Post-daemon: launches inline and is mutually exclusive with a training run."""
+    argv, err = _autobatch_argv(form)
+    if err:
+        return {"ok": False, "error": err}
+    return _spawn_util(argv, "autobatch")
+
+
+def run_masking(form: dict) -> dict:
+    """Run ``tasks.py mask`` (SAM3 + MIT → merged masks) as a direct subprocess.
+    SAM/MIT gating and MIT tuning ride env vars (``RUN_SAM_MASK`` / ``RUN_MIT_MASK``
+    / ``MIT_TEXT_THRESHOLD`` / ``MIT_DILATE``) — see scripts/tasks/masking.py."""
+    env: dict = {
+        "RUN_SAM_MASK": "1" if form.get("mask_sam", True) else "0",
+        "RUN_MIT_MASK": "1" if form.get("mask_mit", True) else "0",
+    }
+    if not (form.get("mask_sam", True) or form.get("mask_mit", True)):
+        return {"ok": False, "error": "SAM과 MIT 둘 다 꺼져 있습니다 — 하나는 켜세요."}
+    tt = str(form.get("mit_text_threshold") or "").strip()
+    if tt:
+        env["MIT_TEXT_THRESHOLD"] = tt
+    dl = str(form.get("mit_dilate") or "").strip()
+    if dl:
+        env["MIT_DILATE"] = dl
+    return _spawn_util(["tasks.py", "mask"], "mask", env)
 
 
 def launch(form: dict) -> dict:
