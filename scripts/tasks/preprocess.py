@@ -157,7 +157,7 @@ def cmd_preprocess_resize(extra):
     run(
         [
             PY,
-            "scripts/preprocess/resize_images.py",
+            "tools/resize_images.py",
             "--src",
             _path("source_image_dir", "image_dataset"),
             "--dst",
@@ -189,7 +189,7 @@ def cmd_preprocess_reconcile(extra):
     run(
         [
             PY,
-            "scripts/preprocess/reconcile_caches.py",
+            "tools/reconcile_caches.py",
             "--image-dir",
             _path("source_image_dir", "image_dataset"),
             "--resized-dir",
@@ -209,7 +209,7 @@ def cmd_preprocess_vae(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_latents.py",
+            "tools/cache_latents.py",
             "--dir",
             _path("resized_image_dir", "post_image_dataset/resized"),
             "--cache_dir",
@@ -241,7 +241,7 @@ def cmd_preprocess_te(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_text_embeddings.py",
+            "tools/cache_text_embeddings.py",
             "--dir",
             _path("source_image_dir", "image_dataset"),
             "--cache_dir",
@@ -277,7 +277,7 @@ def cmd_preprocess_pooled(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_pooled_text.py",
+            "tools/cache_pooled_text.py",
             "--dir",
             _path("lora_cache_dir", "post_image_dataset/lora"),
             *extra,
@@ -303,7 +303,7 @@ def cmd_preprocess_pe(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_pe_encoder.py",
+            "tools/cache_pe_encoder.py",
             "--dir",
             _path("resized_image_dir", "post_image_dataset/resized"),
             "--cache_dir",
@@ -333,7 +333,7 @@ def cmd_preprocess_pe_spatial(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_pe_encoder.py",
+            "tools/cache_pe_encoder.py",
             "--dir",
             _path("resized_image_dir", "post_image_dataset/resized"),
             "--cache_dir",
@@ -360,7 +360,7 @@ def cmd_caption_index(extra):
     run(
         [
             PY,
-            "scripts/preprocess/build_caption_index.py",
+            "tools/build_caption_index.py",
             "--src",
             _path("source_image_dir", "image_dataset"),
             *pp_args,
@@ -504,21 +504,21 @@ def cmd_preprocess_multiscale(extra):
         )
         run(
             [
-                PY, "scripts/preprocess/resize_images.py",
+                PY, "tools/resize_images.py",
                 "--src", src, "--dst", rdst,
                 "--target_res", t, "--min_pixels", min_px, "--recursive",
             ]
         )
         run(
             [
-                PY, "scripts/preprocess/cache_latents.py",
+                PY, "tools/cache_latents.py",
                 "--dir", rdst, "--cache_dir", cdir,
                 "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
             ]
         )
         run(
             [
-                PY, "scripts/preprocess/cache_text_embeddings.py",
+                PY, "tools/cache_text_embeddings.py",
                 "--dir", src, "--cache_dir", cdir,
                 "--qwen3", qwen3, "--dit", dit,
                 "--caption_shuffle_variants", shuffle,
@@ -582,7 +582,7 @@ def cmd_preprocess_manifest(extra):
         )
         run(
             [
-                PY, "scripts/preprocess/resize_images.py",
+                PY, "tools/resize_images.py",
                 "--src", e["src"], "--dst", e["resized"],
                 *(["--target_res", *tr] if tr else []),
                 "--min_pixels", str(e.get("min_pixels", "0")), "--recursive",
@@ -591,14 +591,14 @@ def cmd_preprocess_manifest(extra):
         )
         run(
             [
-                PY, "scripts/preprocess/cache_latents.py",
+                PY, "tools/cache_latents.py",
                 "--dir", e["resized"], "--cache_dir", e["cache"],
                 "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
             ]
         )
         run(
             [
-                PY, "scripts/preprocess/cache_text_embeddings.py",
+                PY, "tools/cache_text_embeddings.py",
                 "--dir", e["src"], "--cache_dir", e["cache"],
                 "--qwen3", qwen3, "--dit", dit,
                 "--caption_shuffle_variants", shuffle,
@@ -608,7 +608,7 @@ def cmd_preprocess_manifest(extra):
         if repa_encoder is not None:
             run(
                 [
-                    PY, "scripts/preprocess/cache_pe_encoder.py",
+                    PY, "tools/cache_pe_encoder.py",
                     "--dir", e["resized"], "--cache_dir", e["cache"],
                     "--encoder", repa_encoder, "--recursive",
                 ]
@@ -740,7 +740,7 @@ def cmd_preprocess_config(extra):
         run(
             [
                 PY,
-                "scripts/preprocess/resize_images.py",
+                "tools/resize_images.py",
                 "--src",
                 src_dir,
                 "--dst",
@@ -758,7 +758,7 @@ def cmd_preprocess_config(extra):
         run(
             [
                 PY,
-                "scripts/preprocess/cache_latents.py",
+                "tools/cache_latents.py",
                 "--dir",
                 image_dir,
                 "--cache_dir",
@@ -776,7 +776,7 @@ def cmd_preprocess_config(extra):
         run(
             [
                 PY,
-                "scripts/preprocess/cache_text_embeddings.py",
+                "tools/cache_text_embeddings.py",
                 "--dir",
                 src_dir,
                 "--cache_dir",

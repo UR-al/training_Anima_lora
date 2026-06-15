@@ -4,7 +4,7 @@ These are wired up under ``make exp-*`` / ``python tasks.py exp-*`` to keep
 the unstable methods visually separate from the shipped ones (lora family,
 modulation guidance, hydra, EasyControl). Each ``cmd_*`` is a thin shim that
 translates env vars + extra argv into the right ``train.py`` (via
-``accelerate launch``) or ``scripts/preprocess/*.py`` call.
+``accelerate launch``) or ``tools/*.py`` call.
 
 (EasyControl graduated to the shipped ``make easycontrol*`` targets — see
 ``scripts/tasks/training.py``.)

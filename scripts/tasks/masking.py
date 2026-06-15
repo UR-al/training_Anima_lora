@@ -111,7 +111,7 @@ def _run_sam(
     run(
         [
             PY,
-            "scripts/preprocess/generate_masks.py",
+            "tools/generate_masks.py",
             "--config",
             config_path,
             "--image-dir",
@@ -134,7 +134,7 @@ def _run_mit(image_dir: Path, out_dir: Path, extra: list[str]) -> None:
     # own argparse defaults so direct CLI use is unchanged.
     cmd = [
         PY,
-        "scripts/preprocess/generate_masks_mit.py",
+        "tools/generate_masks_mit.py",
         "--image-dir",
         str(image_dir),
         "--mask-dir",
@@ -200,7 +200,7 @@ def cmd_mask(extra, *, resized_dir=None, mask_dir=None):
         run(
             [
                 PY,
-                "scripts/preprocess/merge_masks.py",
+                "tools/merge_masks.py",
                 *merge_sources,
                 "--output-dir",
                 str(mask_out_dir),

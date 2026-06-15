@@ -14,7 +14,7 @@ the next resize / latent / PE / mask pass regenerates it cleanly:
 TE caches (``{stem}_anima_te.safetensors``) are text-only and never touched.
 
 The walk → native-size index → per-image bucket check lives here so the task
-layer / GUI / tests can drive it without a CLI attached; ``scripts/preprocess/
+layer / GUI / tests can drive it without a CLI attached; ``tools/
 reconcile_caches.py`` is a thin argparse shell over ``reconcile_caches``.
 """
 

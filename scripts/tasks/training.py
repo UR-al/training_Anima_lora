@@ -277,7 +277,7 @@ def _near_twins_preprocess(cfg: dict, base: str, extra) -> None:
     run(
         [
             PY,
-            "scripts/preprocess/resize_images.py",
+            "tools/resize_images.py",
             "--src",
             staging,
             "--dst",
@@ -292,7 +292,7 @@ def _near_twins_preprocess(cfg: dict, base: str, extra) -> None:
     run(
         [
             PY,
-            "scripts/preprocess/cache_latents.py",
+            "tools/cache_latents.py",
             "--dir",
             resized,
             "--cache_dir",
@@ -310,7 +310,7 @@ def _near_twins_preprocess(cfg: dict, base: str, extra) -> None:
     run(
         [
             PY,
-            "scripts/preprocess/cache_text_embeddings.py",
+            "tools/cache_text_embeddings.py",
             "--dir",
             resized,
             "--cache_dir",
@@ -487,7 +487,7 @@ def cmd_easycontrol_preprocess(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_latents.py",
+            "tools/cache_latents.py",
             "--dir",
             src,
             "--cache_dir",
@@ -503,7 +503,7 @@ def cmd_easycontrol_preprocess(extra):
     run(
         [
             PY,
-            "scripts/preprocess/cache_text_embeddings.py",
+            "tools/cache_text_embeddings.py",
             "--dir",
             src,
             "--cache_dir",
