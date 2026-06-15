@@ -313,6 +313,30 @@ def build_app(default_port: int = 7860):
         )
 
         with gr.Tab("LoRA"):
+            # ── Config file (load / save) — sd-scripts/LETS --config_file ───
+            with gr.Accordion("Config file (load / save)", open=True):
+                gr.Markdown(
+                    "Load a LETS / kohya_ss / anima_lora ``--config_file`` TOML into "
+                    "the form (key renames applied; unmapped keys fold into *Extra "
+                    "CLI flags*), or save the current form as a runnable config."
+                )
+                with gr.Row():
+                    config_path = gr.Textbox(
+                        label="Config TOML path",
+                        placeholder="configs/examples/lokr_came.toml",
+                        scale=4,
+                    )
+                    cfg_browse_btn = gr.Button("📁", scale=0, min_width=46)
+                    load_cfg_btn = gr.Button("Load → form", variant="secondary")
+                    save_cfg_btn = gr.Button("Save form →", variant="secondary")
+                config_status = gr.Markdown("")
+                cfg_browse_btn.click(
+                    _pick_file,
+                    inputs=config_path,
+                    outputs=config_path,
+                    show_progress="hidden",
+                )
+
             # ── Method / preset (this repo's core training-selection concept) ──
             with gr.Row():
                 reg(
@@ -335,22 +359,6 @@ def build_app(default_port: int = 7860):
                         label="Hardware preset (configs/presets.toml)",
                     ),
                 )
-
-            # ── Output folders ──────────────────────────────────────────────
-            with gr.Accordion("Output", open=True):
-                with gr.Row():
-                    reg(
-                        "output_name",
-                        gr.Textbox(
-                            label="Output name",
-                            placeholder="(defaults to method name)",
-                        ),
-                    )
-                    reg_path(
-                        "output_dir",
-                        value="output",
-                        label="Output base dir",
-                    )
 
             # ── Anima model paths (mirrors kohya's class_anima accordion) ────
             with gr.Accordion(
@@ -375,120 +383,21 @@ def build_app(default_port: int = 7860):
                     placeholder="Path to the Qwen-Image VAE",
                 )
 
-            # ── Basic training params ───────────────────────────────────────
-            with gr.Accordion("Basic", open=True):
+            # ── Output folders ──────────────────────────────────────────────
+            with gr.Accordion("Output", open=True):
                 with gr.Row():
                     reg(
-                        "learning_rate",
+                        "output_name",
                         gr.Textbox(
-                            label="Learning rate", placeholder="(method default)"
+                            label="Output name",
+                            placeholder="(defaults to method name)",
                         ),
                     )
-                    reg(
-                        "max_train_epochs",
-                        gr.Textbox(
-                            label="Max train epochs", placeholder="(method default)"
-                        ),
+                    reg_path(
+                        "output_dir",
+                        value="output",
+                        label="Output base dir",
                     )
-                    reg("seed", gr.Textbox(label="Seed", placeholder="(random)"))
-                with gr.Row():
-                    reg(
-                        "network_dim",
-                        gr.Textbox(
-                            label="Network dim / rank", placeholder="(method default)"
-                        ),
-                    )
-                    reg(
-                        "network_alpha",
-                        gr.Textbox(
-                            label="Network alpha", placeholder="(method default)"
-                        ),
-                    )
-
-            # ── Optimizer & scheduler ───────────────────────────────────────
-            with gr.Accordion("Optimizer & Scheduler", open=False):
-                with gr.Row():
-                    reg(
-                        "optimizer_type",
-                        gr.Dropdown(
-                            optimizers,
-                            value=(optimizers[0] if optimizers else "AdamW"),
-                            label="Optimizer (kohya built-ins + vendored zoo)",
-                            allow_custom_value=True,
-                        ),
-                    )
-                    reg(
-                        "lr_scheduler_type",
-                        gr.Dropdown(
-                            schedulers,
-                            value="",
-                            label="LR scheduler (blank = config default)",
-                            allow_custom_value=True,
-                        ),
-                    )
-                with gr.Row():
-                    reg(
-                        "lr_warmup_steps",
-                        gr.Textbox(label="LR warmup steps", placeholder="(default)"),
-                    )
-                    reg(
-                        "optimizer_args",
-                        gr.Textbox(
-                            label="optimizer_args — one key|value per line",
-                            lines=3,
-                            placeholder="weight_decay|0.01\nbetas|0.9,0.999\nuse_bias_correction|True",
-                        ),
-                    )
-                    reg(
-                        "lr_scheduler_args",
-                        gr.Textbox(
-                            label="lr_scheduler_args — one key|value per line",
-                            lines=2,
-                            placeholder="num_cycles|3\nmin_lr|1e-6",
-                        ),
-                    )
-                # constant→cosine one-shot: hold constant LR for the planned run,
-                # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
-                # Overrides lr_scheduler (which greys out when this is on).
-                with gr.Row():
-                    reg(
-                        "use_constantcosine",
-                        gr.Checkbox(
-                            value=False, label="use_constantcosine (constant→cosine)"
-                        ),
-                    )
-                    reg(
-                        "constantcosine_tail_epochs",
-                        gr.Textbox(
-                            label="constantcosine_tail_epochs", placeholder="0 = off"
-                        ),
-                    )
-                    reg(
-                        "lr_scheduler_min_lr_ratio",
-                        gr.Textbox(
-                            label="min_lr_ratio (cosine floor)", placeholder="0.0"
-                        ),
-                    )
-
-            # ── Network / adapter ───────────────────────────────────────────
-            with gr.Accordion("Network / Adapter", open=False):
-                reg(
-                    "network_module",
-                    gr.Dropdown(
-                        network_modules,
-                        value="",
-                        label="network_module (blank = method default)",
-                        allow_custom_value=True,
-                    ),
-                )
-                reg(
-                    "network_args",
-                    gr.Textbox(
-                        label="network_args — one key|value per line",
-                        lines=4,
-                        placeholder="conv_dim|8\nconv_alpha|4\nalgo|lokr\nuse_tucker|True",
-                    ),
-                )
 
             # ── Dataset ─────────────────────────────────────────────────────
             with gr.Accordion("Dataset", open=True):
@@ -634,22 +543,122 @@ def build_app(default_port: int = 7860):
                         gr.Textbox(label="caption_tag_dropout_rate", placeholder="0.1"),
                     )
 
-            # ── Sample prompts ──────────────────────────────────────────────
-            with gr.Accordion("Sample images", open=True):
-                reg_path(
-                    "sample_prompts",
-                    file=True,
-                    label="Sample prompts file (--sample_prompts)",
-                    placeholder="path/to/prompts.txt",
-                )
-                sample_editor = gr.Textbox(
-                    label="…or edit prompts here and Save",
-                    lines=4,
-                    placeholder="a photo of sks dog --w 1024 --h 1024 --s 20",
-                )
-                save_samples_btn = gr.Button("Save prompts → file")
+            # ── Basic training params ───────────────────────────────────────
+            with gr.Accordion("Basic", open=True):
+                with gr.Row():
+                    reg(
+                        "learning_rate",
+                        gr.Textbox(
+                            label="Learning rate", placeholder="(method default)"
+                        ),
+                    )
+                    reg(
+                        "max_train_epochs",
+                        gr.Textbox(
+                            label="Max train epochs", placeholder="(method default)"
+                        ),
+                    )
+                    reg("seed", gr.Textbox(label="Seed", placeholder="(random)"))
+                with gr.Row():
+                    reg(
+                        "network_dim",
+                        gr.Textbox(
+                            label="Network dim / rank", placeholder="(method default)"
+                        ),
+                    )
+                    reg(
+                        "network_alpha",
+                        gr.Textbox(
+                            label="Network alpha", placeholder="(method default)"
+                        ),
+                    )
 
-            # ── Advanced / monitor / run ────────────────────────────────────
+            # ── Network / adapter ───────────────────────────────────────────
+            with gr.Accordion("Network / Adapter", open=False):
+                reg(
+                    "network_module",
+                    gr.Dropdown(
+                        network_modules,
+                        value="",
+                        label="network_module (blank = method default)",
+                        allow_custom_value=True,
+                    ),
+                )
+                reg(
+                    "network_args",
+                    gr.Textbox(
+                        label="network_args — one key|value per line",
+                        lines=4,
+                        placeholder="conv_dim|8\nconv_alpha|4\nalgo|lokr\nuse_tucker|True",
+                    ),
+                )
+
+            # ── Optimizer & scheduler ───────────────────────────────────────
+            with gr.Accordion("Optimizer & Scheduler", open=False):
+                with gr.Row():
+                    reg(
+                        "optimizer_type",
+                        gr.Dropdown(
+                            optimizers,
+                            value=(optimizers[0] if optimizers else "AdamW"),
+                            label="Optimizer (kohya built-ins + vendored zoo)",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "lr_scheduler_type",
+                        gr.Dropdown(
+                            schedulers,
+                            value="",
+                            label="LR scheduler (blank = config default)",
+                            allow_custom_value=True,
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "lr_warmup_steps",
+                        gr.Textbox(label="LR warmup steps", placeholder="(default)"),
+                    )
+                    reg(
+                        "optimizer_args",
+                        gr.Textbox(
+                            label="optimizer_args — one key|value per line",
+                            lines=3,
+                            placeholder="weight_decay|0.01\nbetas|0.9,0.999\nuse_bias_correction|True",
+                        ),
+                    )
+                    reg(
+                        "lr_scheduler_args",
+                        gr.Textbox(
+                            label="lr_scheduler_args — one key|value per line",
+                            lines=2,
+                            placeholder="num_cycles|3\nmin_lr|1e-6",
+                        ),
+                    )
+                # constant→cosine one-shot: hold constant LR for the planned run,
+                # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
+                # Overrides lr_scheduler (which greys out when this is on).
+                with gr.Row():
+                    reg(
+                        "use_constantcosine",
+                        gr.Checkbox(
+                            value=False, label="use_constantcosine (constant→cosine)"
+                        ),
+                    )
+                    reg(
+                        "constantcosine_tail_epochs",
+                        gr.Textbox(
+                            label="constantcosine_tail_epochs", placeholder="0 = off"
+                        ),
+                    )
+                    reg(
+                        "lr_scheduler_min_lr_ratio",
+                        gr.Textbox(
+                            label="min_lr_ratio (cosine floor)", placeholder="0.0"
+                        ),
+                    )
+
+            # ── Advanced training details (sd-scripts / LETS knobs) ──────────
             with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
                 with gr.Row():
                     reg(
@@ -817,6 +826,21 @@ def build_app(default_port: int = 7860):
                     "`caption_shuffle_variants > 0` at preprocess.*"
                 )
 
+            # ── Sample prompts ──────────────────────────────────────────────
+            with gr.Accordion("Sample images", open=True):
+                reg_path(
+                    "sample_prompts",
+                    file=True,
+                    label="Sample prompts file (--sample_prompts)",
+                    placeholder="path/to/prompts.txt",
+                )
+                sample_editor = gr.Textbox(
+                    label="…or edit prompts here and Save",
+                    lines=4,
+                    placeholder="a photo of sks dog --w 1024 --h 1024 --s 20",
+                )
+                save_samples_btn = gr.Button("Save prompts → file")
+
             with gr.Accordion("Extra CLI flags", open=False):
                 reg(
                     "extra_flags",
@@ -824,30 +848,6 @@ def build_app(default_port: int = 7860):
                         label="Raw extra args appended verbatim",
                         placeholder="--no-masked_loss --network_weights path.safetensors",
                     ),
-                )
-
-            # ── Config file (load / save) — sd-scripts/LETS --config_file ───
-            with gr.Accordion("Config file (load / save)", open=True):
-                gr.Markdown(
-                    "Load a LETS / kohya_ss / anima_lora ``--config_file`` TOML into "
-                    "the form (key renames applied; unmapped keys fold into *Extra "
-                    "CLI flags*), or save the current form as a runnable config."
-                )
-                with gr.Row():
-                    config_path = gr.Textbox(
-                        label="Config TOML path",
-                        placeholder="configs/examples/lokr_came.toml",
-                        scale=4,
-                    )
-                    cfg_browse_btn = gr.Button("📁", scale=0, min_width=46)
-                    load_cfg_btn = gr.Button("Load → form", variant="secondary")
-                    save_cfg_btn = gr.Button("Save form →", variant="secondary")
-                config_status = gr.Markdown("")
-                cfg_browse_btn.click(
-                    _pick_file,
-                    inputs=config_path,
-                    outputs=config_path,
-                    show_progress="hidden",
                 )
 
             # ── Queue (saved runs, LoRA_Easy-style) ─────────────────────────
