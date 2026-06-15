@@ -43,6 +43,7 @@ weighting_scheme = "logit_normal"
 attn_mode = "flash"
 qwen3_max_token_length = 512
 vae_batch_size = 1
+ip_noise_gamma = 0.1
 enable_bucket = true
 max_bucket_reso = 4096
 pretrained_model_name_or_path = "C:/anima.safetensors"
@@ -88,8 +89,10 @@ def test_load_drops_and_extra_routing():
     ef = form.get("extra_flags", "")
     # kohya AR-bucketing keys have no anima_lora equivalent → dropped entirely.
     assert "enable_bucket" not in ef and "max_bucket_reso" not in ef
-    # a key with no dedicated field still round-trips via Extra CLI flags.
-    assert "--vae_batch_size 1" in ef
+    # vae_batch_size is a curated field now (kohya-parity promotion), not extra_flags.
+    assert form["vae_batch_size"] == "1" and "vae_batch_size" not in ef
+    # a still-uncurated key round-trips via Extra CLI flags.
+    assert "--ip_noise_gamma 0.1" in ef
 
 
 def test_save_emits_runnable_toml_and_round_trips():
@@ -115,8 +118,8 @@ def test_save_emits_runnable_toml_and_round_trips():
     # loss_type/huber_c/use_vae_cache are dedicated fields after Phase 1b.
     assert back["loss_type"] == "huber" and back["huber_c"] == "0.1"
     assert back["use_vae_cache"] is True
-    # masked_loss has no dedicated field → round-trips via Extra CLI flags.
-    assert "--no-masked_loss" in back.get("extra_flags", "")
+    # masked_loss is a curated tri-state now → --no-masked_loss round-trips to "off".
+    assert back["masked_loss"] == "off"
 
 
 _KOHYA_DATASET = """

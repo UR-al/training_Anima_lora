@@ -179,6 +179,37 @@ _CURATED_ARGS = {
     "monitor_port",
     "monitor_open_browser",
     "log_every_n_steps",  # curated in the Monitor & run panel
+    # Promoted kohya-parity knobs — now first-class curated fields (emitted in
+    # _method_preset_extra); curate out so they don't ALSO render as auto-args.
+    "train_batch_size",
+    "max_train_steps",
+    "network_weights",
+    "dim_from_weights",
+    "unet_lr",
+    "llm_adapter_lr",
+    "text_encoder_lr",
+    "lr_scheduler_num_cycles",
+    "lr_scheduler_power",
+    "scale_weight_norms",
+    "network_dropout",
+    "save_every_n_steps",
+    "save_last_n_steps",
+    "save_last_n_steps_state",
+    "save_last_n_epochs",
+    "save_last_n_epochs_state",
+    "save_state_on_train_end",
+    "highvram",
+    "lowram",
+    "persistent_data_loader_workers",
+    "max_data_loader_n_workers",
+    "vae_batch_size",
+    "masked_loss",
+    "skip_cache_check",
+    "training_comment",
+    "log_with",
+    "wandb_run_name",
+    "wandb_api_key",
+    "log_tracker_name",
     # Model paths — curated in the GENERAL "Model files" controls (dit/te/vae);
     # excluded so they don't also appear as toggleable auto-args.
     "pretrained_model_name_or_path",
@@ -1014,6 +1045,32 @@ def _method_preset_extra(form: dict):
         # floor is lr_scheduler_min_lr_ratio).
         ("--constantcosine_tail_epochs", "constantcosine_tail_epochs"),
         ("--lr_scheduler_min_lr_ratio", "lr_scheduler_min_lr_ratio"),
+        # Promoted kohya-parity knobs (flags already existed; now curated fields).
+        ("--train_batch_size", "train_batch_size"),
+        ("--max_train_steps", "max_train_steps"),
+        ("--network_weights", "network_weights"),  # warm-start from existing adapter
+        ("--unet_lr", "unet_lr"),  # the DiT-adapter LR (primary trainable LR)
+        ("--llm_adapter_lr", "llm_adapter_lr"),  # Qwen3→DiT LLM-adapter LR
+        ("--text_encoder_lr", "text_encoder_lr"),  # active only w/ train_llm_adapter
+        ("--lr_scheduler_num_cycles", "lr_scheduler_num_cycles"),
+        ("--lr_scheduler_power", "lr_scheduler_power"),
+        ("--scale_weight_norms", "scale_weight_norms"),
+        ("--network_dropout", "network_dropout"),
+        # checkpoint cadence / retention
+        ("--save_every_n_steps", "save_every_n_steps"),
+        ("--save_last_n_steps", "save_last_n_steps"),
+        ("--save_last_n_steps_state", "save_last_n_steps_state"),
+        ("--save_last_n_epochs", "save_last_n_epochs"),
+        ("--save_last_n_epochs_state", "save_last_n_epochs_state"),
+        # dataloader / caching throughput
+        ("--max_data_loader_n_workers", "max_data_loader_n_workers"),
+        ("--vae_batch_size", "vae_batch_size"),
+        # metadata / experiment logging
+        ("--training_comment", "training_comment"),
+        ("--log_with", "log_with"),
+        ("--wandb_run_name", "wandb_run_name"),
+        ("--wandb_api_key", "wandb_api_key"),
+        ("--log_tracker_name", "log_tracker_name"),
         # NOTE: --resume is already emitted near the top of this function (line ~778);
         # do not re-add it here or it doubles.
     ):
@@ -1032,20 +1089,27 @@ def _method_preset_extra(form: dict):
         ("--qwen_image_vae_2d", "qwen_image_vae_2d"),
         ("--use_constantcosine", "use_constantcosine"),
         ("--save_state", "save_state"),
+        ("--save_state_on_train_end", "save_state_on_train_end"),
         ("--sample_at_first", "sample_at_first"),
+        ("--dim_from_weights", "dim_from_weights"),  # infer rank from network_weights
+        ("--highvram", "highvram"),
+        ("--lowram", "lowram"),
+        ("--persistent_data_loader_workers", "persistent_data_loader_workers"),
         ("--output_config", "output_config"),
     ):
         if form.get(_key):
             extra.append(_flag)
 
-    # torch_compile is a tri-state ("on"/"off"/blank): it defaults ON in base.toml,
-    # so a plain checkbox couldn't disable it — emit the explicit flag for on/off and
-    # defer to the config chain when blank.
-    _tc = str(form.get("torch_compile") or "").strip().lower()
-    if _tc in ("on", "true", "1"):
-        extra.append("--torch_compile")
-    elif _tc in ("off", "false", "0"):
-        extra.append("--no-torch_compile")
+    # Tri-state dropdowns ("on"/"off"/blank): the flag defaults ON in base.toml, so a
+    # plain checkbox couldn't disable it — emit the affirmative for "on", the
+    # BooleanOptionalAction "--no-<flag>" for "off", and defer to the config chain when
+    # blank. torch_compile (speed), masked_loss + skip_cache_check (both default-on).
+    for _key in ("torch_compile", "masked_loss", "skip_cache_check"):
+        _tri = str(form.get(_key) or "").strip().lower()
+        if _tri in ("on", "true", "1"):
+            extra.append(f"--{_key}")
+        elif _tri in ("off", "false", "0"):
+            extra.append(f"--no-{_key}")
 
     sched = (form.get("lr_scheduler_type") or "").strip()
     # Built-in schedulers go through --lr_scheduler; dotted-path customs through

@@ -658,6 +658,203 @@ def build_app(default_port: int = 7860):
                         ),
                     )
 
+            # ── LoRA / LR extras (kohya-parity promotions) ──────────────────
+            with gr.Accordion("LoRA / LR extras", open=False):
+                with gr.Row():
+                    reg(
+                        "train_batch_size",
+                        gr.Textbox(
+                            label="train_batch_size (global)",
+                            placeholder="(dataset/subset default)",
+                        ),
+                    )
+                    reg(
+                        "max_train_steps",
+                        gr.Textbox(
+                            label="max_train_steps", placeholder="(epochs-driven)"
+                        ),
+                    )
+                with gr.Row():
+                    reg_path(
+                        "network_weights",
+                        file=True,
+                        label="network_weights (warm-start adapter)",
+                        placeholder="path/to/existing.safetensors",
+                    )
+                    reg(
+                        "dim_from_weights",
+                        gr.Checkbox(value=False, label="dim_from_weights (infer rank)"),
+                    )
+                with gr.Row():
+                    reg(
+                        "unet_lr",
+                        gr.Textbox(
+                            label="unet_lr (DiT adapter LR)", placeholder="(=lr)"
+                        ),
+                    )
+                    reg(
+                        "llm_adapter_lr",
+                        gr.Textbox(
+                            label="llm_adapter_lr (Qwen3→DiT)", placeholder="(off)"
+                        ),
+                    )
+                    reg(
+                        "text_encoder_lr",
+                        gr.Textbox(
+                            label="text_encoder_lr (only w/ train_llm_adapter)",
+                            placeholder="(frozen by default)",
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "scale_weight_norms",
+                        gr.Textbox(
+                            label="scale_weight_norms (max-norm; 1.0 typical)",
+                            placeholder="(off)",
+                        ),
+                    )
+                    reg(
+                        "network_dropout",
+                        gr.Textbox(label="network_dropout", placeholder="(off)"),
+                    )
+                with gr.Row():
+                    reg(
+                        "lr_scheduler_num_cycles",
+                        gr.Textbox(
+                            label="lr_scheduler_num_cycles (cosine restarts)",
+                            placeholder="1",
+                        ),
+                    )
+                    reg(
+                        "lr_scheduler_power",
+                        gr.Textbox(
+                            label="lr_scheduler_power (polynomial)", placeholder="1"
+                        ),
+                    )
+
+            # ── Saving & checkpoints ────────────────────────────────────────
+            with gr.Accordion("Saving & checkpoints", open=False):
+                with gr.Row():
+                    reg(
+                        "save_every_n_steps",
+                        gr.Textbox(label="Save every N steps", placeholder="(off)"),
+                    )
+                    reg(
+                        "save_last_n_steps",
+                        gr.Textbox(label="Save last N steps", placeholder="(keep all)"),
+                    )
+                    reg(
+                        "save_last_n_steps_state",
+                        gr.Textbox(
+                            label="Save last N steps state", placeholder="(keep all)"
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "save_last_n_epochs",
+                        gr.Textbox(
+                            label="Save last N epochs", placeholder="(keep all)"
+                        ),
+                    )
+                    reg(
+                        "save_last_n_epochs_state",
+                        gr.Textbox(
+                            label="Save last N epochs state", placeholder="(keep all)"
+                        ),
+                    )
+                    reg(
+                        "save_state_on_train_end",
+                        gr.Checkbox(value=False, label="save_state_on_train_end"),
+                    )
+
+            # ── Performance / memory / caching ──────────────────────────────
+            with gr.Accordion("Performance / memory / caching", open=False):
+                with gr.Row():
+                    reg(
+                        "highvram",
+                        gr.Checkbox(value=False, label="highvram (keep more in VRAM)"),
+                    )
+                    reg(
+                        "lowram",
+                        gr.Checkbox(value=False, label="lowram (models→VRAM not RAM)"),
+                    )
+                    reg(
+                        "persistent_data_loader_workers",
+                        gr.Checkbox(
+                            value=False, label="persistent_data_loader_workers"
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "max_data_loader_n_workers",
+                        gr.Textbox(
+                            label="max_data_loader_n_workers", placeholder="(default)"
+                        ),
+                    )
+                    reg(
+                        "vae_batch_size",
+                        gr.Textbox(
+                            label="vae_batch_size (caching)", placeholder="(default)"
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "masked_loss",
+                        gr.Dropdown(
+                            ["", "on", "off"],
+                            value="",
+                            label="masked_loss (blank = default on)",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "skip_cache_check",
+                        gr.Dropdown(
+                            ["", "on", "off"],
+                            value="",
+                            label="skip_cache_check (blank = default on)",
+                            allow_custom_value=True,
+                        ),
+                    )
+
+            # ── Logging & metadata ──────────────────────────────────────────
+            with gr.Accordion("Logging & metadata", open=False):
+                gr.Markdown(
+                    "TensorBoard logging dir is auto-set to `<output_dir>/log`. "
+                    "Pick a tracker + (for W&B) a run name / API key."
+                )
+                with gr.Row():
+                    reg(
+                        "log_with",
+                        gr.Dropdown(
+                            ["", "tensorboard", "wandb", "all"],
+                            value="",
+                            label="log_with",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "wandb_run_name",
+                        gr.Textbox(label="wandb_run_name", placeholder="(optional)"),
+                    )
+                    reg(
+                        "log_tracker_name",
+                        gr.Textbox(label="log_tracker_name", placeholder="(optional)"),
+                    )
+                reg(
+                    "wandb_api_key",
+                    gr.Textbox(
+                        label="wandb_api_key", placeholder="(optional)", type="password"
+                    ),
+                )
+                reg(
+                    "training_comment",
+                    gr.Textbox(
+                        label="training_comment (stored in checkpoint metadata)",
+                        placeholder="(optional)",
+                    ),
+                )
+
             # ── Advanced training details (sd-scripts / LETS knobs) ──────────
             with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
                 with gr.Row():

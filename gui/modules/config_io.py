@@ -66,6 +66,29 @@ _DIRECT_FIELDS = {
     "sample_every_n_steps",
     "sample_every_n_epochs",
     "sample_sampler",
+    # Promoted kohya-parity knobs (now curated first-class fields).
+    "train_batch_size",
+    "max_train_steps",
+    "network_weights",
+    "unet_lr",
+    "llm_adapter_lr",
+    "text_encoder_lr",
+    "lr_scheduler_num_cycles",
+    "lr_scheduler_power",
+    "scale_weight_norms",
+    "network_dropout",
+    "save_every_n_steps",
+    "save_last_n_steps",
+    "save_last_n_steps_state",
+    "save_last_n_epochs",
+    "save_last_n_epochs_state",
+    "max_data_loader_n_workers",
+    "vae_batch_size",
+    "training_comment",
+    "log_with",
+    "wandb_run_name",
+    "wandb_api_key",
+    "log_tracker_name",
     # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
     # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
     # into extra_flags as bogus train flags).
@@ -84,7 +107,12 @@ _BOOL_FIELDS = {
     "qwen_image_vae_2d",
     "use_constantcosine",
     "save_state",
+    "save_state_on_train_end",
     "sample_at_first",
+    "dim_from_weights",
+    "highvram",
+    "lowram",
+    "persistent_data_loader_workers",
     "output_config",
     # GUI auto-preprocess orchestration toggles (not train.py args).
     "auto_preprocess",
@@ -93,7 +121,9 @@ _BOOL_FIELDS = {
     "mask_enable",
 }
 # Tri-state dropdown fields ("on"/"off"/blank): a config bool maps to "on"/"off".
-_TRISTATE_FIELDS = {"torch_compile"}
+# torch_compile/masked_loss/skip_cache_check all default ON, so a plain checkbox
+# couldn't force them off — the GUI renders them as on/off/blank dropdowns.
+_TRISTATE_FIELDS = {"torch_compile", "masked_loss", "skip_cache_check"}
 # Model-path renames (kohya/LETS name → our form field).
 _MODEL_PATHS = {
     "pretrained_model_name_or_path": "dit_path",
