@@ -834,8 +834,33 @@ def build_app(default_port: int = 7860):
                     "`caption_shuffle_variants > 0` at preprocess.*"
                 )
 
-            # ── Sample prompts ──────────────────────────────────────────────
+            # ── Sample images ───────────────────────────────────────────────
             with gr.Accordion("Sample images", open=True):
+                with gr.Row():
+                    reg(
+                        "sample_every_n_steps",
+                        gr.Textbox(label="Sample every N steps", placeholder="(off)"),
+                    )
+                    reg(
+                        "sample_every_n_epochs",
+                        gr.Textbox(label="Sample every N epochs", placeholder="(off)"),
+                    )
+                with gr.Row():
+                    reg(
+                        "sample_sampler",
+                        gr.Dropdown(
+                            ["euler", "er_sde", "lcm"],
+                            value="euler",
+                            label="Sample sampler (--sample_sampler)",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "sample_at_first",
+                        gr.Checkbox(
+                            value=False, label="Sample at first (before training)"
+                        ),
+                    )
                 reg_path(
                     "sample_prompts",
                     file=True,

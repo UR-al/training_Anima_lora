@@ -167,6 +167,12 @@ _CURATED_ARGS = {
     "logging_dir",  # derived from output_dir (<base>/<output_name>/log) in _method_preset_extra
     "resume",
     "sample_prompts",
+    # Sample cadence — curated in the "Sample images" panel (emitted in
+    # _method_preset_extra); curate out so they don't double-render as auto-args.
+    "sample_every_n_steps",
+    "sample_every_n_epochs",
+    "sample_sampler",
+    "sample_at_first",
     "seed",
     "monitor",
     "monitor_host",
@@ -1000,6 +1006,10 @@ def _method_preset_extra(form: dict):
         ("--qwen3_max_token_length", "qwen3_max_token_length"),
         ("--save_every_n_epochs", "save_every_n_epochs"),
         ("--save_precision", "save_precision"),
+        # Sample-image cadence (FM-native sampler — euler/er_sde/lcm).
+        ("--sample_every_n_steps", "sample_every_n_steps"),
+        ("--sample_every_n_epochs", "sample_every_n_epochs"),
+        ("--sample_sampler", "sample_sampler"),
         # constant→cosine one-shot (use_constantcosine appends a cosine tail; the
         # floor is lr_scheduler_min_lr_ratio).
         ("--constantcosine_tail_epochs", "constantcosine_tail_epochs"),
@@ -1022,6 +1032,7 @@ def _method_preset_extra(form: dict):
         ("--qwen_image_vae_2d", "qwen_image_vae_2d"),
         ("--use_constantcosine", "use_constantcosine"),
         ("--save_state", "save_state"),
+        ("--sample_at_first", "sample_at_first"),
         ("--output_config", "output_config"),
     ):
         if form.get(_key):

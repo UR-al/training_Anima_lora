@@ -62,6 +62,10 @@ _DIRECT_FIELDS = {
     "resume",
     "constantcosine_tail_epochs",
     "lr_scheduler_min_lr_ratio",
+    # Sample-image cadence (curated in the "Sample images" panel).
+    "sample_every_n_steps",
+    "sample_every_n_epochs",
+    "sample_sampler",
     # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
     # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
     # into extra_flags as bogus train flags).
@@ -80,6 +84,7 @@ _BOOL_FIELDS = {
     "qwen_image_vae_2d",
     "use_constantcosine",
     "save_state",
+    "sample_at_first",
     "output_config",
     # GUI auto-preprocess orchestration toggles (not train.py args).
     "auto_preprocess",
