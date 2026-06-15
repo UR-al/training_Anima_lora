@@ -63,11 +63,21 @@ _DS_SUBSET_BOOLS = (("ds_flip_aug", "flip_aug"), ("ds_random_crop", "random_crop
 # Column order of the "Additional subsets" gr.Dataframe (type="array" → list rows).
 # Shared with config_io._DS_EXTRA_COLS so the load round-trip stays symmetric.
 _DS_EXTRA_COLS = (
-    "image_dir", "cache_dir", "num_repeats", "keep_tokens", "caption_extension",
-    "batch_size", "flip_aug", "random_crop", "tiers",
+    "image_dir",
+    "cache_dir",
+    "num_repeats",
+    "keep_tokens",
+    "caption_extension",
+    "batch_size",
+    "flip_aug",
+    "random_crop",
+    "tiers",
 )
 _DS_POP_KEYS = (
-    "ds_image_dir", "ds_cache_dir", "ds_tiers", "ds_extra",
+    "ds_image_dir",
+    "ds_cache_dir",
+    "ds_tiers",
+    "ds_extra",
     *(k for k, _s, _c in _DS_SUBSET_FIELDS),
     *(k for k, _s in _DS_SUBSET_BOOLS),
 )
@@ -171,7 +181,11 @@ def _pick_path(current: str, *, file: bool) -> str:
         root = tk.Tk()
         root.withdraw()
         root.wm_attributes("-topmost", 1)
-        initdir = current if os.path.isdir(current) else (os.path.dirname(current) or os.getcwd())
+        initdir = (
+            current
+            if os.path.isdir(current)
+            else (os.path.dirname(current) or os.getcwd())
+        )
         if file:
             chosen = filedialog.askopenfilename(initialdir=initdir)
         else:
@@ -217,7 +231,15 @@ def build_app(default_port: int = 7860):
             tb = gr.Textbox(scale=8, **tb_kwargs)
             btn = gr.Button("📁", scale=0, min_width=46)
         reg(key, tb)
-        btn.click(_pick_file if file else _pick_dir, inputs=tb, outputs=tb)
+        # show_progress="hidden": the native dialog blocks the handler, so without this
+        # Gradio paints a "processing" spinner over the field for the whole time the
+        # picker is open. Hiding it keeps the field looking idle while you browse.
+        btn.click(
+            _pick_file if file else _pick_dir,
+            inputs=tb,
+            outputs=tb,
+            show_progress="hidden",
+        )
         return tb
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
@@ -366,12 +388,24 @@ def build_app(default_port: int = 7860):
                 # then extend with N cosine-decay epochs (LR→floor) in the SAME run.
                 # Overrides lr_scheduler (which greys out when this is on).
                 with gr.Row():
-                    reg("use_constantcosine", gr.Checkbox(
-                        value=False, label="use_constantcosine (constant→cosine)"))
-                    reg("constantcosine_tail_epochs", gr.Textbox(
-                        label="constantcosine_tail_epochs", placeholder="0 = off"))
-                    reg("lr_scheduler_min_lr_ratio", gr.Textbox(
-                        label="min_lr_ratio (cosine floor)", placeholder="0.0"))
+                    reg(
+                        "use_constantcosine",
+                        gr.Checkbox(
+                            value=False, label="use_constantcosine (constant→cosine)"
+                        ),
+                    )
+                    reg(
+                        "constantcosine_tail_epochs",
+                        gr.Textbox(
+                            label="constantcosine_tail_epochs", placeholder="0 = off"
+                        ),
+                    )
+                    reg(
+                        "lr_scheduler_min_lr_ratio",
+                        gr.Textbox(
+                            label="min_lr_ratio (cosine floor)", placeholder="0.0"
+                        ),
+                    )
 
             # ── Network / adapter ───────────────────────────────────────────
             with gr.Accordion("Network / Adapter", open=False):
@@ -402,47 +436,85 @@ def build_app(default_port: int = 7860):
                     "subsets, use a `--dataset_config` TOML below or the stdlib web GUI."
                 )
                 with gr.Row():
-                    reg_path("ds_image_dir",
+                    reg_path(
+                        "ds_image_dir",
                         label="image_dir (resized + cached images)",
-                        placeholder="post_image_dataset/resized")
-                    reg_path("ds_cache_dir",
+                        placeholder="post_image_dataset/resized",
+                    )
+                    reg_path(
+                        "ds_cache_dir",
                         label="cache_dir (pre-cached latents; blank = default)",
-                        placeholder="post_image_dataset/lora")
+                        placeholder="post_image_dataset/lora",
+                    )
                 with gr.Row():
-                    reg("ds_num_repeats", gr.Textbox(
-                        label="num_repeats", placeholder="1"))
-                    reg("ds_keep_tokens", gr.Textbox(
-                        label="keep_tokens", placeholder="0"))
-                    reg("ds_caption_extension", gr.Textbox(
-                        label="caption_extension", placeholder=".txt"))
-                    reg("ds_batch_size", gr.Textbox(
-                        label="batch_size", placeholder="1"))
+                    reg(
+                        "ds_num_repeats",
+                        gr.Textbox(label="num_repeats", placeholder="1"),
+                    )
+                    reg(
+                        "ds_keep_tokens",
+                        gr.Textbox(label="keep_tokens", placeholder="0"),
+                    )
+                    reg(
+                        "ds_caption_extension",
+                        gr.Textbox(label="caption_extension", placeholder=".txt"),
+                    )
+                    reg(
+                        "ds_batch_size", gr.Textbox(label="batch_size", placeholder="1")
+                    )
                 with gr.Row():
-                    reg("ds_caption_dropout_rate", gr.Textbox(
-                        label="caption_dropout_rate", placeholder="0.0"))
+                    reg(
+                        "ds_caption_dropout_rate",
+                        gr.Textbox(label="caption_dropout_rate", placeholder="0.0"),
+                    )
                     reg("ds_flip_aug", gr.Checkbox(value=False, label="flip_aug"))
                     reg("ds_random_crop", gr.Checkbox(value=False, label="random_crop"))
-                    reg("ds_name", gr.Textbox(
-                        label="dataset name (built TOML)", placeholder="my_char"))
+                    reg(
+                        "ds_name",
+                        gr.Textbox(
+                            label="dataset name (built TOML)", placeholder="my_char"
+                        ),
+                    )
                 _tiers = [str(t) for t in server.list_target_res_tiers()]
-                reg("target_res", gr.CheckboxGroup(
-                    _tiers, value=[t for t in ("896", "1024") if t in _tiers],
-                    label="Resolution tiers (constant-token; preprocess --target_res)"))
-                reg("ds_tiers", gr.Textbox(
-                    label="this subset's tiers (multi-scale; blank = all)",
-                    placeholder="e.g. 1024 or 512,1024"))
+                reg(
+                    "target_res",
+                    gr.CheckboxGroup(
+                        _tiers,
+                        value=[t for t in ("896", "1024") if t in _tiers],
+                        label="Resolution tiers (constant-token; preprocess --target_res)",
+                    ),
+                )
+                reg(
+                    "ds_tiers",
+                    gr.Textbox(
+                        label="this subset's tiers (multi-scale; blank = all)",
+                        placeholder="e.g. 1024 or 512,1024",
+                    ),
+                )
                 gr.Markdown(
                     "**Additional subsets** (optional) — one row per extra folder; "
                     "the fields above are subset #1. Leave empty for a single subset."
                 )
-                reg("ds_extra", gr.Dataframe(
-                    headers=list(_DS_EXTRA_COLS),
-                    datatype=["str", "str", "number", "number", "str",
-                              "number", "bool", "bool", "str"],
-                    type="array",
-                    row_count=(0, "dynamic"),
-                    label="Additional subsets (image_dir required per row)",
-                ))
+                reg(
+                    "ds_extra",
+                    gr.Dataframe(
+                        headers=list(_DS_EXTRA_COLS),
+                        datatype=[
+                            "str",
+                            "str",
+                            "number",
+                            "number",
+                            "str",
+                            "number",
+                            "bool",
+                            "bool",
+                            "str",
+                        ],
+                        type="array",
+                        row_count=(0, "dynamic"),
+                        label="Additional subsets (image_dir required per row)",
+                    ),
+                )
                 reg_path(
                     "dataset_config",
                     file=True,
@@ -464,21 +536,39 @@ def build_app(default_port: int = 7860):
                     "nothing changed. (Masking uses the Utils-tab SAM3/MIT toggles.)"
                 )
                 with gr.Row():
-                    reg("auto_preprocess", gr.Checkbox(
-                        value=False,
-                        label="auto_preprocess (resize/cache then train)"))
-                    reg("multiscale", gr.Checkbox(
-                        value=False, label="multiscale (every tier, ≥2 tiers)"))
-                    reg("drop_lowres", gr.Checkbox(
-                        value=True, label="drop low-res (< 0.5MP)"))
-                    reg("mask_enable", gr.Checkbox(
-                        value=False, label="mask (SAM3 + MIT)"))
+                    reg(
+                        "auto_preprocess",
+                        gr.Checkbox(
+                            value=False,
+                            label="auto_preprocess (resize/cache then train)",
+                        ),
+                    )
+                    reg(
+                        "multiscale",
+                        gr.Checkbox(
+                            value=False, label="multiscale (every tier, ≥2 tiers)"
+                        ),
+                    )
+                    reg(
+                        "drop_lowres",
+                        gr.Checkbox(value=True, label="drop low-res (< 0.5MP)"),
+                    )
+                    reg(
+                        "mask_enable",
+                        gr.Checkbox(value=False, label="mask (SAM3 + MIT)"),
+                    )
                 with gr.Row():
-                    reg("caption_shuffle_variants", gr.Textbox(
-                        label="caption_shuffle_variants (caption variation)",
-                        placeholder="4"))
-                    reg("caption_tag_dropout_rate", gr.Textbox(
-                        label="caption_tag_dropout_rate", placeholder="0.1"))
+                    reg(
+                        "caption_shuffle_variants",
+                        gr.Textbox(
+                            label="caption_shuffle_variants (caption variation)",
+                            placeholder="4",
+                        ),
+                    )
+                    reg(
+                        "caption_tag_dropout_rate",
+                        gr.Textbox(label="caption_tag_dropout_rate", placeholder="0.1"),
+                    )
 
             # ── Sample prompts ──────────────────────────────────────────────
             with gr.Accordion("Sample images", open=True):
@@ -498,76 +588,164 @@ def build_app(default_port: int = 7860):
             # ── Advanced / monitor / run ────────────────────────────────────
             with gr.Accordion("Training details (sd-scripts / LETS)", open=False):
                 with gr.Row():
-                    reg("mixed_precision", gr.Dropdown(
-                        ["", "bf16", "fp16", "no"], value="", label="mixed_precision"))
-                    reg("attn_mode", gr.Dropdown(
-                        ["", "flash", "sdpa", "torch", "sageattn", "flex"],
-                        value="", label="attn_mode"))
+                    reg(
+                        "mixed_precision",
+                        gr.Dropdown(
+                            ["", "bf16", "fp16", "no"],
+                            value="",
+                            label="mixed_precision",
+                        ),
+                    )
+                    reg(
+                        "attn_mode",
+                        gr.Dropdown(
+                            ["", "flash", "sdpa", "torch", "sageattn", "flex"],
+                            value="",
+                            label="attn_mode",
+                        ),
+                    )
                     # torch_compile defaults ON (base.toml) → tri-state so the box can
                     # force it off too (blank = config default = on; the big speedup).
-                    reg("torch_compile", gr.Dropdown(
-                        ["", "on", "off"], value="",
-                        label="torch_compile (blank = default on)"))
-                    reg("save_precision", gr.Dropdown(
-                        ["", "bf16", "fp16", "float"], value="", label="save_precision"))
+                    reg(
+                        "torch_compile",
+                        gr.Dropdown(
+                            ["", "on", "off"],
+                            value="",
+                            label="torch_compile (blank = default on)",
+                        ),
+                    )
+                    reg(
+                        "save_precision",
+                        gr.Dropdown(
+                            ["", "bf16", "fp16", "float"],
+                            value="",
+                            label="save_precision",
+                        ),
+                    )
                 with gr.Row():
-                    reg("loss_type", gr.Dropdown(
-                        ["", "l2", "huber", "smooth_l1"], value="", label="loss_type"))
+                    reg(
+                        "loss_type",
+                        gr.Dropdown(
+                            ["", "l2", "huber", "smooth_l1"],
+                            value="",
+                            label="loss_type",
+                        ),
+                    )
                     reg("huber_c", gr.Textbox(label="huber_c", placeholder="0.1"))
-                    reg("huber_schedule", gr.Dropdown(
-                        ["", "constant", "exponential", "snr"], value="",
-                        label="huber_schedule"))
+                    reg(
+                        "huber_schedule",
+                        gr.Dropdown(
+                            ["", "constant", "exponential", "snr"],
+                            value="",
+                            label="huber_schedule",
+                        ),
+                    )
                 with gr.Row():
-                    reg("timestep_sampling", gr.Dropdown(
-                        ["", "sigmoid", "uniform", "logit_normal", "shift"],
-                        value="", label="timestep_sampling"))
-                    reg("sigmoid_scale", gr.Textbox(
-                        label="sigmoid_scale", placeholder="1.0"))
-                    reg("weighting_scheme", gr.Dropdown(
-                        ["", "logit_normal", "mode", "cosmap", "sigma_sqrt", "none"],
-                        value="", label="weighting_scheme"))
+                    reg(
+                        "timestep_sampling",
+                        gr.Dropdown(
+                            ["", "sigmoid", "uniform", "logit_normal", "shift"],
+                            value="",
+                            label="timestep_sampling",
+                        ),
+                    )
+                    reg(
+                        "sigmoid_scale",
+                        gr.Textbox(label="sigmoid_scale", placeholder="1.0"),
+                    )
+                    reg(
+                        "weighting_scheme",
+                        gr.Dropdown(
+                            [
+                                "",
+                                "logit_normal",
+                                "mode",
+                                "cosmap",
+                                "sigma_sqrt",
+                                "none",
+                            ],
+                            value="",
+                            label="weighting_scheme",
+                        ),
+                    )
                 with gr.Row():
                     reg("logit_mean", gr.Textbox(label="logit_mean", placeholder="0.0"))
                     reg("logit_std", gr.Textbox(label="logit_std", placeholder="1.0"))
                     reg("t_min", gr.Textbox(label="t_min (σ 0–1)", placeholder="0.0"))
                     reg("t_max", gr.Textbox(label="t_max (σ 0–1)", placeholder="1.0"))
                 with gr.Row():
-                    reg("max_grad_norm", gr.Textbox(
-                        label="max_grad_norm", placeholder="1.0"))
-                    reg("gradient_accumulation_steps", gr.Textbox(
-                        label="grad_accum_steps", placeholder="1"))
-                    reg("blocks_to_swap", gr.Textbox(
-                        label="blocks_to_swap", placeholder="0"))
-                    reg("qwen3_max_token_length", gr.Textbox(
-                        label="qwen3_max_token_length", placeholder="512"))
+                    reg(
+                        "max_grad_norm",
+                        gr.Textbox(label="max_grad_norm", placeholder="1.0"),
+                    )
+                    reg(
+                        "gradient_accumulation_steps",
+                        gr.Textbox(label="grad_accum_steps", placeholder="1"),
+                    )
+                    reg(
+                        "blocks_to_swap",
+                        gr.Textbox(label="blocks_to_swap", placeholder="0"),
+                    )
+                    reg(
+                        "qwen3_max_token_length",
+                        gr.Textbox(label="qwen3_max_token_length", placeholder="512"),
+                    )
                 with gr.Row():
-                    reg("save_every_n_epochs", gr.Textbox(
-                        label="save_every_n_epochs", placeholder="1"))
+                    reg(
+                        "save_every_n_epochs",
+                        gr.Textbox(label="save_every_n_epochs", placeholder="1"),
+                    )
                 with gr.Row():
-                    reg("gradient_checkpointing", gr.Checkbox(
-                        value=False, label="gradient_checkpointing"))
-                    reg("network_train_unet_only", gr.Checkbox(
-                        value=False, label="network_train_unet_only"))
-                    reg("use_vae_cache", gr.Checkbox(
-                        value=False, label="use_vae_cache (cache latents to disk)"))
+                    reg(
+                        "gradient_checkpointing",
+                        gr.Checkbox(value=False, label="gradient_checkpointing"),
+                    )
+                    reg(
+                        "network_train_unet_only",
+                        gr.Checkbox(value=False, label="network_train_unet_only"),
+                    )
+                    reg(
+                        "use_vae_cache",
+                        gr.Checkbox(
+                            value=False, label="use_vae_cache (cache latents to disk)"
+                        ),
+                    )
                     reg("save_state", gr.Checkbox(value=False, label="save_state"))
-                    reg("output_config", gr.Checkbox(
-                        value=False, label="output_config (save_toml)"))
+                    reg(
+                        "output_config",
+                        gr.Checkbox(value=False, label="output_config (save_toml)"),
+                    )
                 # Disk-caching siblings of "cache latents to disk" + the caption-
                 # variation technique (shuffled-caption-variant TE caches).
                 with gr.Row():
-                    reg("use_text_cache", gr.Checkbox(
-                        value=False, label="use_text_cache (cache TE to disk)"))
-                    reg("qwen_image_vae_2d", gr.Checkbox(
-                        value=False,
-                        label="qwen_image_vae_2d (~2x faster VAE caching)"))
-                    reg("use_shuffled_caption_variants", gr.Checkbox(
-                        value=False, label="use_shuffled_caption_variants"))
-                    reg("use_shuffled_caption_variants_only", gr.Checkbox(
-                        value=False, label="…_variants_only (skip pristine v0)"))
-                reg_path("resume",
+                    reg(
+                        "use_text_cache",
+                        gr.Checkbox(
+                            value=False, label="use_text_cache (cache TE to disk)"
+                        ),
+                    )
+                    reg(
+                        "qwen_image_vae_2d",
+                        gr.Checkbox(
+                            value=False,
+                            label="qwen_image_vae_2d (~2x faster VAE caching)",
+                        ),
+                    )
+                    reg(
+                        "use_shuffled_caption_variants",
+                        gr.Checkbox(value=False, label="use_shuffled_caption_variants"),
+                    )
+                    reg(
+                        "use_shuffled_caption_variants_only",
+                        gr.Checkbox(
+                            value=False, label="…_variants_only (skip pristine v0)"
+                        ),
+                    )
+                reg_path(
+                    "resume",
                     label="resume (saved training-state dir)",
-                    placeholder="output/ckpt/<name>-state")
+                    placeholder="output/ckpt/<name>-state",
+                )
                 gr.Markdown(
                     "*Blank/unchecked → defer to the `base→preset→method` config "
                     "chain. To force a bool **off**, use Extra CLI flags `--no-<flag>`. "
@@ -601,7 +779,12 @@ def build_app(default_port: int = 7860):
                     load_cfg_btn = gr.Button("Load → form", variant="secondary")
                     save_cfg_btn = gr.Button("Save form →", variant="secondary")
                 config_status = gr.Markdown("")
-                cfg_browse_btn.click(_pick_file, inputs=config_path, outputs=config_path)
+                cfg_browse_btn.click(
+                    _pick_file,
+                    inputs=config_path,
+                    outputs=config_path,
+                    show_progress="hidden",
+                )
 
             # ── Queue (saved runs, LoRA_Easy-style) ─────────────────────────
             with gr.Accordion("Queue (saved runs)", open=False):
@@ -637,38 +820,70 @@ def build_app(default_port: int = 7860):
                         gr.Textbox(label="Log every N steps", placeholder="(default)"),
                     )
 
-            # ── Training details (sd-scripts / LETS knobs → dedicated fields) ─
+                # ── Run controls (kohya-style: Start at the very bottom) ──────
+                # These live in the LoRA tab (not below the tabs) so the Utils
+                # tab carries no "Start training" button.
+                with gr.Row():
+                    print_btn = gr.Button("Print training command", variant="secondary")
+                    start_btn = gr.Button("Start training", variant="primary")
+                    stop_btn = gr.Button("Stop", variant="stop")
+                    status_btn = gr.Button("Refresh status", variant="secondary")
+
         with gr.Tab("Utils"):
             gr.Markdown(
                 "Utilities run as **direct subprocesses** (`tasks.py …`), like "
                 "training — **mutually exclusive** with a training run (one at a "
-                "time). Output streams to the training-log panel below; use **Stop** "
-                "to cancel."
+                "time). The launched command + result show in the **Result / status** "
+                "box below; to cancel a running job use **Stop** on the LoRA tab."
             )
             # ── Auto-batch search (tasks.py bench-autobatch) ────────────────
             with gr.Accordion("Auto-batch (max batch-size search)", open=True):
                 _ab_tiers = [str(t) for t in server.list_target_res_tiers()]
-                reg("ab_res", gr.CheckboxGroup(
-                    _ab_tiers, value=[t for t in ("1024",) if t in _ab_tiers],
-                    label="Resolutions to search (--res)"))
+                reg(
+                    "ab_res",
+                    gr.CheckboxGroup(
+                        _ab_tiers,
+                        value=[t for t in ("1024",) if t in _ab_tiers],
+                        label="Resolutions to search (--res)",
+                    ),
+                )
                 with gr.Row():
-                    reg("ab_max_batch", gr.Textbox(
-                        label="max batch (--max-batch)", placeholder="8"))
-                    reg("ab_optimizer_type", gr.Textbox(
-                        label="optimizer_type", placeholder="AdamW"))
-                    reg("ab_blocks_to_swap", gr.Textbox(
-                        label="blocks_to_swap", placeholder="0"))
+                    reg(
+                        "ab_max_batch",
+                        gr.Textbox(label="max batch (--max-batch)", placeholder="8"),
+                    )
+                    reg(
+                        "ab_optimizer_type",
+                        gr.Textbox(label="optimizer_type", placeholder="AdamW"),
+                    )
+                    reg(
+                        "ab_blocks_to_swap",
+                        gr.Textbox(label="blocks_to_swap", placeholder="0"),
+                    )
                     reg("ab_compile", gr.Checkbox(value=False, label="--compile"))
                 with gr.Row():
-                    reg("ab_network_module", gr.Textbox(
-                        label="network_module", placeholder="networks.lora_anima"))
-                    reg("ab_network_dim", gr.Textbox(
-                        label="network_dim", placeholder="16"))
-                    reg("ab_network_alpha", gr.Textbox(
-                        label="network_alpha", placeholder="8"))
+                    reg(
+                        "ab_network_module",
+                        gr.Textbox(
+                            label="network_module", placeholder="networks.lora_anima"
+                        ),
+                    )
+                    reg(
+                        "ab_network_dim",
+                        gr.Textbox(label="network_dim", placeholder="16"),
+                    )
+                    reg(
+                        "ab_network_alpha",
+                        gr.Textbox(label="network_alpha", placeholder="8"),
+                    )
                 with gr.Row():
-                    reg("ab_network_args", gr.Textbox(
-                        label="network_args (k=v …)", placeholder="algo=lokr factor=4"))
+                    reg(
+                        "ab_network_args",
+                        gr.Textbox(
+                            label="network_args (k=v …)",
+                            placeholder="algo=lokr factor=4",
+                        ),
+                    )
                 ab_run_btn = gr.Button("Run auto-batch", variant="primary")
             # ── Masking (tasks.py mask: SAM3 + MIT) ─────────────────────────
             with gr.Accordion("Masking (SAM3 + MIT)", open=False):
@@ -678,41 +893,28 @@ def build_app(default_port: int = 7860):
                     "`models/sam3/`; MIT needs `models/mit/model.pth`."
                 )
                 with gr.Row():
-                    reg("mask_sam", gr.Checkbox(value=True, label="SAM3 (RUN_SAM_MASK)"))
+                    reg(
+                        "mask_sam", gr.Checkbox(value=True, label="SAM3 (RUN_SAM_MASK)")
+                    )
                     reg("mask_mit", gr.Checkbox(value=True, label="MIT (RUN_MIT_MASK)"))
-                    reg("mit_text_threshold", gr.Textbox(
-                        label="MIT text threshold", placeholder="(default)"))
-                    reg("mit_dilate", gr.Textbox(
-                        label="MIT dilate", placeholder="(default)"))
+                    reg(
+                        "mit_text_threshold",
+                        gr.Textbox(label="MIT text threshold", placeholder="(default)"),
+                    )
+                    reg(
+                        "mit_dilate",
+                        gr.Textbox(label="MIT dilate", placeholder="(default)"),
+                    )
                 mask_run_btn = gr.Button("Run masking", variant="primary")
 
-        # ── Actions (always visible below the tabs, kohya-style) ────────────
-        with gr.Row():
-            print_btn = gr.Button("Print training command", variant="secondary")
-            start_btn = gr.Button("Start training", variant="primary")
-            stop_btn = gr.Button("Stop", variant="stop")
-            status_btn = gr.Button("Refresh status", variant="secondary")
-
+        # ── Shared command / result output (below both tabs) ────────────────
+        # train.py's run controls (Print/Start/Stop/Status) live in the LoRA
+        # tab's Monitor & Run accordion; these two outputs are shared so the
+        # Utils run buttons (auto-batch / masking) can report into them too.
+        # The live training log is the web monitor (--monitor) now — the old
+        # terminal-tail panel was removed as redundant with it.
         out_cmd = gr.Code(label="train.py command", language="shell")
         out_status = gr.JSON(label="Result / status")
-
-        # ── Live training log (the captured terminal output) ────────────────
-        # train.py's console log is the sd-scripts RichHandler format. launch()
-        # redirects the child subprocess's stdout/stderr to a logfile, which
-        # server.log_tail() exposes. This panel mirrors the terminal live so
-        # the GUI and the console stay linked.
-        gr.Markdown("### Training log — terminal output (sd-scripts format)")
-        with gr.Row():
-            autorefresh = gr.Checkbox(value=True, label="Auto-refresh (2s)")
-            refresh_log_btn = gr.Button("Refresh log now")
-        out_log = gr.Textbox(
-            label="stdout.log tail (the live console)",
-            lines=22,
-            max_lines=22,
-            autoscroll=True,
-            interactive=False,
-        )
-        log_timer = gr.Timer(2.0)
 
         # ── Handlers ────────────────────────────────────────────────────────
         def on_print(*vals):
@@ -762,8 +964,9 @@ def build_app(default_port: int = 7860):
 
         def _queue_brief():
             # Show only id + name (the full per-run form is large and noisy).
-            return [{"id": i.get("id"), "name": i.get("name")}
-                    for i in server.queue_list()]
+            return [
+                {"id": i.get("id"), "name": i.get("name")} for i in server.queue_list()
+            ]
 
         def on_queue_add(*vals):
             form = _collect(keys, vals)
@@ -786,13 +989,6 @@ def build_app(default_port: int = 7860):
             # Push the written path into the sample_prompts field on success.
             return res.get("path", "") if res.get("ok") else ""
 
-        def on_log_tick():
-            res = server.log_tail(120)
-            lines = res.get("lines") or []
-            if not lines and res.get("note"):
-                return res["note"]
-            return "\n".join(lines)
-
         def on_load_config(path):
             """Read a config TOML → push values into the matching form fields."""
             p = (path or "").strip()
@@ -806,10 +1002,10 @@ def build_app(default_port: int = 7860):
             updates = [
                 gr.update(value=form[k]) if k in form else gr.update() for k in keys
             ]
-            note = (
-                f"✓ loaded {len(form)} field(s) from `{p}`"
-                + (" — unmapped keys are in *Extra CLI flags*"
-                   if form.get("extra_flags") else "")
+            note = f"✓ loaded {len(form)} field(s) from `{p}`" + (
+                " — unmapped keys are in *Extra CLI flags*"
+                if form.get("extra_flags")
+                else ""
             )
             return updates + [note]
 
@@ -845,13 +1041,6 @@ def build_app(default_port: int = 7860):
         queue_run_btn.click(on_queue_run, inputs=None, outputs=[queue_view, out_status])
         queue_refresh_btn.click(on_queue_refresh, inputs=None, outputs=queue_view)
         queue_clear_btn.click(on_queue_clear, inputs=None, outputs=queue_view)
-        # Live log: tick every 2s while Auto-refresh is on; the checkbox toggles
-        # the timer so the poll stops when the panel isn't being watched.
-        log_timer.tick(on_log_tick, inputs=None, outputs=out_log)
-        refresh_log_btn.click(on_log_tick, inputs=None, outputs=out_log)
-        autorefresh.change(
-            lambda on: gr.Timer(active=bool(on)), inputs=autorefresh, outputs=log_timer
-        )
         # `sample_prompts` is registered; locate its component to receive the path.
         sample_path_comp = inputs[keys.index("sample_prompts")]
         save_samples_btn.click(
@@ -864,11 +1053,24 @@ def build_app(default_port: int = 7860):
         #    CONFLICT_RULES + ARG_DEPS) — disable (and reset) a field when an active
         #    option makes it a no-op or incompatible. Every relevant change (and the
         #    initial load) recomputes all targets from the driver values. ──────────
-        _dep_drivers = ["use_vae_cache", "use_text_cache", "use_constantcosine",
-                        "loss_type", "timestep_sampling", "weighting_scheme"]
-        _dep_targets = ["ds_random_crop", "ds_caption_dropout_rate",
-                        "lr_scheduler_type", "huber_c", "huber_schedule",
-                        "sigmoid_scale", "logit_mean", "logit_std"]
+        _dep_drivers = [
+            "use_vae_cache",
+            "use_text_cache",
+            "use_constantcosine",
+            "loss_type",
+            "timestep_sampling",
+            "weighting_scheme",
+        ]
+        _dep_targets = [
+            "ds_random_crop",
+            "ds_caption_dropout_rate",
+            "lr_scheduler_type",
+            "huber_c",
+            "huber_schedule",
+            "sigmoid_scale",
+            "logit_mean",
+            "logit_std",
+        ]
 
         def _gray(on: bool, reset=None):
             if on:
@@ -880,14 +1082,14 @@ def build_app(default_port: int = 7860):
         def _recompute_deps(use_vae, use_text, use_cc, loss, ts, ws):
             huber = loss in ("huber", "smooth_l1")
             return [
-                _gray(not use_vae, reset=False),   # random_crop ↮ cached latents
-                _gray(not use_text, reset="0"),    # caption_dropout ↮ cached TE
-                _gray(not use_cc),                 # lr_scheduler ← overridden by cc
-                _gray(huber),                      # huber_c only for huber/smooth_l1
-                _gray(huber),                      # huber_schedule
-                _gray(ts in ("", "sigmoid")),      # sigmoid_scale: sigmoid family
-                _gray(ws == "logit_normal"),       # logit_mean
-                _gray(ws == "logit_normal"),       # logit_std
+                _gray(not use_vae, reset=False),  # random_crop ↮ cached latents
+                _gray(not use_text, reset="0"),  # caption_dropout ↮ cached TE
+                _gray(not use_cc),  # lr_scheduler ← overridden by cc
+                _gray(huber),  # huber_c only for huber/smooth_l1
+                _gray(huber),  # huber_schedule
+                _gray(ts in ("", "sigmoid")),  # sigmoid_scale: sigmoid family
+                _gray(ws == "logit_normal"),  # logit_mean
+                _gray(ws == "logit_normal"),  # logit_std
             ]
 
         _dep_in = [by_key[k] for k in _dep_drivers]

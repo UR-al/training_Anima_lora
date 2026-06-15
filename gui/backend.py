@@ -102,12 +102,15 @@ def list_schedulers() -> list[str]:
 
 
 def list_network_modules() -> list[str]:
-    """Adapter backends. networks.lycoris_anima is the Anima-safe LyCORIS bridge
-    (unlocks ALL LyCORIS LoRA types — LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT/IA3 —
-    with the torch.compile speed core intact; sanitizes Anima's cached-TE slot that
-    stock lycoris.kohya crashes on). networks.lora_anima is the native adapter family.
-    lycoris.kohya is the raw upstream entry (advanced / non-Anima models)."""
-    mods = ["networks.lycoris_anima", "networks.lora_anima", "lycoris.kohya"]
+    """Adapter backends offered in the GUI — matched to LoRA_Easy Training Scripts,
+    which exposes a plain ``lycoris.kohya``. The command builder transparently routes
+    ``lycoris.kohya`` to the Anima-safe bridge (``networks.lycoris_anima``): it unlocks
+    ALL LyCORIS types (LoRA/LoHa/LoKr/DyLoRA/GLoRA/Full/Diag-OFT/BOFT/IA3) with the
+    torch.compile speed core intact, sanitizes Anima's cached-TE slot that stock
+    lycoris.kohya crashes on, and registers the Anima block-class presets — so it "just
+    works". Plain LoRA needs NO explicit module: leave this blank and the method default
+    (networks.lora_anima) is used. The internal ``*_anima`` names are not listed."""
+    mods = ["lycoris.kohya"]
     d = ROOT / "networks" / "methods"
     if d.is_dir():
         for p in sorted(d.glob("*.py")):
@@ -189,7 +192,11 @@ _ROLE_RULES = [
     (
         "GENERAL",  # precision · seed · batch/grad · dataloader · all speed/VRAM/compile knobs
         [
-            "mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8",
+            "mixed_precision",
+            "no_half_vae",
+            "full_bf16",
+            "full_fp16",
+            "fp8",
             # Global gradient_checkpointing (checkpoint EVERY block, every tier) is a
             # VRAM/speed knob, so it belongs HERE next to compile/swap/budget — NOT in
             # SAVE, whose "checkpointing" keyword used to swallow it (it landed under
@@ -198,37 +205,82 @@ _ROLE_RULES = [
             # this flag is the simple "checkpoint everything" escape hatch.
             # gradient_accumulation stays in the EXTRA catch-all (rarely needed).
             "gradient_checkpointing",
-            "max_data_loader", "train_batch_size", "max_train_epochs",
-            "max_train_steps", "prior_loss_weight", "lowram", "highvram",
-            "compile", "dynamo", "cudagraph", "activation_memory",
-            "attn_mode", "attn_softmax", "flash", "sdpa", "sageattn", "flex",
-            "blocks_to_swap", "block_swap", "channel_scal",
-            "persistent_data", "pin_memory", "prefetch", "dataloader",
-            "split_attn", "vae_chunk", "vae_disable_cache", "vae_batch_size",
+            "max_data_loader",
+            "train_batch_size",
+            "max_train_epochs",
+            "max_train_steps",
+            "prior_loss_weight",
+            "lowram",
+            "highvram",
+            "compile",
+            "dynamo",
+            "cudagraph",
+            "activation_memory",
+            "attn_mode",
+            "attn_softmax",
+            "flash",
+            "sdpa",
+            "sageattn",
+            "flex",
+            "blocks_to_swap",
+            "block_swap",
+            "channel_scal",
+            "persistent_data",
+            "pin_memory",
+            "prefetch",
+            "dataloader",
+            "split_attn",
+            "vae_chunk",
+            "vae_disable_cache",
+            "vae_batch_size",
             "qwen_image_vae",  # --qwen_image_vae_2d (image-only 2D VAE, faster/lower-VRAM caching)
             "text_encoder_batch",  # sibling of vae_batch_size/train_batch_size (was falling to EXTRA)
-            "unsloth", "cpu_offload", "fused_backward", "skip_until", "initial_",
+            "unsloth",
+            "cpu_offload",
+            "fused_backward",
+            "skip_until",
+            "initial_",
         ],
     ),
     (
         "NETWORK",  # adapter · timestep window + flow-matching/timestep + token length · net regularization
         [
             "network",  # network_dropout / network_train_* / network_weights
-            "t_min", "t_max",
+            "t_min",
+            "t_max",
             # flow-matching / timestep cluster (moved here from ANIMA per request —
             # the LoRA_Easy "Network args" tab groups these with min/max timestep).
-            "timestep", "sigmoid", "weighting", "discrete_flow", "logit",
-            "mode_scale", "qwen3_max_token", "t5_max_token",
-            "scale_weight", "base_weights", "lora_path", "lora_multiplier",
+            "timestep",
+            "sigmoid",
+            "weighting",
+            "discrete_flow",
+            "logit",
+            "mode_scale",
+            "qwen3_max_token",
+            "t5_max_token",
+            "scale_weight",
+            "base_weights",
+            "lora_path",
+            "lora_multiplier",
             "dim_from_weights",
         ],
     ),
     (
         "OPTIMIZER",  # optimizer · scheduler · LR · loss
         [
-            "optimizer", "unet_lr", "text_encoder_lr", "scheduler",
-            "lr_warmup", "lr_decay", "loss_type", "masked_loss", "huber",
-            "min_snr", "multiscale_loss", "debiased", "max_grad_norm",
+            "optimizer",
+            "unet_lr",
+            "text_encoder_lr",
+            "scheduler",
+            "lr_warmup",
+            "lr_decay",
+            "loss_type",
+            "masked_loss",
+            "huber",
+            "min_snr",
+            "multiscale_loss",
+            "debiased",
+            "max_grad_norm",
             "constantcosine",  # use_constantcosine + constantcosine_tail_epochs
         ],
     ),
@@ -236,33 +288,81 @@ _ROLE_RULES = [
     # EMA knob) into SAVE, the same over-match class as the gradient_checkpointing
     # bug. --resume (the real train-state resume) is curated; resume_from_huggingface
     # is kept here via "huggingface". ema_resume_path now reaches ANIMA's "ema".
-    ("SAVE", ["save", "state", "config_snapshot", "output_dir", "output_config", "metadata", "checkpointing", "huggingface"]),
+    (
+        "SAVE",
+        [
+            "save",
+            "state",
+            "config_snapshot",
+            "output_dir",
+            "output_config",
+            "metadata",
+            "checkpointing",
+            "huggingface",
+        ],
+    ),
     (
         "BUCKET",  # preprocessing / resolution / dataset-shape / caching toggles
         [
-            "bucket", "resolution", "target_res", "resize", "min_pixels",
-            "drop_lowres", "sample_ratio", "path_pattern", "dataset_repeats", "in_json",
-            "use_vae_cache", "use_text_cache", "cache_info", "skip_cache",
+            "bucket",
+            "resolution",
+            "target_res",
+            "resize",
+            "min_pixels",
+            "drop_lowres",
+            "sample_ratio",
+            "path_pattern",
+            "dataset_repeats",
+            "in_json",
+            "use_vae_cache",
+            "use_text_cache",
+            "cache_info",
+            "skip_cache",
         ],
     ),
     (
         "SUBSET",  # per-subset caption/aug knobs (the few that are also argparse)
         [
-            "caption", "shuffle", "token_warmup", "reg_", "flip", "color",
-            "crop", "image_dir", "keep_token", "wildcard", "alpha_mask",
-            "secondary", "custom_attributes", "weighted_caption",
+            "caption",
+            "shuffle",
+            "token_warmup",
+            "reg_",
+            "flip",
+            "color",
+            "crop",
+            "image_dir",
+            "keep_token",
+            "wildcard",
+            "alpha_mask",
+            "secondary",
+            "custom_attributes",
+            "weighted_caption",
         ],
     ),
-    ("NOISE", ["ip_noise"]),  # flow-matching input-perturbation noise (classic noise_offset N/A)
+    (
+        "NOISE",
+        ["ip_noise"],
+    ),  # flow-matching input-perturbation noise (classic noise_offset N/A)
     ("SAMPLE", ["sample", "valid", "cmmd", "prompt"]),
     (
         "ANIMA",  # tokenizer path · Anima-specific experimental features (flow/timestep
         # cluster moved to NETWORK per request)
         [
             "tokenizer",  # t5_tokenizer_path / tokenizer_cache_dir
-            "ema", "byg", "easycontrol", "cond_diff", "vr_", "functional",
-            "llm_adapter", "self_attn_lr", "cross_attn_lr", "mlp_lr", "mod_lr",
-            "artist_filter", "inversion", "use_shuffled",
+            "ema",
+            "byg",
+            "easycontrol",
+            "cond_diff",
+            "vr_",
+            "functional",
+            "llm_adapter",
+            "self_attn_lr",
+            "cross_attn_lr",
+            "mlp_lr",
+            "mod_lr",
+            "artist_filter",
+            "inversion",
+            "use_shuffled",
         ],
     ),
 ]
@@ -284,16 +384,105 @@ def _arg_role(dest: str) -> str:
 # actually holds their args (the "torch.compile" cluster never shows under OPTIMIZER).
 _ARG_CLUSTERS = [
     ("Precision", ["mixed_precision", "no_half_vae", "full_bf16", "full_fp16", "fp8"]),
-    ("Batch & steps", ["train_batch_size", "max_train_epochs", "max_train_steps", "prior_loss_weight", "gradient_accumulation"]),
-    ("torch.compile", ["torch_compile", "compile_dynamic_seq", "compile_inductor_mode", "dynamo_backend", "cudagraph", "activation_memory"]),
-    ("Memory · checkpointing · offload", ["gradient_checkpointing", "blocks_to_swap", "block_swap", "cpu_offload", "unsloth", "fused_backward", "lowram", "highvram", "channel_scal"]),
-    ("Attention", ["attn_mode", "attn_softmax", "flash", "sdpa", "sageattn", "flex", "split_attn"]),
-    ("Dataloader", ["max_data_loader", "persistent_data", "pin_memory", "prefetch", "dataloader"]),
-    ("VAE / TE encode & cache", ["vae_chunk", "vae_batch", "vae_disable", "vae_encode", "qwen_image_vae", "text_encoder_batch"]),
+    (
+        "Batch & steps",
+        [
+            "train_batch_size",
+            "max_train_epochs",
+            "max_train_steps",
+            "prior_loss_weight",
+            "gradient_accumulation",
+        ],
+    ),
+    (
+        "torch.compile",
+        [
+            "torch_compile",
+            "compile_dynamic_seq",
+            "compile_inductor_mode",
+            "dynamo_backend",
+            "cudagraph",
+            "activation_memory",
+        ],
+    ),
+    (
+        "Memory · checkpointing · offload",
+        [
+            "gradient_checkpointing",
+            "blocks_to_swap",
+            "block_swap",
+            "cpu_offload",
+            "unsloth",
+            "fused_backward",
+            "lowram",
+            "highvram",
+            "channel_scal",
+        ],
+    ),
+    (
+        "Attention",
+        [
+            "attn_mode",
+            "attn_softmax",
+            "flash",
+            "sdpa",
+            "sageattn",
+            "flex",
+            "split_attn",
+        ],
+    ),
+    (
+        "Dataloader",
+        ["max_data_loader", "persistent_data", "pin_memory", "prefetch", "dataloader"],
+    ),
+    (
+        "VAE / TE encode & cache",
+        [
+            "vae_chunk",
+            "vae_batch",
+            "vae_disable",
+            "vae_encode",
+            "qwen_image_vae",
+            "text_encoder_batch",
+        ],
+    ),
     ("Resume position", ["initial_epoch", "initial_step", "skip_until"]),
-    ("Learning rate & schedule", ["unet_lr", "text_encoder_lr", "lr_scheduler", "lr_warmup", "lr_decay", "constantcosine"]),
-    ("Loss", ["loss_type", "huber", "min_snr", "debiased", "masked_loss", "multiscale_loss", "max_grad_norm"]),
-    ("Timestep / flow-matching", ["timestep", "sigmoid", "weighting", "discrete_flow", "logit", "mode_scale", "t_min", "t_max"]),
+    (
+        "Learning rate & schedule",
+        [
+            "unet_lr",
+            "text_encoder_lr",
+            "lr_scheduler",
+            "lr_warmup",
+            "lr_decay",
+            "constantcosine",
+        ],
+    ),
+    (
+        "Loss",
+        [
+            "loss_type",
+            "huber",
+            "min_snr",
+            "debiased",
+            "masked_loss",
+            "multiscale_loss",
+            "max_grad_norm",
+        ],
+    ),
+    (
+        "Timestep / flow-matching",
+        [
+            "timestep",
+            "sigmoid",
+            "weighting",
+            "discrete_flow",
+            "logit",
+            "mode_scale",
+            "t_min",
+            "t_max",
+        ],
+    ),
     ("Validation", ["validation", "validate", "cmmd", "max_validation"]),
     ("Sampling", ["sample"]),
     ("EMA", ["ema"]),
@@ -425,7 +614,9 @@ def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
     lycoris's own stock default, which may miss the Anima blocks — inject anima-attn-mlp."""
     if any(a.startswith("preset=") for a in nargs):
         return nargs
-    fixed = "unet-transformer-only"  # registered Anima target (attn+mlp+final, 197 modules)
+    fixed = (
+        "unet-transformer-only"  # registered Anima target (attn+mlp+final, 197 modules)
+    )
     print(
         f"[webgui] lycoris_anima: no preset given → preset={fixed}",
         file=sys.stderr,
@@ -630,7 +821,9 @@ def optimizer_arg_help(name: str) -> dict:
 
     cls = None
     try:
-        _cs = str(ROOT / "custom_scheduler")  # vendored zoo's LETS home (dotted + registry)
+        _cs = str(
+            ROOT / "custom_scheduler"
+        )  # vendored zoo's LETS home (dotted + registry)
         if _cs not in sys.path:
             sys.path.insert(0, _cs)
         if "." in name:
@@ -1012,9 +1205,14 @@ def _dataset_subsets(form: dict) -> list[dict]:
         d: dict = {"image_dir": img}
         if str(s.get("cache_dir") or "").strip():
             d["cache_dir"] = str(s["cache_dir"]).strip()
-        for k, cast in (("num_repeats", int), ("keep_tokens", int),
-                        ("caption_extension", str), ("caption_dropout_rate", float),
-                        ("batch_size", int), ("random_crop_padding_percent", float)):
+        for k, cast in (
+            ("num_repeats", int),
+            ("keep_tokens", int),
+            ("caption_extension", str),
+            ("caption_dropout_rate", float),
+            ("batch_size", int),
+            ("random_crop_padding_percent", float),
+        ):
             v = s.get(k)
             if v in (None, ""):
                 continue
@@ -1063,8 +1261,16 @@ def _build_precached_config(form: dict) -> str | None:
     if not subs:
         return None
     bs = int(form.get("ds_batch") or 1)
-    keep = ("image_dir", "cache_dir", "num_repeats", "keep_tokens",
-            "caption_extension", "caption_dropout_rate", "flip_aug", "random_crop")
+    keep = (
+        "image_dir",
+        "cache_dir",
+        "num_repeats",
+        "keep_tokens",
+        "caption_extension",
+        "caption_dropout_rate",
+        "flip_aug",
+        "random_crop",
+    )
     blocks = []
     for s in subs:
         blk = {k: s[k] for k in keep if k in s}
@@ -1147,8 +1353,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
 
     subs = _dataset_subsets(form)
     if not subs:
-        return {"error": "Auto-preprocess is on but no dataset subset / image "
-                "folder is set."}
+        return {
+            "error": "Auto-preprocess is on but no dataset subset / image "
+            "folder is set."
+        }
     for s in subs:
         if not Path(s["image_dir"]).is_dir():
             return {"error": f"Image folder not found: {s['image_dir']}"}
@@ -1158,8 +1366,9 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     base_cache = f"cache/{name}"
     base_mask = f"cache/{name}/masks"
     masking = bool(form.get("mask_enable"))
-    tiers = sorted(int(t) for t in (form.get("target_res") or [])
-                   if str(t).strip()) or [1024]
+    tiers = sorted(
+        int(t) for t in (form.get("target_res") or []) if str(t).strip()
+    ) or [1024]
     multiscale = bool(form.get("multiscale")) and len(tiers) >= 2
     bs = int(form.get("ds_batch") or form.get("ds_batch_size") or 1)
 
@@ -1186,44 +1395,71 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     entries: list[dict] = []
     datasets: list[dict] = []
     for i, s in enumerate(subs):
-        block_common = {k: s[k] for k in
-                        ("num_repeats", "keep_tokens", "caption_extension",
-                         "caption_dropout_rate") if s.get(k) not in (None, "")}
+        block_common = {
+            k: s[k]
+            for k in (
+                "num_repeats",
+                "keep_tokens",
+                "caption_extension",
+                "caption_dropout_rate",
+            )
+            if s.get(k) not in (None, "")
+        }
         if s.get("flip_aug"):
             block_common["flip_aug"] = True
         rc_entry: dict = {}
         if s.get("random_crop"):
             rc_entry["random_crop"] = True
             if s.get("random_crop_padding_percent") not in (None, ""):
-                rc_entry["random_crop_padding_percent"] = s["random_crop_padding_percent"]
+                rc_entry["random_crop_padding_percent"] = s[
+                    "random_crop_padding_percent"
+                ]
         sub_bs = int(s.get("batch_size") or bs)
         sub_tiers = [t for t in (s.get("tiers") or tiers) if t in tiers] or tiers
         if multiscale:
             for t in sub_tiers:
                 rdir, cdir = f"{base_resized}/{i}/{t}", f"{base_cache}/{i}/{t}"
                 mdir = f"{base_mask}/{i}/{t}" if masking else None
-                e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                     "target_res": str(t), "min_pixels": _skip_minpx(t), **rc_entry}
+                e = {
+                    "src": s["image_dir"],
+                    "resized": rdir,
+                    "cache": cdir,
+                    "target_res": str(t),
+                    "min_pixels": _skip_minpx(t),
+                    **rc_entry,
+                }
                 if mdir:
                     e["mask"] = mdir
                 entries.append(e)
-                blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True,
-                       **block_common}
+                blk = {
+                    "image_dir": rdir,
+                    "cache_dir": cdir,
+                    "recursive": True,
+                    **block_common,
+                }
                 if mdir:
                     blk["mask_dir"] = mdir
                 datasets.append({"batch_size": sub_bs, "subsets": [blk]})
         else:
             rdir, cdir = f"{base_resized}/{i}", f"{base_cache}/{i}"
             mdir = f"{base_mask}/{i}" if masking else None
-            e = {"src": s["image_dir"], "resized": rdir, "cache": cdir,
-                 "target_res": " ".join(str(t) for t in sub_tiers),
-                 "min_pixels": 0 if form.get("drop_lowres") is False else 500000,
-                 **rc_entry}
+            e = {
+                "src": s["image_dir"],
+                "resized": rdir,
+                "cache": cdir,
+                "target_res": " ".join(str(t) for t in sub_tiers),
+                "min_pixels": 0 if form.get("drop_lowres") is False else 500000,
+                **rc_entry,
+            }
             if mdir:
                 e["mask"] = mdir
             entries.append(e)
-            blk = {"image_dir": rdir, "cache_dir": cdir, "recursive": True,
-                   **block_common}
+            blk = {
+                "image_dir": rdir,
+                "cache_dir": cdir,
+                "recursive": True,
+                **block_common,
+            }
             if mdir:
                 blk["mask_dir"] = mdir
             datasets.append({"batch_size": sub_bs, "subsets": [blk]})
@@ -1249,7 +1485,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     # valid. Accept both the kohya GUI's direct `qwen_image_vae_2d` field and the
     # web GUI's `adv` "all arguments" entry.
     if form.get("qwen_image_vae_2d") or any(
-        (it.get("dest") == "qwen_image_vae_2d" or it.get("flag") == "--qwen_image_vae_2d")
+        (
+            it.get("dest") == "qwen_image_vae_2d"
+            or it.get("flag") == "--qwen_image_vae_2d"
+        )
         and it.get("on")
         for it in (form.get("adv") or [])
     ):
@@ -1298,9 +1537,17 @@ def _autobatch_argv(form: dict):
     res = [str(int(r)) for r in (form.get("ab_res") or []) if str(r).strip()]
     if not res:
         return None, "체크된 해상도가 없습니다 — search할 해상도를 고르세요."
-    gc_res = [str(int(r)) for r in (form.get("ab_gradckpt_res") or []) if str(r).strip()]
-    argv = ["tasks.py", "bench-autobatch", "--res", *res,
-            "--max-batch", str(int(form.get("ab_max_batch") or 8))]
+    gc_res = [
+        str(int(r)) for r in (form.get("ab_gradckpt_res") or []) if str(r).strip()
+    ]
+    argv = [
+        "tasks.py",
+        "bench-autobatch",
+        "--res",
+        *res,
+        "--max-batch",
+        str(int(form.get("ab_max_batch") or 8)),
+    ]
     if gc_res:
         argv += ["--gradient_checkpointing_resolutions", *gc_res]
     nm = (form.get("ab_network_module") or "networks.lora_anima").strip()
@@ -1308,9 +1555,14 @@ def _autobatch_argv(form: dict):
     # modules, so the bench would measure a no-op. Force the Anima bridge.
     if nm and "lycoris" in nm and nm != "networks.lycoris_anima":
         nm = "networks.lycoris_anima"
-    argv += ["--network_module", nm,
-             "--network_dim", str(int(form.get("ab_network_dim") or 16)),
-             "--network_alpha", str(form.get("ab_network_alpha") or 8.0)]
+    argv += [
+        "--network_module",
+        nm,
+        "--network_dim",
+        str(int(form.get("ab_network_dim") or 16)),
+        "--network_alpha",
+        str(form.get("ab_network_alpha") or 8.0),
+    ]
     na = str(form.get("ab_network_args") or "").strip()
     nargs = _arg_split(na) if na else []  # quote-aware (same as the training path)
     if "lycoris_anima" in nm:
@@ -1329,15 +1581,26 @@ def _autobatch_argv(form: dict):
         argv += ["--compile"]
     if form.get("ab_auto_budget"):
         # auto-search the activation budget — ab_budget is the LOWEST to try.
-        argv += ["--auto-budget", "--min-budget", str(form.get("ab_budget") or "0.1").strip()]
+        argv += [
+            "--auto-budget",
+            "--min-budget",
+            str(form.get("ab_budget") or "0.1").strip(),
+        ]
     else:
         bud = str(form.get("ab_budget") or "1.0").strip()
         try:
-            if float(bud) < 1.0:  # the activation lever base anima_lora uses (needs compile)
+            if (
+                float(bud) < 1.0
+            ):  # the activation lever base anima_lora uses (needs compile)
                 argv += ["--activation_memory_budget", bud]
         except ValueError:
             pass
-    dit = (form.get("ab_dit") or form.get("pretrained_model_name_or_path") or form.get("dit") or "").strip()
+    dit = (
+        form.get("ab_dit")
+        or form.get("pretrained_model_name_or_path")
+        or form.get("dit")
+        or ""
+    ).strip()
     if dit:
         argv += ["--dit", dit]
     return argv, None
@@ -1368,11 +1631,18 @@ def _spawn_util(argv: list[str], name: str, env_extra: dict | None = None) -> di
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"failed to spawn: {exc}"}
     _STATE.update(
-        proc=proc, cmd=cmd, started_at=time.time(),
-        monitor_url=None, log_path=str(log_path),
+        proc=proc,
+        cmd=cmd,
+        started_at=time.time(),
+        monitor_url=None,
+        log_path=str(log_path),
     )
-    return {"ok": True, "command": " ".join(cmd), "pid": proc.pid,
-            "log_path": str(log_path)}
+    return {
+        "ok": True,
+        "command": " ".join(cmd),
+        "pid": proc.pid,
+        "log_path": str(log_path),
+    }
 
 
 def bench_autobatch(form: dict) -> dict:
@@ -1454,8 +1724,11 @@ def launch(form: dict) -> dict:
         STORE_DIR.mkdir(parents=True, exist_ok=True)
         spec_path = STORE_DIR / f"chain_{name}.json"
         spec_path.write_text(_json.dumps(chain_spec), encoding="utf-8")
-        cmd = [sys.executable,
-               str(ROOT / "tools" / "gui_chain_preprocess_train.py"), str(spec_path)]
+        cmd = [
+            sys.executable,
+            str(ROOT / "tools" / "gui_chain_preprocess_train.py"),
+            str(spec_path),
+        ]
     cmd_str = " ".join(cmd)
 
     # Capture the child's stdout+stderr (the sd-scripts RichHandler console) to a
@@ -1921,9 +2194,13 @@ def import_config(path: str) -> dict:
         # is a custom target file — keep it as a free network_arg. Anything else (ia3 /
         # unet-convblock-only / unknown) can't wrap the conv-free Anima DiT → default.
         if pv in list_lycoris_presets() or pv in _ANIMA_LYCORIS_PRESETS:
-            form["lycoris_preset"] = pv  # stock name (now works) or back-compat anima-* alias
+            form["lycoris_preset"] = (
+                pv  # stock name (now works) or back-compat anima-* alias
+            )
         elif pv.endswith(".toml"):
-            na_dict["preset"] = pv  # flows to network_args_extra; builder folds it through
+            na_dict["preset"] = (
+                pv  # flows to network_args_extra; builder folds it through
+            )
         else:
             form["lycoris_preset"] = "unet-transformer-only"
             notes.append(
@@ -2016,9 +2293,17 @@ def import_config(path: str) -> dict:
     # config imports, not just the curated few. Bools emit the flag only when
     # truthy; list values are space-joined.
     _special_src = {
-        "min_timestep", "max_timestep", "timestep_sample_method", "timestep_sampling",
-        "sigmoid_scale", "sigmoid_bias", "discrete_flow_shift", "weighting_scheme",
-        "logit_mean", "logit_std", "max_token_length",
+        "min_timestep",
+        "max_timestep",
+        "timestep_sample_method",
+        "timestep_sampling",
+        "sigmoid_scale",
+        "sigmoid_bias",
+        "discrete_flow_shift",
+        "weighting_scheme",
+        "logit_mean",
+        "logit_std",
+        "max_token_length",
     }
     _seen_dests = {a["flag"].lstrip("-") for a in adv}
     _valid = {a["dest"]: a for g in list_arg_groups() for a in g["args"]}
@@ -2033,18 +2318,27 @@ def import_config(path: str) -> dict:
             if meta.get("negatable"):
                 # tri-state: preserve an explicit false as "off" so a config that turns
                 # a base.toml-true flag back off round-trips (was silently dropped).
-                adv.append({"flag": meta["flag"], "is_bool": True, "negatable": True,
-                            "tri": "on" if truthy else "off"})
+                adv.append(
+                    {
+                        "flag": meta["flag"],
+                        "is_bool": True,
+                        "negatable": True,
+                        "tri": "on" if truthy else "off",
+                    }
+                )
             elif truthy:
                 adv.append({"flag": meta["flag"], "is_bool": True, "value": True})
         elif v not in (None, "", []):
             val = (
-                " ".join(str(x) for x in v)
-                if isinstance(v, (list, tuple))
-                else str(v)
+                " ".join(str(x) for x in v) if isinstance(v, (list, tuple)) else str(v)
             )
             adv.append(
-                {"flag": meta["flag"], "is_bool": False, "value": val, "nargs": meta.get("nargs")}
+                {
+                    "flag": meta["flag"],
+                    "is_bool": False,
+                    "value": val,
+                    "nargs": meta.get("nargs"),
+                }
             )
     if adv:
         form["adv"] = adv
