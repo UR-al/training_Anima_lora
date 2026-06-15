@@ -210,6 +210,9 @@ _CURATED_ARGS = {
     "wandb_run_name",
     "wandb_api_key",
     "log_tracker_name",
+    "save_model_as",
+    "t5_max_token_length",
+    "vae_disable_cache",
     # Model paths — curated in the GENERAL "Model files" controls (dit/te/vae);
     # excluded so they don't also appear as toggleable auto-args.
     "pretrained_model_name_or_path",
@@ -1071,6 +1074,9 @@ def _method_preset_extra(form: dict):
         ("--wandb_run_name", "wandb_run_name"),
         ("--wandb_api_key", "wandb_api_key"),
         ("--log_tracker_name", "log_tracker_name"),
+        # misc real flags requested for kohya parity
+        ("--save_model_as", "save_model_as"),
+        ("--t5_max_token_length", "t5_max_token_length"),
         # NOTE: --resume is already emitted near the top of this function (line ~778);
         # do not re-add it here or it doubles.
     ):
@@ -1095,6 +1101,7 @@ def _method_preset_extra(form: dict):
         ("--highvram", "highvram"),
         ("--lowram", "lowram"),
         ("--persistent_data_loader_workers", "persistent_data_loader_workers"),
+        ("--vae_disable_cache", "vae_disable_cache"),
         ("--output_config", "output_config"),
     ):
         if form.get(_key):

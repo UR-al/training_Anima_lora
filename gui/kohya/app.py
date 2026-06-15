@@ -90,6 +90,41 @@ def _inline_to_arg_rows(text, n: int) -> list:
     return rows[:n] + [("", "")] * max(0, n - len(rows))
 
 
+_MISSING = object()
+
+
+def _interactive_states(form: dict) -> dict:
+    """field key → {interactive: bool[, value: reset]} for the dep-greying targets,
+    computed server-side from a just-loaded form. on_load_config folds these into its
+    OWN output so a config load fires NO secondary .change/.then event — which used to
+    race the per-driver cascade and wedge huber_c/sigmoid_scale/… on a spinner."""
+    loss = str(form.get("loss_type", "") or "")
+    ts = str(form.get("timestep_sampling", "") or "")
+    ws = str(form.get("weighting_scheme", "") or "")
+    use_vae = bool(form.get("use_vae_cache"))
+    use_text = bool(form.get("use_text_cache"))
+    use_cc = bool(form.get("use_constantcosine"))
+    huber = loss in ("huber", "smooth_l1")
+
+    def g(on, reset=_MISSING):
+        if on:
+            return {"interactive": True}
+        if reset is _MISSING:
+            return {"interactive": False}
+        return {"interactive": False, "value": reset}
+
+    return {
+        "ds_random_crop": g(use_vae, reset=False),
+        "ds_caption_dropout_rate": g(use_text, reset="0"),
+        "lr_scheduler_type": g(not use_cc),
+        "huber_c": g(huber),
+        "huber_schedule": g(huber),
+        "sigmoid_scale": g(ts in ("", "sigmoid")),
+        "logit_mean": g(ws == "logit_normal"),
+        "logit_std": g(ws == "logit_normal"),
+    }
+
+
 def _collect(keys: list[str], values) -> dict:
     """Zip positional handler args back into the backend `form` dict."""
     form = dict(zip(keys, values))
@@ -628,6 +663,33 @@ def build_app(default_port: int = 7860):
                             allow_custom_value=True,
                         ),
                     )
+                # Per-optimizer / per-scheduler arg help (backend.optimizer_arg_help):
+                # selecting either dropdown lists its accepted args + plain-language desc.
+                opt_help = gr.Markdown(
+                    "_Select an optimizer or scheduler to see its arguments._"
+                )
+
+                def _fmt_opt_help(name):
+                    r = server.optimizer_arg_help((name or "").strip())
+                    if not r.get("ok"):
+                        return r.get("note") or f"_no help for `{name}`_"
+                    head = r.get("cls") or name
+                    lines = [f"**{head}**"]
+                    if r.get("note"):
+                        lines.append(r["note"])
+                    for a in r.get("args", []):
+                        dv = a.get("default")
+                        dv = "" if dv is None else f" = `{dv}`"
+                        req = " **(required)**" if a.get("required") else ""
+                        lines.append(f"- `{a['name']}`{dv}{req} — {a.get('desc', '')}")
+                    return "\n".join(lines)
+
+                by_key["optimizer_type"].change(
+                    _fmt_opt_help, by_key["optimizer_type"], opt_help
+                )
+                by_key["lr_scheduler_type"].change(
+                    _fmt_opt_help, by_key["lr_scheduler_type"], opt_help
+                )
                 with gr.Row():
                     reg(
                         "lr_warmup_steps",
@@ -695,7 +757,8 @@ def build_app(default_port: int = 7860):
                     reg(
                         "llm_adapter_lr",
                         gr.Textbox(
-                            label="llm_adapter_lr (Qwen3→DiT)", placeholder="(off)"
+                            label="llm_adapter_lr (Qwen3→DiT)",
+                            placeholder="(blank=off)",
                         ),
                     )
                     reg(
@@ -814,6 +877,27 @@ def build_app(default_port: int = 7860):
                             value="",
                             label="skip_cache_check (blank = default on)",
                             allow_custom_value=True,
+                        ),
+                    )
+                with gr.Row():
+                    reg(
+                        "save_model_as",
+                        gr.Dropdown(
+                            ["", "safetensors", "ckpt", "pt"],
+                            value="",
+                            label="save_model_as (blank = safetensors)",
+                            allow_custom_value=True,
+                        ),
+                    )
+                    reg(
+                        "t5_max_token_length",
+                        gr.Textbox(label="t5_max_token_length", placeholder="512"),
+                    )
+                    reg(
+                        "vae_disable_cache",
+                        gr.Checkbox(
+                            value=False,
+                            label="vae_disable_cache (disable VAE internal tiling cache)",
                         ),
                     )
 
@@ -1362,9 +1446,17 @@ def build_app(default_port: int = 7860):
                     ):
                         form[f"{group}__k{i}"] = k
                         form[f"{group}__v{i}"] = v
-            updates = [
-                gr.update(value=form[k]) if k in form else gr.update() for k in keys
-            ]
+            # Fold the dep-greying interactive states into THIS load's output (no
+            # secondary .change/.then event → no spinner-wedging race on load).
+            interactive = _interactive_states(form)
+            updates = []
+            for k in keys:
+                upd = {}
+                if k in form:
+                    upd["value"] = form[k]
+                if k in interactive:
+                    upd.update(interactive[k])
+                updates.append(gr.update(**upd) if upd else gr.update())
             note = f"✓ loaded {len(form)} field(s) from `{p}`" + (
                 " — unmapped keys are in *Extra CLI flags*"
                 if form.get("extra_flags")
@@ -1440,13 +1532,15 @@ def build_app(default_port: int = 7860):
         _dep_in = [by_key[k] for k in _dep_drivers]
         _dep_out = [by_key[k] for k in _dep_targets]
 
-        # Config load: write every field, THEN one clean full recompute. The per-driver
-        # .change handlers (wired below) also fire while values are being set, but with
-        # allow_custom_value on the constrained dropdowns none of them 422 anymore — so
-        # no target is left stuck on an infinite spinner. (Was the load-hang root cause.)
+        # Config load is a SINGLE event: on_load_config writes every value AND folds in
+        # the dep-greying interactive states (via _interactive_states). NO .then / no
+        # secondary recompute — the old .then raced the output-induced per-driver
+        # .change cascade and left huber_c/sigmoid_scale/… stuck on a spinner. The
+        # per-driver .change handlers (below) stay for live edits; on a load they just
+        # recompute the identical state already applied (idempotent).
         load_cfg_btn.click(
             on_load_config, inputs=config_path, outputs=inputs + [config_status]
-        ).then(_recompute_deps, _dep_in, _dep_out)
+        )
         save_cfg_btn.click(
             on_save_config, inputs=[config_path, *inputs], outputs=config_status
         )

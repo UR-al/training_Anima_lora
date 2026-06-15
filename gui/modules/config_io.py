@@ -89,6 +89,8 @@ _DIRECT_FIELDS = {
     "wandb_run_name",
     "wandb_api_key",
     "log_tracker_name",
+    "save_model_as",
+    "t5_max_token_length",
     # GUI auto-preprocess orchestration knobs (not train.py args — consumed by the
     # server's _prepare_auto_preprocess; mapped here so a load doesn't shove them
     # into extra_flags as bogus train flags).
@@ -113,6 +115,7 @@ _BOOL_FIELDS = {
     "highvram",
     "lowram",
     "persistent_data_loader_workers",
+    "vae_disable_cache",
     "output_config",
     # GUI auto-preprocess orchestration toggles (not train.py args).
     "auto_preprocess",
