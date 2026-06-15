@@ -40,54 +40,14 @@ def _register(keys: list[str], comps: list, key: str, comp):
     return comp
 
 
-# Free-arg groups rendered as name → value ROWS (the LoRA_Easy "ADD NETWORK ARG"
-# widget). The GUI shows a fixed pool of rows per group (keys "{group}__k{i}" /
-# "{group}__v{i}"); _collect folds the non-blank rows into the space-joined
-# `key=value …` string the backend reads under the group key, and config-load splits
-# the inline string back into the rows. group → number of rows in the pool.
-_ARG_ROW_GROUPS = {
-    "network_args": 6,
-    "optimizer_args": 5,
-    "lr_scheduler_args": 4,
-    "ab_network_args": 4,
-}
-
-
-def _arg_rows_to_inline(form: dict, group: str, n: int) -> str:
-    """Collapse a group's name/value rows into ``k1=v1 k2=v2 …`` and POP the row keys
-    from ``form``. A value with spaces is auto-quoted so it survives the backend's
-    _arg_split; a name with no value emits the bare key (flag-style)."""
-    toks: list[str] = []
-    for i in range(1, n + 1):
-        k = str(form.pop(f"{group}__k{i}", "") or "").strip()
-        v = str(form.pop(f"{group}__v{i}", "") or "").strip()
-        if not k:
-            continue
-        if v == "":
-            toks.append(k)
-        else:
-            if " " in v and not (v[:1] in "\"'" and v[-1:] == v[:1]):
-                v = f'"{v}"'
-            toks.append(f"{k}={v}")
-    return " ".join(toks)
-
-
-def _inline_to_arg_rows(text, n: int) -> list:
-    """Inverse for config-load: split a space-joined ``key=value`` string into n
-    (name, value) pairs (quote-aware), padded/truncated to exactly n rows."""
-    import shlex
-
-    s = str(text or "").strip()
-    rows: list = []
-    if s:
-        try:
-            toks = shlex.split(s)
-        except ValueError:
-            toks = s.split()
-        for t in toks:
-            k, _, v = t.partition("=")
-            rows.append((k, v))
-    return rows[:n] + [("", "")] * max(0, n - len(rows))
+# Free-arg groups (network/optimizer/lr_scheduler/ab args) are multi-line TEXTBOXES —
+# one `key=value` per line — registered directly under the group key. The backend's
+# _arg_split treats newlines as whitespace, so form["network_args"] is read verbatim;
+# config_io emits them newline-joined. A textbox (vs a fixed row pool) preserves
+# ARBITRARY length — a LyCORIS config can carry 20+ network_args that a fixed N-row
+# pool would silently truncate, and the dynamic gr.render row editor crashed on Gradio
+# 6.x (fn-index desync). So the textbox is the robust round-trip-safe representation.
+_ARG_GROUPS = ("network_args", "optimizer_args", "lr_scheduler_args", "ab_network_args")
 
 
 _MISSING = object()
@@ -126,14 +86,10 @@ def _interactive_states(form: dict) -> dict:
 
 
 def _collect(keys: list[str], values) -> dict:
-    """Zip positional handler args back into the backend `form` dict."""
+    """Zip positional handler args back into the backend `form` dict. The arg-group
+    textboxes already sit at form["network_args"]/etc. (newline-or-space `key=value`;
+    the backend's _arg_split handles either); only the dataset blocks need folding."""
     form = dict(zip(keys, values))
-    # Gradio Textbox yields "" for empty; backend treats "" as "use default".
-    # Coerce checkbox-style truthiness through untouched (already bool).
-    for group, n in _ARG_ROW_GROUPS.items():  # name/value rows → inline key=value
-        inline = _arg_rows_to_inline(form, group, n)  # also pops the row keys
-        if inline:
-            form[group] = inline
     _assemble_dataset(form)
     return form
 
@@ -306,55 +262,20 @@ def build_app(default_port: int = 7860):
         )
         return tb
 
-    # Every visibility-toggleable row group (subset blocks + arg rows) collects here;
-    # the config-load button reveals them all (a static .then returning constants —
-    # no component reads, so no race). All add/reveal/clear use plain button.click
-    # (static events) — NOT gr.render — so there's no fn-index desync / focus loss.
-    _reveal_groups: list = []
-
-    def _add_button_for(groups, label):
-        """A "+ Add" button that reveals the next hidden row group (count-based)."""
-        n = len(groups)
-        count = gr.State(1)
-        btn = gr.Button(label, size="sm")
-
-        def _grow(c):
-            c = min(int(c) + 1, n)
-            return [c] + [gr.update(visible=(j < c)) for j in range(n)]
-
-        btn.click(_grow, count, [count] + groups, show_progress="hidden")
-
     def reg_arg_rows(group, *, title):
-        """LoRA_Easy "+ Add" name→value editor: a fixed pool of rows, row 1 shown and
-        the rest revealed by "+ Add". Each row is a gr.Group (visibility-toggled);
-        fields reg() as ``{group}__k{i}``/``{group}__v{i}`` (STATIC components → no
-        gr.render, no fn-index desync, no focus loss). 🗑 clears a row; _collect folds
-        the non-blank rows into the inline ``key=value`` string under ``group``."""
-        n = _ARG_ROW_GROUPS[group]
-        gr.Markdown(f"**{title}** — one key → value per row")
-        groups = []
-        for i in range(1, n + 1):
-            with gr.Group(visible=(i == 1)) as grp:
-                with gr.Row():
-                    ktb = gr.Textbox(
-                        placeholder="Enter Arg Name",
-                        show_label=False,
-                        container=False,
-                        scale=5,
-                    )
-                    vtb = gr.Textbox(
-                        placeholder="Enter Arg Value",
-                        show_label=False,
-                        container=False,
-                        scale=5,
-                    )
-                    clr = gr.Button("🗑", scale=0, min_width=44)
-                reg(f"{group}__k{i}", ktb)
-                reg(f"{group}__v{i}", vtb)
-                clr.click(lambda: ("", ""), outputs=[ktb, vtb], show_progress="hidden")
-            groups.append(grp)
-        _add_button_for(groups, f"+ Add {title.lower()} row")
-        _reveal_groups.extend(groups)
+        """Free-arg editor: a multi-line textbox, one ``key=value`` per line, registered
+        directly under ``group`` (network_args / optimizer_args / …). The backend's
+        _arg_split treats newlines as whitespace, so it round-trips any length — a fixed
+        row pool truncated 20+-arg LyCORIS configs, and the gr.render dynamic-add editor
+        crashed on Gradio 6.x; this textbox is the robust representation."""
+        reg(
+            group,
+            gr.Textbox(
+                label=f"{title} — one key=value per line",
+                lines=4,
+                placeholder="algo=lokr\npreset=unet-transformer-only\nfactor=4",
+            ),
+        )
 
     with gr.Blocks(title="Anima LoRA Trainer") as demo:
         gr.Markdown(
@@ -534,7 +455,7 @@ def build_app(default_port: int = 7860):
                     "target_res",
                     gr.CheckboxGroup(
                         _tiers,
-                        value=[t for t in ("896", "1024") if t in _tiers],
+                        value=[],  # default OFF — blank defers to the config chain
                         label="Resolution tiers (constant-token; preprocess --target_res)",
                     ),
                 )
@@ -552,7 +473,7 @@ def build_app(default_port: int = 7860):
                         if primary
                         else f"Subset #{idx} (optional)"
                     )
-                    with gr.Accordion(title, open=True, visible=primary) as grp:
+                    with gr.Accordion(title, open=primary) as grp:
                         if primary:
                             with gr.Row():
                                 reg_path(
@@ -624,9 +545,12 @@ def build_app(default_port: int = 7860):
                             )
                     return grp
 
-                subset_groups = [_subset_block(_i) for _i in range(1, N_SUBSETS + 1)]
-                _add_button_for(subset_groups, "+ Add subset")
-                _reveal_groups.extend(subset_groups)
+                # Fixed pool of N subset blocks, all shown (subset #1 open, the rest
+                # collapsed). Fill as many as you need — blank image_dir rows are
+                # ignored. (A live "+ Add" via gr.render crashed on Gradio 6.x and a
+                # visibility-toggle pool misbehaved, so a plain fixed pool is used.)
+                for _i in range(1, N_SUBSETS + 1):
+                    _subset_block(_i)
 
                 reg_path(
                     "dataset_config",
@@ -883,6 +807,10 @@ def build_app(default_port: int = 7860):
             with gr.Accordion("Saving & checkpoints", open=False):
                 with gr.Row():
                     reg(
+                        "save_every_n_epochs",
+                        gr.Textbox(label="Save every N epochs", placeholder="(off)"),
+                    )
+                    reg(
                         "save_every_n_steps",
                         gr.Textbox(label="Save every N steps", placeholder="(off)"),
                     )
@@ -985,8 +913,8 @@ def build_app(default_port: int = 7860):
                         ),
                     )
 
-            # ── Logging & metadata ──────────────────────────────────────────
-            with gr.Accordion("Logging & metadata", open=False):
+            # ── Logging (WANDB / tracker; the SAI metadata lives in its own section)
+            with gr.Accordion("Logging", open=False):
                 gr.Markdown(
                     "TensorBoard logging dir is auto-set to `<output_dir>/log`. "
                     "Pick a tracker + (for W&B) a run name / API key."
@@ -1151,11 +1079,6 @@ def build_app(default_port: int = 7860):
                     )
                 with gr.Row():
                     reg(
-                        "save_every_n_epochs",
-                        gr.Textbox(label="save_every_n_epochs", placeholder="1"),
-                    )
-                with gr.Row():
-                    reg(
                         "gradient_checkpointing",
                         gr.Checkbox(value=False, label="gradient_checkpointing"),
                     )
@@ -1227,8 +1150,8 @@ def build_app(default_port: int = 7860):
                     reg(
                         "sample_sampler",
                         gr.Dropdown(
-                            ["euler", "er_sde", "lcm"],
-                            value="euler",
+                            ["", "euler", "er_sde", "lcm"],
+                            value="",  # default OFF — blank defers to the cli default
                             label="Sample sampler (--sample_sampler)",
                             allow_custom_value=True,
                         ),
@@ -1533,16 +1456,8 @@ def build_app(default_port: int = 7860):
                     form = load_toml_to_form(fh.read())
             except Exception as exc:  # noqa: BLE001
                 return [gr.update() for _ in keys] + [f"❌ load error: {exc}"]
-            for (
-                group,
-                n,
-            ) in _ARG_ROW_GROUPS.items():  # inline key=value → name/value rows
-                if group in form:
-                    for i, (k, v) in enumerate(
-                        _inline_to_arg_rows(form.pop(group), n), 1
-                    ):
-                        form[f"{group}__k{i}"] = k
-                        form[f"{group}__v{i}"] = v
+            # network_args/etc. arrive as newline-joined key=value strings (config_io)
+            # and land directly in their textboxes — no per-row expansion needed.
             # Fold the dep-greying interactive states into THIS load's output (no
             # secondary .change/.then event → no spinner-wedging race on load).
             interactive = _interactive_states(form)
@@ -1598,19 +1513,10 @@ def build_app(default_port: int = 7860):
 
         # Config load is a SINGLE event: on_load_config writes every value AND folds in
         # the dep-greying interactive states (via _interactive_states). NO .then / no
-        # secondary recompute — the old .then raced the output-induced per-driver
-        # .change cascade and left huber_c/sigmoid_scale/… stuck on a spinner. The
-        # per-driver .change handlers (below) stay for live edits; on a load they just
-        # recompute the identical state already applied (idempotent).
+        # secondary recompute — a .then raced the output-induced per-driver .change
+        # cascade and left huber_c/sigmoid_scale/… stuck on a spinner.
         load_cfg_btn.click(
             on_load_config, inputs=config_path, outputs=inputs + [config_status]
-        ).then(
-            # Reveal every subset/arg row group so a loaded config's extra rows show
-            # (the "+ Add" reveal is count-based; load may populate hidden rows). Returns
-            # constants → no component reads → no race with the value-write above.
-            lambda: [gr.update(visible=True) for _ in _reveal_groups],
-            None,
-            _reveal_groups,
         )
         save_cfg_btn.click(
             on_save_config, inputs=[config_path, *inputs], outputs=config_status

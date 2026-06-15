@@ -186,6 +186,14 @@ _DROP = {
     # checkboxes by tier) — dropped here so it isn't ALSO folded into extra_flags,
     # which would double-own the flag with the subset blocks on the next save.
     "gradient_checkpointing_resolutions",
+    # LoRA_Easy_Training_Scripts-only keys with NO anima train.py equivalent — drop
+    # them (don't fold into extra_flags, which would crash argparse). save_toml itself
+    # → output_config; anima writes the .snapshot.toml beside the checkpoint, so there
+    # is no separate "location". The log/run-name modes + edm2 loss are LETS-specific.
+    "save_toml_location",
+    "log_prefix_mode",
+    "run_name_mode",
+    "edm2_loss_weighting",
 }
 # Dataset-blueprint sections are not flat scalars — skip the flat-key routing, but
 # `datasets` is harvested into the ds_* fields first (see _extract_dataset).
@@ -336,8 +344,11 @@ def load_toml_to_form(toml_text: str) -> dict:
         if key in _MODEL_PATHS:
             form[_MODEL_PATHS[key]] = str(value)
         elif key in _LIST_FIELDS:
+            # network/optimizer/lr_scheduler args → one `key=value` per LINE for the
+            # multi-line textbox editor (the backend's _arg_split treats newlines as
+            # whitespace, so the inline form still parses). Handles arbitrary length.
             form[key] = (
-                " ".join(str(x) for x in value)
+                "\n".join(str(x) for x in value)
                 if isinstance(value, (list, tuple))
                 else str(value)
             )
