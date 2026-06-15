@@ -11,6 +11,7 @@ code path is involved — the GUI is a front-end re-skin over our own backend.
 
 from __future__ import annotations
 
+from gui.modules.arg_help import ARG_HELP
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 from gui.webgui import server
 
@@ -24,9 +25,18 @@ FIELD_KEYS: list[str] = []
 
 
 def _register(keys: list[str], comps: list, key: str, comp):
-    """Append one component, recording its form key in lockstep."""
+    """Append one component, recording its form key in lockstep. Attaches the
+    ported Korean per-field help (ARG_HELP) as the component's `info` tooltip when
+    the field has one and none was set explicitly — Gradio serializes `info` from
+    get_config() at render, so setting it post-construction is honoured."""
     keys.append(key)
     comps.append(comp)
+    help_text = ARG_HELP.get(key)
+    if help_text and not getattr(comp, "info", None):
+        try:
+            comp.info = help_text
+        except Exception:  # noqa: BLE001  (info is best-effort cosmetic)
+            pass
     return comp
 
 
