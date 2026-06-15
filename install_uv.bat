@@ -36,7 +36,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [OK] Installed. Start the GUI with  run_gui.bat   ^(or: uv run python tasks.py webgui^)
+echo [OK] Installed. Start the GUI with  run_gui.bat   ^(or: uv run python tasks.py gradio-gui^)
 echo.
 echo NOTE: torch.compile / Triton needs the CUDA 13.2 toolkit ^(nvcc^). If training
 echo       errors during compile, install it from:

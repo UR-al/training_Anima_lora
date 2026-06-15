@@ -3,7 +3,7 @@
 
 Layout modelled on the kohya_ss GUI (source-model paths + an Anima accordion +
 basic / network / optimizer / dataset / sample / advanced sections), but every
-control feeds the ``form`` dict consumed by :mod:`gui.webgui.server`, whose
+control feeds the ``form`` dict consumed by :mod:`gui.backend`, whose
 ``build_command`` emits the exact ``train.py --method … --preset …`` invocation
 and whose ``launch`` runs it as a direct subprocess. No kohya ``sd-scripts``
 code path is involved — the GUI is a front-end re-skin over our own backend.
@@ -11,9 +11,9 @@ code path is involved — the GUI is a front-end re-skin over our own backend.
 
 from __future__ import annotations
 
+from gui import backend as server
 from gui.modules.arg_help import ARG_HELP
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
-from gui.webgui import server
 
 # --------------------------------------------------------------------------- #
 # Form-field registry: the click handlers receive positional values, so the

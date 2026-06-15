@@ -59,7 +59,7 @@ training_Anima_lora/
 
 | Current | Target | Status / Note |
 |---|---|---|
-| `scripts/webgui/`, `scripts/gradio_gui/` | `gui/webgui/`, `gui/kohya/` | **DONE 2026-06-15** — GUI consolidated under `gui/` |
+| `scripts/webgui/`, `scripts/gradio_gui/` | `gui/backend.py`, `gui/kohya/` | **DONE 2026-06-15** — GUI consolidated under `gui/`; the stdlib HTTP web GUI was then **removed** (kohya Gradio is the only GUI), its shared command-builder/launcher backend kept as `gui/backend.py` |
 | `scripts/anima_tagger/` | `finetune/anima_tagger/` | **DONE 2026-06-15** — captioning *logic* stays in `library.captioning` |
 | `scripts/preprocess/`, `scripts/merge_to_dit.py` | `tools/` | **DONE 2026-06-15** — flat sd-scripts `tools/`, run by path |
 | `scripts/daemon/` | **DELETED** | done 2026-06-15; training inline-only |

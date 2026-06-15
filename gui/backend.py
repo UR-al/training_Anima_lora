@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Stdlib HTTP control panel: configure -> launch -> monitor.
+"""Shared GUI backend: build the ``train.py`` command, launch it, and run the
+preprocess/mask/autobatch utilities + the saved-run queue.
 
-Serves a single-page form whose dropdowns are populated from the live registries
-(methods, presets, the ~89-optimizer zoo, schedulers), builds the exact
-``train.py`` command via the shared ``scripts.tasks._common`` helpers, and spawns
-training as a detached subprocess. The live loss/LR dashboard is the existing web
-monitor (``--monitor``), which this panel links to.
+Pure stdlib + the trainer it launches — no third-party deps. The kohya Gradio
+panel (``gui/kohya/app.py``) and ``gui/modules/config_io.py`` drive this: it
+populates dropdowns from the live registries (methods, presets, the ~89-optimizer
+zoo, schedulers), assembles the exact ``train.py`` invocation, and spawns training
+(and the auto-preprocess chain) as a direct subprocess whose log the GUI tails.
 
-No third-party deps — only the Python stdlib + the trainer it launches.
+History: this used to also serve a stdlib HTTP single-page web GUI; that frontend
+was removed (kohya Gradio is the only GUI now), leaving just the backend here.
 """
 
 from __future__ import annotations
@@ -18,15 +20,10 @@ import re
 import shlex
 import subprocess
 import sys
-import threading
 import time
-import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
-ROOT = Path(__file__).resolve().parents[2]
-HTML_FILE = Path(__file__).resolve().parent / "index.html"
+ROOT = Path(__file__).resolve().parents[1]
 
 # Last launch this panel issued (a direct subprocess.Popen + its log file).
 _STATE: dict = {
@@ -2218,130 +2215,3 @@ def load_sample_prompts(path: str) -> dict:
         return {"ok": True, "text": p.read_text(encoding="utf-8")}
     except OSError as exc:
         return {"ok": False, "error": str(exc)}
-
-
-# --------------------------------------------------------------------------- #
-# HTTP server
-# --------------------------------------------------------------------------- #
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _json(self, obj, code: int = 200) -> None:
-        self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
-
-    def do_GET(self):  # noqa: N802
-        path = urlparse(self.path).path
-        if path in ("/", "/index.html"):
-            try:
-                self._send(200, HTML_FILE.read_bytes(), "text/html; charset=utf-8")
-            except Exception as exc:  # noqa: BLE001
-                self._send(500, str(exc).encode(), "text/plain")
-        elif path == "/api/options":
-            self._json(options())
-        elif path == "/api/status":
-            self._json(status())
-        elif path == "/api/queue/list":
-            self._json({"queue": queue_list()})
-        elif path == "/api/config/list":
-            self._json({"configs": config_list()})
-        elif path == "/api/config/load":
-            qs = parse_qs(urlparse(self.path).query or "")
-            self._json(config_load((qs.get("name") or [""])[0]))
-        elif path == "/api/optimizer_args":
-            qs = parse_qs(urlparse(self.path).query or "")
-            self._json(optimizer_arg_help((qs.get("name") or [""])[0]))
-        elif path == "/api/browse":
-            qs = parse_qs(urlparse(self.path).query or "")
-            self._json(
-                browse((qs.get("path") or [""])[0], (qs.get("exts") or [None])[0])
-            )
-        elif path == "/api/sample_prompts/load":
-            qs = parse_qs(urlparse(self.path).query or "")
-            self._json(load_sample_prompts((qs.get("path") or [""])[0]))
-        else:
-            self._json({"error": "not found"}, 404)
-
-    def do_POST(self):  # noqa: N802
-        path = urlparse(self.path).path
-        length = int(self.headers.get("Content-Length") or 0)
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}")
-        except Exception:
-            body = {}
-        if path == "/api/launch":
-            self._json(launch(body))
-        elif path == "/api/stop":
-            self._json(stop())
-        elif path == "/api/queue/add":
-            self._json(queue_add(body.get("name", ""), body.get("form", {})))
-        elif path == "/api/queue/remove":
-            self._json(queue_remove(body.get("id")))
-        elif path == "/api/queue/reorder":
-            self._json(queue_reorder(body.get("order", [])))
-        elif path == "/api/queue/clear":
-            self._json(queue_clear())
-        elif path == "/api/queue/run":
-            self._json(queue_run())
-        elif path == "/api/config/save":
-            self._json(config_save(body.get("name", ""), body.get("form", {})))
-        elif path == "/api/config/delete":
-            self._json(config_delete(body.get("name", "")))
-        elif path == "/api/dataset/build":
-            self._json(build_dataset_toml(body))
-        elif path == "/api/config/import":
-            self._json(import_config(body.get("path", "")))
-        elif path == "/api/sample_prompts/save":
-            self._json(save_sample_prompts(body.get("name", ""), body.get("text", "")))
-        elif path == "/api/bench_autobatch":
-            self._json(bench_autobatch(body))
-        else:
-            self._json({"error": "not found"}, 404)
-
-    def log_message(self, *args):  # silence default logging
-        pass
-
-
-def serve(host: str = "127.0.0.1", port: int = 7860, open_browser: bool = True) -> None:
-    # The requested port may already be taken — most commonly because 7860 is
-    # ALSO gradio's default (sd-webui / forge-neo), or a prior GUI instance is
-    # still running. Rather than crash with WinError 10013 / address-in-use (the
-    # window just vanishes), scan upward for the first free port and use it.
-    server = None
-    last_err: OSError | None = None
-    for p in range(port, port + 20):
-        try:
-            server = HTTPServer((host, p), Handler)
-            break
-        except OSError as exc:
-            last_err = exc
-    if server is None:
-        raise SystemExit(
-            f"web GUI: no free port in {port}-{port + 19} ({last_err}). "
-            f"Pass --port <n> to pick one explicitly."
-        )
-    bound = server.server_address[1]
-    shown = "localhost" if host in ("127.0.0.1", "0.0.0.0") else host
-    url = f"http://{shown}:{bound}"
-    if bound != port:
-        print(
-            f"\n  port {port} is busy (gradio/forge-neo or another app uses it) "
-            f"— using {bound} instead"
-        )
-    print(f"\n  Anima LoRA web GUI: {url}\n  (Ctrl-C to stop)\n")
-    # Pre-warm the option cache (imports the optimizer zoo) off the request path
-    # so the first page load doesn't wait on it.
-    threading.Thread(target=options, daemon=True).start()
-    if open_browser:
-        threading.Thread(
-            target=lambda: (time.sleep(0.6), webbrowser.open(url)), daemon=True
-        ).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n  web GUI stopped.")
-        server.shutdown()

@@ -341,7 +341,7 @@ def _coerce(s: str):
 
 def save_form_to_toml(form: dict) -> str:
     """The GUI form → a runnable ``--config_file`` TOML (matches Start)."""
-    from gui.webgui import server  # pure-stdlib; safe + torch-free
+    from gui import backend as server  # pure-stdlib; safe + torch-free
 
     method, preset, extra = server._method_preset_extra(form)
     d = _argv_to_toml_dict(method, preset, extra)

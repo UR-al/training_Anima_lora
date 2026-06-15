@@ -4,7 +4,7 @@
 A Gradio front-end (layout modelled on the kohya_ss GUI) that drives **this
 repo's** ``train.py --method <name> --preset <name>`` rather than kohya's
 ``sd-scripts``. It is a thin UI shell over the proven command-builder + launch
-backend in :mod:`gui.webgui.server` (``options`` / ``build_command`` /
+backend in :mod:`gui.backend` (``options`` / ``build_command`` /
 ``launch`` / ``status`` / ``stop``) — so the dropdowns are populated from the
 live registries (methods, presets, the ~89-optimizer zoo, schedulers) and the
 Start button runs ``train.py`` directly as a subprocess (inline, like

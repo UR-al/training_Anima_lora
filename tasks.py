@@ -34,7 +34,6 @@ from scripts.tasks import (
     tagger,
     training,
     utilities,
-    webgui,
 )
 
 COMMANDS = {
@@ -47,11 +46,6 @@ COMMANDS = {
         training.cmd_lora_gui,
         "Train from a self-contained configs/gui-methods/<variant>.toml "
         "(variant from GUI_PRESETS env or 1st positional; e.g. tlora, hydralora).",
-    ),
-    "webgui": (
-        webgui.cmd_webgui,
-        "Web control panel (no Qt): configure -> launch -> live monitor in the "
-        "browser. python tasks.py webgui [--port 7860] [--no-browser].",
     ),
     "gradio-gui": (
         gradio_gui.cmd_gradio_gui,

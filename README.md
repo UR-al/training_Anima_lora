@@ -10,14 +10,14 @@ A fast **Anima** LoRA trainer with a browser control panel, a ~89-optimizer zoo,
 | **[LoRA_Easy_Training_Scripts](https://github.com/67372a/LoRA_Easy_Training_Scripts)** | the broad **optimizer + scheduler** suite (~89 optimizers, CAWR/RAWR schedulers) | `custom_scheduler/LoraEasyCustomOptimizer/` |
 | **[AnimaLoraToolkit](https://github.com/Moeblack/AnimaLoraToolkit)** (GPL-3.0) | the live **web monitor** (loss / LR / sample dashboard) | `library/monitoring/` |
 
-## Web control panel — `run_gui.bat`
+## Gradio control panel — `run_gui.bat`
 
-Run `run_gui.bat` (or `python tasks.py webgui`) to open a browser control panel — **no Qt, pure stdlib**:
+Run `run_gui.bat` (or `python tasks.py gradio-gui`) to open the **Gradio** control panel (kohya_ss-style tabs) in your browser. Opt-in `gradio` extra: `uv sync --extra gradio`.
 
-- Pick **method / preset / optimizer (~89) / scheduler** from dropdowns; set rank, LR, epochs, dataset, seed, optimizer/scheduler args.
+- Tabs: **Model / LoRA / Dataset / Samples / Training / Config / Utils**. Pick **method / preset / optimizer (~89) / scheduler** from dropdowns; set rank, LR, epochs, dataset (single- or multi-subset), seed, optimizer/scheduler args; per-field help tooltips + conflict/dependency greying.
 - **Preview the command**, then **Start** / **Stop**.
-- **Runs `train.py` as a direct subprocess** and captures its stdout/stderr to a logfile under `output/logs/` (tailed live in the panel). Closing the page does not stop the run, but there is no job queue — start runs one at a time.
-- One-click link to the **live monitor** (loss/LR/sample dashboard, resumes the curve on `--resume`).
+- **Runs `train.py` as a direct subprocess** and captures its stdout/stderr to a logfile under `output/logs/` (tailed live in the panel). There is no job queue — runs go one at a time (a saved-run **Queue** tab launches them sequentially).
+- **Auto-preprocess at train start** (toggle), **Utils** tab (SAM3/MIT masking + auto-batch search), **Config file** load/save, and a one-click link to the **live monitor** (loss/LR/sample dashboard, resumes the curve on `--resume`).
 
 ## CLI
 
