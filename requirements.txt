@@ -62,6 +62,10 @@ triton-windows>=3.7.0,<3.8.0 ; sys_platform == 'win32'
 
 # ── GUI / lint / misc ────────────────────────────────────────────────────────
 pyside6>=6.11.0
+# Gradio control panel (`python tasks.py gradio-gui`) — optional in pyproject
+# ([project.optional-dependencies].gradio); listed here so the pip "full install"
+# view matches. Same major as the kohya_ss GUI this layout is modelled on.
+gradio>=5.34.1
 ruff>=0.15.9
 matplotlib
 torchsde>=0.2.6
