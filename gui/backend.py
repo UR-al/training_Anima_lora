@@ -2,14 +2,14 @@
 """Shared GUI backend: build the ``train.py`` command, launch it, and run the
 preprocess/mask/autobatch utilities + the saved-run queue.
 
-Pure stdlib + the trainer it launches — no third-party deps. The kohya Gradio
-panel (``gui/kohya/app.py``) and ``gui/modules/config_io.py`` drive this: it
+Pure stdlib + the trainer it launches — no third-party deps. The native PySide6
+panel (``gui/native/app.py``) and ``gui/modules/config_io.py`` drive this: it
 populates dropdowns from the live registries (methods, presets, the ~89-optimizer
 zoo, schedulers), assembles the exact ``train.py`` invocation, and spawns training
 (and the auto-preprocess chain) as a direct subprocess whose log the GUI tails.
 
-History: this used to also serve a stdlib HTTP single-page web GUI; that frontend
-was removed (kohya Gradio is the only GUI now), leaving just the backend here.
+History: this backend once also served a stdlib HTTP web GUI and a Gradio panel;
+both frontends were removed — the native PySide6 panel is the only GUI now.
 """
 
 from __future__ import annotations
@@ -2365,12 +2365,12 @@ def update_tool() -> dict:
         return {"ok": True, "output": "\n".join(out), "changed": False}
     deps = ("uv.lock" in pull.stdout) or ("pyproject.toml" in pull.stdout)
     if deps:
-        out.append("\n[deps changed] running uv sync --extra gradio …")
+        out.append("\n[deps changed] running uv sync --extra gui …")
         try:
-            # --extra gradio: the GUI is an opt-in extra; plain `uv sync` would
-            # UNINSTALL gradio (+ fastapi/uvicorn/…) and break the GUI on next launch.
+            # --extra gui: the native PySide6 GUI is an opt-in extra; plain `uv sync`
+            # would UNINSTALL PySide6 and break the GUI on next launch.
             sync = subprocess.run(
-                ["uv", "sync", "--extra", "gradio"],
+                ["uv", "sync", "--extra", "gui"],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

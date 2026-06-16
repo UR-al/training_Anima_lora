@@ -27,7 +27,6 @@ from scripts.experimental_tasks import training as exp_training
 from scripts.tasks import (
     dcw,
     downloads,
-    gradio_gui,
     inference,
     masking,
     native_gui,
@@ -47,12 +46,6 @@ COMMANDS = {
         training.cmd_lora_gui,
         "Train from a self-contained configs/gui-methods/<variant>.toml "
         "(variant from GUI_PRESETS env or 1st positional; e.g. tlora, hydralora).",
-    ),
-    "gradio-gui": (
-        gradio_gui.cmd_gradio_gui,
-        "Gradio control panel (kohya-style UI) driving this repo's train.py. "
-        "Needs the optional `gradio` extra. python tasks.py gradio-gui "
-        "[--port 7860] [--no-browser].",
     ),
     "native-gui": (
         native_gui.cmd_native_gui,

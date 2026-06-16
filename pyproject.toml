@@ -77,11 +77,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Native PySide6 desktop control panel (`python tasks.py native-gui`).
+# Native PySide6 desktop control panel (`python tasks.py native-gui`) — the GUI.
 gui = ["PySide6>=6.7"]
-# Gradio control panel (`python tasks.py gradio-gui`) — opt-in so the core
-# install stays lean. Same major as the kohya_ss GUI this layout is modelled on.
-gradio = ["gradio>=5.34.1"]
 # Training-monitor MCP server (`tools/anima_monitor_mcp.py`) — lets an AI agent
 # watch the run (status/loss/samples/log) and post analysis to the dashboard.
 mcp = ["mcp>=1.2.0"]

@@ -61,11 +61,8 @@ flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/release
 triton-windows>=3.7.0,<3.8.0 ; sys_platform == 'win32'
 
 # ── GUI / lint / misc ────────────────────────────────────────────────────────
+# Native PySide6 desktop control panel (`python tasks.py native-gui`) — the GUI.
 pyside6>=6.11.0
-# Gradio control panel (`python tasks.py gradio-gui`) — optional in pyproject
-# ([project.optional-dependencies].gradio); listed here so the pip "full install"
-# view matches. Same major as the kohya_ss GUI this layout is modelled on.
-gradio>=5.34.1
 # Niche, off by default to keep the base install lean (matches pyproject's opt-in
 # extras). The MCP server (tools/anima_monitor_mcp.py) and the AI watch party
 # (tools/ai_watch_party.py) are the only consumers; enable with

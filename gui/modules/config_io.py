@@ -237,9 +237,10 @@ def _nearest_tier(res) -> int | None:
     return min(_DATASET_TIERS, key=lambda t: abs(t - r))
 
 
-# Per-subset field mapping for the config round-trip — mirrors gui.kohya.app's block
-# keys: the primary subset uses the "ds_" prefix, extras "ds2_"/"ds3_"/…. Keep
-# _DS_N_SUBSETS in sync with gui.kohya.app.N_SUBSETS.
+# Per-subset field mapping for the legacy flat-config round-trip (configs without a
+# [[datasets]] blueprint): the primary subset uses the "ds_" prefix, extras
+# "ds2_"/"ds3_"/…. The native GUI's dynamic subset cards round-trip via form["subsets"];
+# these prefixes remain for importing older flat configs.
 _DS_N_SUBSETS = 4
 _DS_PREFIXES = ("ds_",) + tuple(f"ds{i}_" for i in range(2, _DS_N_SUBSETS + 1))
 _DS_STR_FIELDS = (
