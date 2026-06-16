@@ -95,7 +95,6 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("output_name", "Output name", "text"),
                     ("output_dir", "Output dir", "dir"),
                     ("resume", "Resume (state dir)", "dir"),
-                    ("logging_dir", "Logging dir", "dir"),
                     ("network_weights", "Warm-start weights", "file"),
                 ],
             ),
@@ -1307,6 +1306,11 @@ class MainWindow(QMainWindow):
                     "on": True,
                 }
             )
+        # t5_tokenizer_path is a curated picker but the backend emits only dit/te/
+        # vae, so route it through adv (flag --t5_tokenizer_path).
+        tok = str(form.get("t5_tokenizer_path") or "").strip()
+        if tok and self._enabled("t5_tokenizer_path"):
+            adv.append({"flag": "--t5_tokenizer_path", "value": tok, "on": True})
         if adv:
             form["adv"] = adv
         return form
