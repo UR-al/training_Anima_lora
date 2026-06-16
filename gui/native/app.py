@@ -71,6 +71,132 @@ from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 from gui.native.tag_sort import KEEP_TOKENS_SEPARATOR
 
 # --------------------------------------------------------------------------- #
+# i18n — English / 한국어. tr(s) returns the Korean string when the language is
+# "ko" and one is known, else the English text (so untranslated / deliberately
+# technical strings — flag names, optimizer ids — stay English in both modes).
+# The choice persists to gui/store/lang.txt and defaults to the OS locale.
+# --------------------------------------------------------------------------- #
+def _lang_file():
+    return backend.STORE_DIR / "lang.txt"
+
+
+def _load_lang() -> str:
+    try:
+        v = _lang_file().read_text(encoding="utf-8").strip().lower()
+        if v in ("en", "ko"):
+            return v
+    except Exception:
+        pass
+    try:
+        import locale
+
+        if (locale.getdefaultlocale()[0] or "").lower().startswith("ko"):
+            return "ko"
+    except Exception:
+        pass
+    return "en"
+
+
+def _save_lang(code: str) -> None:
+    try:
+        p = _lang_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(code, encoding="utf-8")
+    except Exception:
+        pass
+
+
+_LANG = _load_lang()
+
+_KO = {
+    # window / nav
+    "Anima LoRA — native trainer": "Anima LoRA — 네이티브 트레이너",
+    "Training": "학습",
+    "Utils": "도구",
+    "Folder": "폴더",
+    "Subset": "서브셋",
+    "Network": "네트워크",
+    "Optimizer": "옵티마이저",
+    "Monitoring": "모니터링",
+    "Metadata": "메타데이터",
+    "Extra": "추가",
+    "Dataset": "데이터셋",
+    "Preprocess": "전처리",
+    "Update": "업데이트",
+    "Auto-batch": "오토배치",
+    "Masking": "마스킹",
+    "Tools": "툴",
+    # group titles
+    "Model paths": "모델 경로",
+    "Output / resume / logs": "출력 / 재개 / 로그",
+    "Dataset / samples": "데이터셋 / 샘플",
+    "Adapter": "어댑터",
+    "Scheduler": "스케줄러",
+    "Learning rates / scope": "학습률 / 범위",
+    "Loss / regularization": "손실 / 정규화",
+    "Core / hardware": "코어 / 하드웨어",
+    "Web monitor": "웹 모니터",
+    "More flags": "기타 플래그",
+    # field labels
+    "DiT checkpoint": "DiT 체크포인트",
+    "Text encoder (Qwen3)": "텍스트 인코더 (Qwen3)",
+    "Tokenizer path": "토크나이저 경로",
+    "Output name": "출력 이름",
+    "Output dir": "출력 폴더",
+    "Resume (state dir)": "재개 (상태 폴더)",
+    "Warm-start weights": "웜스타트 가중치",
+    "Dataset config TOML": "데이터셋 설정 TOML",
+    "Sample prompts file": "샘플 프롬프트 파일",
+    "LoRA type (method)": "LoRA 종류 (method)",
+    "Network module": "네트워크 모듈",
+    "Network dim (rank)": "네트워크 dim (rank)",
+    "Network alpha": "네트워크 alpha",
+    "LyCORIS preset": "LyCORIS 프리셋",
+    "LyCORIS algo (loha/lokr/…)": "LyCORIS 알고리즘 (loha/lokr/…)",
+    "↳ args help": "↳ 인자 도움말",
+    "LR scheduler (builtin)": "LR 스케줄러 (내장)",
+    "LR scheduler (custom dotted path)": "LR 스케줄러 (커스텀 경로)",
+    "Warmup steps": "워밍업 스텝",
+    "Learning rate": "학습률",
+    "UNet / DiT LR": "UNet / DiT 학습률",
+    "Text-encoder LR": "텍스트 인코더 학습률",
+    "LLM-adapter LR": "LLM 어댑터 학습률",
+    "Train scope": "학습 범위",
+    "Loss type": "손실 종류",
+    "Network dropout": "네트워크 드롭아웃",
+    "Scale weight norms": "가중치 norm 스케일",
+    "Max grad norm": "최대 grad norm",
+    "Hardware preset": "하드웨어 프리셋",
+    "Max epochs": "최대 epoch",
+    "Max steps": "최대 step",
+    "Batch size": "배치 크기",
+    "Grad accumulation": "Grad 누적",
+    "Blocks to swap": "스왑 블록 수",
+    "Seed": "시드",
+    "Mixed precision": "혼합 정밀도",
+    "Enable (--monitor)": "활성화 (--monitor)",
+    "Host": "호스트",
+    "Port": "포트",
+    # run panel
+    "Language": "언어",
+    "Load config…": "설정 불러오기…",
+    "Save config…": "설정 저장…",
+    "Command preview": "명령 미리보기",
+    "Preview": "미리보기",
+    "▶ Start": "▶ 시작",
+    "■ Stop": "■ 중지",
+    "Open monitor": "모니터 열기",
+    "Log": "로그",
+    "▲ Queue": "▲ 대기열",
+    "idle": "대기 중",
+}
+
+
+def tr(s: str) -> str:
+    """Translate a UI string to the active language (English fallback)."""
+    return _KO.get(s, s) if _LANG == "ko" else s
+
+# --------------------------------------------------------------------------- #
 # Curated layout — (tab, [(group_title, [(dest, label, kind), …]), …]).
 # kind ∈ text | combo:<src> | tristate | bool | file | dir | scope | opthelp.
 # Schema args (list_arg_groups) are routed in on top via _ROUTE_RULES; any dest
@@ -409,7 +535,7 @@ _SUBSET_GREY = [
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Anima LoRA — native trainer")
+        self.setWindowTitle(tr("Anima LoRA — native trainer"))
         self.resize(1280, 880)
         self._options = backend.options()
         self._getters: dict[str, object] = {}
@@ -434,15 +560,7 @@ class MainWindow(QMainWindow):
                     continue
                 self._tab_schema.setdefault(_route_tab(d), []).append(arg)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_parent_tabs())
-        splitter.addWidget(self._build_run_panel())
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        self.setCentralWidget(splitter)
-
-        self._wire_greying()
-        self._apply_greying()
+        self._build_central()
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
@@ -451,17 +569,62 @@ class MainWindow(QMainWindow):
         self._poll()
 
     # ----- parent tabs ---------------------------------------------------- #
+    def _build_central(self) -> None:
+        """(Re)build the tabs + run panel into the central widget. Re-callable so a
+        language switch can rebuild the whole UI in the new language."""
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self._build_parent_tabs())
+        splitter.addWidget(self._build_run_panel())
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        self.setCentralWidget(splitter)
+        self._wire_greying()
+        self._apply_greying()
+
+    def _set_language(self, code: str) -> None:
+        """Switch UI language live: persist + rebuild the central widget, preserving
+        the current form values (scalar fields via the getter/setter registries)."""
+        global _LANG
+        if code not in ("en", "ko") or code == _LANG:
+            return
+        _LANG = code
+        _save_lang(code)
+        self.setWindowTitle(tr("Anima LoRA — native trainer"))
+        try:
+            saved = {d: g() for d, g in self._getters.items()}
+        except Exception:
+            saved = {}
+        if getattr(self, "_timer", None) is not None:
+            self._timer.stop()
+        # Reset the per-build registries (repopulated by _build_central → builders).
+        self._getters = {}
+        self._setters = {}
+        self._adv = []
+        self._scope = None
+        self._widgets = {}
+        self._watch = {}
+        self._build_central()
+        for d, v in saved.items():
+            setter = self._setters.get(d)
+            if setter is not None:
+                try:
+                    setter(v)
+                except Exception:
+                    pass
+        if getattr(self, "_timer", None) is not None:
+            self._timer.start()
+
     def _build_parent_tabs(self) -> QTabWidget:
         parent = QTabWidget()
-        parent.addTab(self._build_training_parent(), "Training")
-        parent.addTab(self._build_utils_parent(), "Utils")
+        parent.addTab(self._build_training_parent(), tr("Training"))
+        parent.addTab(self._build_utils_parent(), tr("Utils"))
         return parent
 
     def _build_training_parent(self) -> QTabWidget:
         inner = QTabWidget()
         for tab_name, groups in _TRAINING_TABS:
             inner.addTab(
-                self._scroll(self._build_training_tab(tab_name, groups)), tab_name
+                self._scroll(self._build_training_tab(tab_name, groups)), tr(tab_name)
             )
         return inner
 
@@ -545,7 +708,7 @@ class MainWindow(QMainWindow):
         # Schema args routed into this tab (populated only when torch is present).
         schema = self._tab_schema.get(tab_name) or []
         if schema:
-            box = QGroupBox("More flags")
+            box = QGroupBox(tr("More flags"))
             form = QFormLayout(box)
             for arg in sorted(schema, key=lambda a: a.get("dest") or ""):
                 form.addRow(
@@ -611,10 +774,10 @@ class MainWindow(QMainWindow):
 
     # ----- curated field widgets ------------------------------------------ #
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
-        gb = QGroupBox(title)
+        gb = QGroupBox(tr(title))
         form = QFormLayout(gb)
         for dest, label, kind in fields:
-            form.addRow(label, self._build_field(dest, kind))
+            form.addRow(tr(label), self._build_field(dest, kind))
         return gb
 
     def _build_field(self, dest: str, kind: str) -> QWidget:
@@ -661,7 +824,8 @@ class MainWindow(QMainWindow):
             hb.setContentsMargins(0, 0, 0, 0)
             hb.addWidget(edit)
             btn = QPushButton("📁")
-            btn.setFixedWidth(36)
+            btn.setObjectName("icon")
+            btn.setFixedWidth(40)
             btn.clicked.connect(lambda _=False, e=edit, k=kind: self._browse(e, k))
             hb.addWidget(btn)
             return row
@@ -917,12 +1081,12 @@ class MainWindow(QMainWindow):
         from gui.native.dataset_view import DatasetView
 
         inner = QTabWidget()
-        inner.addTab(DatasetView(), "Dataset")
-        inner.addTab(self._scroll(self._build_preprocess_tab()), "Preprocess")
-        inner.addTab(self._scroll(self._build_update_tab()), "Update")
-        inner.addTab(self._scroll(self._build_autobatch_tab()), "Auto-batch")
-        inner.addTab(self._scroll(self._build_masking_tab()), "Masking")
-        inner.addTab(self._scroll(self._build_tools_tab()), "Tools")
+        inner.addTab(DatasetView(), tr("Dataset"))
+        inner.addTab(self._scroll(self._build_preprocess_tab()), tr("Preprocess"))
+        inner.addTab(self._scroll(self._build_update_tab()), tr("Update"))
+        inner.addTab(self._scroll(self._build_autobatch_tab()), tr("Auto-batch"))
+        inner.addTab(self._scroll(self._build_masking_tab()), tr("Masking"))
+        inner.addTab(self._scroll(self._build_tools_tab()), tr("Tools"))
         return inner
 
     # ----- diffusion-pipe tools ------------------------------------------- #
@@ -934,7 +1098,8 @@ class MainWindow(QMainWindow):
         hb.setContentsMargins(0, 0, 0, 0)
         hb.addWidget(edit)
         btn = QPushButton("📁")
-        btn.setFixedWidth(36)
+        btn.setObjectName("icon")
+        btn.setFixedWidth(40)
         btn.clicked.connect(lambda _=False, e=edit, k=kind: self._browse(e, k))
         hb.addWidget(btn)
         return row
@@ -1181,7 +1346,8 @@ class MainWindow(QMainWindow):
         hb.setContentsMargins(0, 0, 0, 0)
         hb.addWidget(ab_dit)
         bd = QPushButton("📁")
-        bd.setFixedWidth(36)
+        bd.setObjectName("icon")
+        bd.setFixedWidth(40)
         bd.clicked.connect(lambda _=False: self._browse(ab_dit, "file"))
         hb.addWidget(bd)
         form.addRow("DiT (blank = config)", dit_row)
@@ -1244,16 +1410,26 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         vbox = QVBoxLayout(panel)
         cfg_row = QHBoxLayout()
-        btn_load = QPushButton("Load config…")
-        btn_save = QPushButton("Save config…")
+        btn_load = QPushButton(tr("Load config…"))
+        btn_save = QPushButton(tr("Save config…"))
         btn_load.clicked.connect(self._load_config)
         btn_save.clicked.connect(self._save_config)
         cfg_row.addWidget(btn_load)
         cfg_row.addWidget(btn_save)
         cfg_row.addStretch(1)
+        # Language selector — switches the whole UI live (en ⇄ 한국어), persisted.
+        cfg_row.addWidget(QLabel(tr("Language")))
+        self._lang_combo = QComboBox()
+        self._lang_combo.addItem("English", "en")
+        self._lang_combo.addItem("한국어", "ko")
+        self._lang_combo.setCurrentIndex(1 if _LANG == "ko" else 0)
+        self._lang_combo.currentIndexChanged.connect(
+            lambda _i: self._set_language(self._lang_combo.currentData())
+        )
+        cfg_row.addWidget(self._lang_combo)
         vbox.addLayout(cfg_row)
 
-        vbox.addWidget(QLabel("Command preview"))
+        vbox.addWidget(QLabel(tr("Command preview")))
         self._preview = QPlainTextEdit()
         self._preview.setReadOnly(True)
         self._preview.setMaximumHeight(120)
@@ -1261,11 +1437,11 @@ class MainWindow(QMainWindow):
         vbox.addWidget(self._preview)
 
         btn_row = QHBoxLayout()
-        self._btn_preview = QPushButton("Preview")
-        self._btn_start = QPushButton("▶ Start")
+        self._btn_preview = QPushButton(tr("Preview"))
+        self._btn_start = QPushButton(tr("▶ Start"))
         self._btn_start.setObjectName("primary")  # the single gold call-to-action
-        self._btn_stop = QPushButton("■ Stop")
-        self._btn_monitor = QPushButton("Open monitor")
+        self._btn_stop = QPushButton(tr("■ Stop"))
+        self._btn_monitor = QPushButton(tr("Open monitor"))
         self._btn_preview.clicked.connect(self._do_preview)
         self._btn_start.clicked.connect(self._do_start)
         self._btn_stop.clicked.connect(self._do_stop)
@@ -1280,9 +1456,9 @@ class MainWindow(QMainWindow):
             btn_row.addWidget(b)
         vbox.addLayout(btn_row)
 
-        self._status = QLabel("idle")
+        self._status = QLabel(tr("idle"))
         vbox.addWidget(self._status)
-        vbox.addWidget(QLabel("Log"))
+        vbox.addWidget(QLabel(tr("Log")))
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setFont(QFont("monospace"))
@@ -1293,7 +1469,7 @@ class MainWindow(QMainWindow):
         self._queue_panel = self._build_queue_panel()
         self._queue_panel.setVisible(False)
         vbox.addWidget(self._queue_panel)
-        self._queue_btn = QPushButton("▲ Queue")
+        self._queue_btn = QPushButton(tr("▲ Queue"))
         self._queue_btn.setCheckable(True)
         self._queue_btn.toggled.connect(self._toggle_queue)
         vbox.addWidget(self._queue_btn)
@@ -1509,6 +1685,9 @@ QPushButton#primary {{ background: {accent}; color: #000; border: none; font-wei
                       padding: 8px 18px; }}
 QPushButton#primary:hover {{ background: {accent_hi}; }}
 QPushButton#primary:disabled {{ background: #3a3413; color: #777; }}
+/* Compact icon buttons (📁 pickers): tight padding so the glyph isn't clipped by
+   the default button padding inside their fixed width. */
+QPushButton#icon {{ padding: 4px 0; font-size: 15px; }}
 
 /* Inputs */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
