@@ -24,6 +24,11 @@ from pathlib import Path
 # Default location of the anima-tagger vocab (download-models target).
 DEFAULT_VOCAB_REL = "models/captioners/anima-tagger-v1/vocab.json"
 
+# Separator inserted right after the @artist tags (everything before it — year …
+# artist — is "kept"). Pair with the subset's --keep_tokens_separator so kohya
+# keeps exactly the non-general head, per image, regardless of its length.
+KEEP_TOKENS_SEPARATOR = "|||"
+
 QUALITY_HUMAN = [
     "masterpiece",
     "best quality",
@@ -128,17 +133,36 @@ def classify(tag: str, vocab: dict[str, str] | None = None) -> str:
     return "general"
 
 
-def sort_tags(tags: list[str], vocab: dict[str, str] | None = None) -> list[str]:
+def _split_sorted(
+    tags: list[str], vocab: dict[str, str] | None
+) -> tuple[list[str], list[str]]:
+    """Reorder and return (head, general) where head = year…artist (the "kept"
+    tags) and general = everything else, both in canonical order."""
     buckets: dict[str, list[str]] = {k: [] for k in _ORDER}
     for t in tags:
         buckets[classify(t, vocab)].append(t)
-    out: list[str] = []
+    head: list[str] = []
     for k in _ORDER:
-        out.extend(buckets[k])
-    return out
+        if k != "general":
+            head.extend(buckets[k])
+    return head, buckets["general"]
 
 
-def sort_caption(text: str, vocab: dict[str, str] | None = None) -> str:
-    """Split a comma-separated caption, reorder, and re-join."""
+def sort_tags(tags: list[str], vocab: dict[str, str] | None = None) -> list[str]:
+    head, general = _split_sorted(tags, vocab)
+    return head + general
+
+
+def sort_caption(
+    text: str,
+    vocab: dict[str, str] | None = None,
+    insert_sep: bool = False,
+) -> str:
+    """Split a comma-separated caption, reorder, and re-join. With ``insert_sep``,
+    place ``KEEP_TOKENS_SEPARATOR`` between the kept head (year…@artist) and the
+    general tags so a per-image keep_tokens boundary is encoded in the caption."""
     tags = [t.strip() for t in text.split(",") if t.strip()]
-    return ", ".join(sort_tags(tags, vocab))
+    head, general = _split_sorted(tags, vocab)
+    if insert_sep and head and general:
+        return ", ".join(head) + f" {KEEP_TOKENS_SEPARATOR} " + ", ".join(general)
+    return ", ".join(head + general)

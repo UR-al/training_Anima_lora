@@ -253,6 +253,11 @@ class DatasetView(QWidget):
         btns.addWidget(b_sort)
         btns.addWidget(b_save)
         rv.addLayout(btns)
+        self._keep_sep = QCheckBox(
+            f"Insert keep-tokens separator ({tag_sort.KEEP_TOKENS_SEPARATOR}) after @artist"
+        )
+        self._keep_sep.setChecked(True)
+        rv.addWidget(self._keep_sep)
         vocab_msg = "vocab.json loaded" if self._vocab else "no vocab.json (rule-based)"
         rv.addWidget(QLabel(f"tag classifier: {vocab_msg}"))
         return right
@@ -326,7 +331,11 @@ class DatasetView(QWidget):
     # ----- caption -------------------------------------------------------- #
     def _sort_caption(self) -> None:
         self._caption.setPlainText(
-            tag_sort.sort_caption(self._caption.toPlainText(), self._vocab)
+            tag_sort.sort_caption(
+                self._caption.toPlainText(),
+                self._vocab,
+                insert_sep=self._keep_sep.isChecked(),
+            )
         )
 
     def _save_caption(self) -> None:

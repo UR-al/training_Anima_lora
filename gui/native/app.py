@@ -68,6 +68,7 @@ from PySide6.QtWidgets import (
 
 from gui import backend
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
+from gui.native.tag_sort import KEEP_TOKENS_SEPARATOR
 
 # --------------------------------------------------------------------------- #
 # Curated layout — (tab, [(group_title, [(dest, label, kind), …]), …]).
@@ -116,6 +117,12 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     (
                         "auto_preprocess",
                         "Auto-preprocess on Start (resize → cache per subset tiers)",
+                        "bool",
+                    ),
+                    (
+                        "auto_keep_tokens",
+                        "Auto keep_tokens (emit --keep_tokens_separator for the "
+                        "Dataset-tab-inserted separator)",
                         "bool",
                     ),
                 ],
@@ -1290,6 +1297,16 @@ class MainWindow(QMainWindow):
                         "on": True,
                     }
                 )
+        if form.get("auto_keep_tokens"):
+            # Match the separator the Dataset tab inserts after @artist, so kohya
+            # keeps exactly the non-general head per image.
+            adv.append(
+                {
+                    "flag": "--keep_tokens_separator",
+                    "value": KEEP_TOKENS_SEPARATOR,
+                    "on": True,
+                }
+            )
         if adv:
             form["adv"] = adv
         return form

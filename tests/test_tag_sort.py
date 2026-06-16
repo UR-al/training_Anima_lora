@@ -46,6 +46,28 @@ def test_vocab_splits_character_and_series():
     assert tags == ["1girl", "oomuro sakurako", "yuru yuri", "brown hair"]
 
 
+def test_insert_keep_tokens_separator():
+    vocab = {
+        "oomuro sakurako": "character",
+        "yuru yuri": "copyright",
+        "brown hair": "general",
+        "smile": "general",
+    }
+    cap = "brown hair, yuru yuri, oomuro sakurako, 1girl, @nnn yryr, smile, year 2025, safe"
+    out = tag_sort.sort_caption(cap, vocab, insert_sep=True)
+    head, sep, gen = out.partition(f" {tag_sort.KEEP_TOKENS_SEPARATOR} ")
+    assert sep  # separator present
+    assert head == "year 2025, safe, 1girl, oomuro sakurako, yuru yuri, @nnn yryr"
+    assert gen == "brown hair, smile"
+    # no separator when there is no head or no general bucket
+    assert tag_sort.KEEP_TOKENS_SEPARATOR not in tag_sort.sort_caption(
+        "smile, brown hair", vocab, insert_sep=True
+    )
+    assert tag_sort.KEEP_TOKENS_SEPARATOR not in tag_sort.sort_caption(
+        "1girl, @x, safe", vocab, insert_sep=True
+    )
+
+
 def test_missing_vocab_returns_none(tmp_path):
     assert tag_sort.load_vocab_categories(tmp_path / "nope.json") is None
 
