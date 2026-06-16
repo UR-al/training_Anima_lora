@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
-"""PySide6 desktop UI for the Anima LoRA trainer (Milestone 1: core flow).
+"""PySide6 desktop UI for the Anima LoRA trainer.
 
-Curated training fields + an Extra-flags escape hatch (covers every other
-``train.py`` flag via the backend's ``extra_flags`` passthrough) → command
-preview → Start/Stop → live log tail. Config TOML load/save rides
-``gui.modules.config_io`` (same round-trip as the Gradio panel). Dataset subset
-editor / schema-driven Extra widgets / Utils are follow-up milestones; the
-backend already supports them, so it's purely UI build-out.
+Tabbed form (Training / Dataset / Advanced) over the shared, torch-free
+:mod:`gui.backend`, so this panel emits the same ``train.py`` commands as the
+Gradio one — only the UI differs (native dialogs, real tables, no localhost).
+
+- **Training**: curated fields built from a small declarative spec, dropdowns
+  sourced from ``backend.options()``.
+- **Dataset**: a real subset table → ``form['subsets']`` (the backend normalizes
+  it into a precached ``--dataset_config``), plus a single-folder fallback.
+- **Advanced**: every other ``train.py`` flag, schema-driven from
+  ``backend.list_arg_groups()`` → ``form['adv']`` (per-flag widgets with help),
+  plus a raw ``extra_flags`` escape hatch.
+
+Command preview / Start / Stop / live log + config TOML load/save (config_io)
+live in the right-hand run panel. Utils + saved-run queue are later milestones.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ import sys
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -23,6 +32,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -31,6 +41,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -38,9 +51,9 @@ from PySide6.QtWidgets import (
 from gui import backend
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 
-# Field spec: (dest, label, kind). kind ∈ text | combo:<src> | tristate | bool |
-# file | dir | multiline. combo src is an options() key or a comma list.
-_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
+# Curated field spec: (dest, label, kind). kind ∈ text | combo:<src> | tristate |
+# bool | file | dir. combo src is an options() key or a literal comma list.
+_TRAINING_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
     (
         "Model files",
         [
@@ -96,13 +109,6 @@ _SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
         ],
     ),
     (
-        "Dataset",
-        [
-            ("dataset_config", "Dataset config TOML", "file"),
-            ("raw_image_dir", "…or a single image folder", "dir"),
-        ],
-    ),
-    (
         "Samples / Monitor",
         [
             ("sample_prompts", "Sample prompts file", "file"),
@@ -112,25 +118,44 @@ _SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
         ],
     ),
 ]
-_EXTRA_FIELD = (
-    "extra_flags",
-    "Extra CLI flags (one per token, e.g. --highvram)",
-    "multiline",
+_DATASET_SECTION = (
+    "Dataset (single-folder fallback)",
+    [
+        ("dataset_config", "Dataset config TOML", "file"),
+        ("raw_image_dir", "…or a single image folder", "dir"),
+    ],
 )
+
+# Subset table columns → keys consumed by backend._dataset_subsets. Strings are
+# fine (the backend casts num_repeats/keep_tokens/… itself); the two aug columns
+# are checkboxes.
+_SUBSET_COLS = [
+    ("image_dir", "image_dir"),
+    ("cache_dir", "cache_dir"),
+    ("num_repeats", "num_repeats"),
+    ("keep_tokens", "keep_tokens"),
+    ("caption_extension", "caption_ext"),
+    ("caption_dropout_rate", "cap_dropout"),
+    ("batch_size", "batch_size"),
+    ("tiers", "tiers (e.g. 512,1024)"),
+    ("flip_aug", "flip_aug"),
+    ("random_crop", "random_crop"),
+]
+_SUBSET_BOOL_COLS = {"flip_aug", "random_crop"}
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Anima LoRA — native trainer")
-        self.resize(1100, 800)
+        self.resize(1180, 840)
         self._options = backend.options()
-        self._getters: dict[str, callable] = {}
-        self._setters: dict[str, callable] = {}
-        self._running = False
+        self._getters: dict[str, object] = {}
+        self._setters: dict[str, object] = {}
+        self._adv: list[tuple[dict, object]] = []
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_form_panel())
+        splitter.addWidget(self._build_tabs())
         splitter.addWidget(self._build_run_panel())
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -142,29 +167,27 @@ class MainWindow(QMainWindow):
         self._timer.start()
         self._poll()
 
-    # ----- form panel (scrollable curated fields) ------------------------- #
-    def _build_form_panel(self) -> QWidget:
-        inner = QWidget()
-        vbox = QVBoxLayout(inner)
-        for title, fields in _SECTIONS:
-            vbox.addWidget(self._build_group(title, fields))
-        # Extra-flags escape hatch (covers every non-curated train.py flag).
-        gb = QGroupBox("Extra")
-        form = QFormLayout(gb)
-        dest, label, _ = _EXTRA_FIELD
-        edit = QPlainTextEdit()
-        edit.setMaximumHeight(70)
-        edit.setPlaceholderText("--highvram\n--guidance_scale 1.0")
-        self._getters[dest] = lambda e=edit: e.toPlainText().strip()
-        self._setters[dest] = lambda v, e=edit: e.setPlainText(str(v or ""))
-        form.addRow(label, edit)
-        vbox.addWidget(gb)
-        vbox.addStretch(1)
+    # ----- tabs ----------------------------------------------------------- #
+    def _build_tabs(self) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.addTab(self._scroll(self._sections_widget(_TRAINING_SECTIONS)), "Training")
+        tabs.addTab(self._scroll(self._build_dataset_tab()), "Dataset")
+        tabs.addTab(self._scroll(self._build_advanced_tab()), "Advanced")
+        return tabs
 
+    def _scroll(self, inner: QWidget) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(inner)
         return scroll
+
+    def _sections_widget(self, sections) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        for title, fields in sections:
+            vbox.addWidget(self._build_group(title, fields))
+        vbox.addStretch(1)
+        return w
 
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
         gb = QGroupBox(title)
@@ -222,7 +245,198 @@ class MainWindow(QMainWindow):
         if path:
             edit.setText(path)
 
-    # ----- run panel (preview + controls + log) --------------------------- #
+    # ----- dataset tab (subset table) ------------------------------------- #
+    def _build_dataset_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "Subsets drive training (each row → one [[datasets.subsets]]). Leave the "
+                "table empty to use the single-folder fallback below."
+            )
+        )
+        self._subset_table = QTableWidget(0, len(_SUBSET_COLS))
+        self._subset_table.setHorizontalHeaderLabels([h for _, h in _SUBSET_COLS])
+        self._subset_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self._subset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        vbox.addWidget(self._subset_table)
+
+        btns = QHBoxLayout()
+        add_folder = QPushButton("➕ Add subset (folder…)")
+        add_row = QPushButton("➕ Add empty row")
+        rm_row = QPushButton("➖ Remove selected")
+        add_folder.clicked.connect(self._subset_add_folder)
+        add_row.clicked.connect(lambda: self._subset_add_row())
+        rm_row.clicked.connect(self._subset_remove)
+        for b in (add_folder, add_row, rm_row):
+            btns.addWidget(b)
+        btns.addStretch(1)
+        vbox.addLayout(btns)
+
+        vbox.addWidget(self._build_group(*_DATASET_SECTION))
+        vbox.addStretch(1)
+        return w
+
+    def _subset_add_row(self, values: dict | None = None) -> None:
+        values = values or {}
+        r = self._subset_table.rowCount()
+        self._subset_table.insertRow(r)
+        for c, (key, _) in enumerate(_SUBSET_COLS):
+            if key in _SUBSET_BOOL_COLS:
+                item = QTableWidgetItem()
+                item.setFlags(
+                    Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                )
+                checked = bool(values.get(key)) and str(
+                    values.get(key)
+                ).lower() not in ("false", "0", "")
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            else:
+                item = QTableWidgetItem(str(values.get(key, "") or ""))
+            self._subset_table.setItem(r, c, item)
+
+    def _subset_add_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select image folder", str(backend.ROOT)
+        )
+        if path:
+            self._subset_add_row({"image_dir": path})
+
+    def _subset_remove(self) -> None:
+        rows = sorted(
+            {i.row() for i in self._subset_table.selectedIndexes()}, reverse=True
+        )
+        for r in rows:
+            self._subset_table.removeRow(r)
+
+    def _collect_subsets(self) -> list[dict]:
+        out: list[dict] = []
+        for r in range(self._subset_table.rowCount()):
+            row: dict = {}
+            for c, (key, _) in enumerate(_SUBSET_COLS):
+                item = self._subset_table.item(r, c)
+                if item is None:
+                    continue
+                if key in _SUBSET_BOOL_COLS:
+                    if item.checkState() == Qt.Checked:
+                        row[key] = True
+                else:
+                    val = item.text().strip()
+                    if val:
+                        row[key] = val
+            if row.get("image_dir"):
+                out.append(row)
+        return out
+
+    # ----- advanced tab (schema-driven, all flags) ------------------------ #
+    def _build_advanced_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+
+        gb = QGroupBox("Raw extra flags")
+        form = QFormLayout(gb)
+        edit = QPlainTextEdit()
+        edit.setMaximumHeight(60)
+        edit.setPlaceholderText("--highvram\n--guidance_scale 1.0")
+        self._getters["extra_flags"] = lambda e=edit: e.toPlainText().strip()
+        self._setters["extra_flags"] = lambda v, e=edit: e.setPlainText(str(v or ""))
+        form.addRow("Anything else", edit)
+        vbox.addWidget(gb)
+
+        for group in self._options.get("arg_groups") or []:
+            box = QGroupBox(str(group.get("role") or "args"))
+            gform = QFormLayout(box)
+            for arg in group.get("args") or []:
+                widget = self._build_adv_field(arg)
+                gform.addRow(arg.get("dest") or arg.get("flag"), widget)
+            vbox.addWidget(box)
+        vbox.addStretch(1)
+        return w
+
+    def _build_adv_field(self, arg: dict) -> QWidget:
+        flag = arg.get("flag")
+        help_txt = arg.get("help") or ""
+        if arg.get("negatable"):
+            combo = QComboBox()
+            combo.addItems(["default", "on", "off"])
+            combo.setToolTip(help_txt)
+            self._adv.append(
+                (
+                    arg,
+                    lambda c=combo, f=flag: (
+                        {"flag": f, "negatable": True, "tri": c.currentText()}
+                        if c.currentText() != "default"
+                        else None
+                    ),
+                )
+            )
+            return combo
+        if arg.get("is_bool"):
+            cb = QCheckBox()
+            cb.setToolTip(help_txt)
+            self._adv.append(
+                (
+                    arg,
+                    lambda c=cb, f=flag: (
+                        {"flag": f, "is_bool": True, "value": True, "on": True}
+                        if c.isChecked()
+                        else None
+                    ),
+                )
+            )
+            return cb
+        if arg.get("choices"):
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItem("")
+            combo.addItems([str(x) for x in arg["choices"]])
+            combo.setToolTip(help_txt)
+            self._adv.append(
+                (
+                    arg,
+                    lambda c=combo, f=flag, a=arg: (
+                        {
+                            "flag": f,
+                            "value": c.currentText().strip(),
+                            "nargs": a.get("nargs"),
+                            "on": True,
+                        }
+                        if c.currentText().strip()
+                        else None
+                    ),
+                )
+            )
+            return combo
+        edit = QLineEdit()
+        edit.setToolTip(help_txt)
+        self._adv.append(
+            (
+                arg,
+                lambda e=edit, f=flag, a=arg: (
+                    {
+                        "flag": f,
+                        "value": e.text().strip(),
+                        "nargs": a.get("nargs"),
+                        "on": True,
+                    }
+                    if e.text().strip()
+                    else None
+                ),
+            )
+        )
+        return edit
+
+    def _collect_adv(self) -> list[dict]:
+        out = []
+        for _arg, getter in self._adv:
+            item = getter()
+            if item:
+                out.append(item)
+        return out
+
+    # ----- run panel ------------------------------------------------------ #
     def _build_run_panel(self) -> QWidget:
         panel = QWidget()
         vbox = QVBoxLayout(panel)
@@ -275,19 +489,31 @@ class MainWindow(QMainWindow):
 
     # ----- form <-> dict -------------------------------------------------- #
     def _collect(self) -> dict:
-        return {dest: get() for dest, get in self._getters.items()}
+        form = {dest: get() for dest, get in self._getters.items()}
+        subsets = self._collect_subsets()
+        if subsets:
+            form["subsets"] = subsets
+        adv = self._collect_adv()
+        if adv:
+            form["adv"] = adv
+        return form
 
     def _apply(self, form: dict) -> None:
         for dest, val in form.items():
             setter = self._setters.get(dest)
             if setter:
                 setter(val)
+        subsets = form.get("subsets")
+        if isinstance(subsets, list):
+            self._subset_table.setRowCount(0)
+            for s in subsets:
+                if isinstance(s, dict):
+                    self._subset_add_row(s)
 
     # ----- actions -------------------------------------------------------- #
     def _do_preview(self) -> None:
         try:
-            cmd = backend.build_command(self._collect())
-            self._preview.setPlainText(" ".join(cmd))
+            self._preview.setPlainText(" ".join(backend.build_command(self._collect())))
         except Exception as exc:  # noqa: BLE001
             self._preview.setPlainText(f"[preview error] {exc}")
 
@@ -344,14 +570,14 @@ class MainWindow(QMainWindow):
         self._btn_stop.setEnabled(running)
         self._btn_monitor.setEnabled(bool(st.get("monitor_url")))
         if running:
-            elapsed = int(st.get("elapsed") or 0)
-            self._status.setText(f"running · pid {st.get('pid')} · {elapsed}s")
+            self._status.setText(
+                f"running · pid {st.get('pid')} · {int(st.get('elapsed') or 0)}s"
+            )
         elif st.get("returncode") is not None:
             self._status.setText(f"finished · exit {st.get('returncode')}")
         else:
             self._status.setText("idle")
-        lt = backend.log_tail(400)
-        lines = lt.get("lines") or []
+        lines = backend.log_tail(400).get("lines") or []
         if lines:
             sb = self._log.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 4
