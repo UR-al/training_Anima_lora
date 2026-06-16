@@ -842,6 +842,13 @@ def optimizer_arg_help(name: str) -> dict:
     import inspect
 
     key = name.lower()
+    # Torch-free fast path: the disk cache holds pre-introspected help for every
+    # listed optimizer/scheduler, so the GUI's help drawer (and the build-time seed)
+    # never import the optimizer zoo. Custom dotted-path names fall through to live
+    # introspection below (on-demand, only when the user types one).
+    _cache = _load_slow_cache()
+    if _cache and key in (_cache.get("opt_help") or {}):
+        return _cache["opt_help"][key]
     if key in _BUILTIN_SCHED_ARGS:  # built-in scheduler -> trainer flags
         flags = _BUILTIN_SCHED_ARGS[key]
         note = "configured via the main flags (see All arguments): " + (
@@ -944,21 +951,112 @@ def _mit_available() -> bool:
 
 _OPTIONS_CACHE = None
 
+# Torch-free startup cache. `list_optimizers()` (imports the ~89-optimizer zoo) and
+# `list_arg_groups()` (imports train.py → torch + transformers + diffusers) cost ~5s
+# combined and dominate GUI startup. Their output is plain data, so we persist it to
+# disk keyed on the source-file signature and read it back torch-free on every later
+# launch — only regenerating (the slow ~5s path) after an update changes the sources.
+_CACHE_VERSION = 1
+_SLOW_CACHE = None  # in-memory mirror of the on-disk cache (once loaded this session)
+
+
+def _slow_cache_path():
+    return STORE_DIR / "options_cache.json"
+
+
+def _slow_options_sig() -> str:
+    """Signature of everything whose change would alter the cached optimizer names /
+    arg schema / per-optimizer help — so the cache auto-regenerates after a pull."""
+    import json as _json
+
+    paths = [
+        ROOT / "train.py",
+        ROOT / "library" / "config" / "cli_args.py",
+        Path(__file__).resolve(),  # this module owns list_arg_groups / optimizer_arg_help
+        ROOT / "custom_scheduler" / "LoraEasyCustomOptimizer",
+    ]
+    sig = {"v": _CACHE_VERSION}
+    for p in paths:
+        try:
+            if p.is_dir():
+                sig[str(p)] = max(
+                    (f.stat().st_mtime for f in p.rglob("*.py")), default=0.0
+                )
+            else:
+                sig[str(p)] = p.stat().st_mtime
+        except OSError:
+            sig[str(p)] = 0.0
+    return _json.dumps(sig, sort_keys=True)
+
+
+def _load_slow_cache():
+    """The on-disk cache if present AND its source signature still matches, else None.
+    Torch-free — this is what keeps a warm GUI launch from importing torch."""
+    global _SLOW_CACHE
+    if _SLOW_CACHE is not None:
+        return _SLOW_CACHE
+    import json as _json
+
+    try:
+        c = _json.loads(_slow_cache_path().read_text(encoding="utf-8"))
+        if c.get("sig") == _slow_options_sig():
+            _SLOW_CACHE = c
+            return c
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def build_options_cache() -> dict:
+    """Compute the torch-importing option data ONCE (~5s: imports train + the optimizer
+    zoo + introspects every optimizer's help) and persist it. Subsequent launches read
+    it torch-free via _load_slow_cache(). Safe to call ahead of time to pre-warm."""
+    global _SLOW_CACHE
+    import json as _json
+
+    opts = list_optimizers()
+    scheds = list_schedulers()
+    helps: dict = {}
+    for nm in opts + scheds:
+        try:
+            helps[nm.lower()] = optimizer_arg_help(nm)  # live (cache not yet valid)
+        except Exception:  # noqa: BLE001
+            pass
+    data = {
+        "sig": _slow_options_sig(),
+        "optimizers": opts,
+        "arg_groups": list_arg_groups(),
+        "opt_help": helps,
+    }
+    try:
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+        _slow_cache_path().write_text(_json.dumps(data), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    _SLOW_CACHE = data
+    return data
+
+
+def _slow_options() -> dict:
+    return _load_slow_cache() or build_options_cache()
+
 
 def options() -> dict:
-    """Cached option registries. The first call imports the ~89-optimizer zoo
-    (slow); cache it so page reloads are instant. Pre-warmed in serve()."""
+    """Cached option registries. The slow members (optimizer zoo + arg schema) come
+    from a torch-free disk cache (build_options_cache), so a warm launch never imports
+    torch; the rest are cheap file/static lookups."""
     global _OPTIONS_CACHE
     if _OPTIONS_CACHE is None:
+        slow = _slow_options()
         _OPTIONS_CACHE = {
             "methods": list_methods(),
             "presets": list_presets(),
-            "optimizers": list_optimizers(),
+            "optimizers": slow.get("optimizers") or list_optimizers(),
             "schedulers": list_schedulers(),
             "network_modules": list_network_modules(),
             "lycoris_algos": list_lycoris_algos(),
             "lycoris_presets": list_lycoris_presets(),
-            "arg_groups": list_arg_groups(),
+            "arg_groups": slow.get("arg_groups") or [],
             "target_res_tiers": list_target_res_tiers(),
             "sam3_available": _sam3_available(),
             "mit_available": _mit_available(),

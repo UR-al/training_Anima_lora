@@ -30,5 +30,17 @@ if errorlevel 1 (
 )
 
 echo.
+REM Rebuild the GUI's torch-free options cache now (optimizer zoo + arg schema), so
+REM the first GUI launch after this update is fast instead of paying the ~5s rebuild.
+REM Best-effort — a failure here never blocks the update.
+echo Pre-warming GUI options cache ...
+where uv >nul 2>nul
+if errorlevel 1 (
+  if exist ".venv\Scripts\python.exe" ".venv\Scripts\python.exe" -c "import gui.backend as b; b.build_options_cache()" 2>nul
+) else (
+  uv run python -c "import gui.backend as b; b.build_options_cache()" 2>nul
+)
+
+echo.
 echo [OK] Updated.
 pause

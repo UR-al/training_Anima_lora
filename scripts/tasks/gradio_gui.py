@@ -32,6 +32,12 @@ def cmd_gradio_gui(extra):
     host = os.environ.get("GRADIO_GUI_HOST", host)
     port = int(os.environ.get("GRADIO_GUI_PORT", port))
 
+    # Skip gradio's startup analytics + version-check network pings (HEAD to
+    # huggingface.co + GET api.gradio.app). They add latency to every launch and can
+    # stall for seconds on a slow/offline network. Must be set before gradio imports.
+    os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
     try:
         from gui.kohya import app
 
