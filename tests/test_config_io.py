@@ -326,7 +326,34 @@ def test_load_dedups_same_dir_multiscale_to_one_subset():
     assert "skip_image_resolution" not in form.get("extra_flags", "")
 
 
+def test_known_dests_pass_schema_args_to_fields_not_extra_flags():
+    """Schema/advanced args (no dedicated curated field) are folded into extra_flags
+    by default, but when the caller passes ``known_dests`` (the native GUI's full
+    field set) they pass through to their own form key so the field/dropdown
+    populates on load. Regression for "config load: dropdowns/values don't apply"."""
+    toml_text = (
+        'method = "lora"\n'
+        'dynamo_backend = "inductor"\n'
+        "activation_memory_budget = 0.95\n"
+        "cache_info = true\n"
+    )
+    # default: no known_dests → these land in extra_flags (legacy behavior)
+    plain = load_toml_to_form(toml_text)
+    assert "dynamo_backend" not in plain
+    assert "dynamo_backend" in (plain.get("extra_flags") or "")
+    # with known_dests → they reach their fields, NOT extra_flags
+    known = load_toml_to_form(
+        toml_text,
+        known_dests={"dynamo_backend", "activation_memory_budget", "cache_info"},
+    )
+    assert known.get("dynamo_backend") == "inductor"
+    assert known.get("activation_memory_budget") == 0.95
+    assert known.get("cache_info") is True
+    assert "dynamo_backend" not in (known.get("extra_flags") or "")
+
+
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
+    test_known_dests_pass_schema_args_to_fields_not_extra_flags()
     test_load_maps_dedicated_fields()
     test_load_renames_to_dedicated_fields()
     test_load_drops_and_extra_routing()

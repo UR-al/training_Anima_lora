@@ -939,9 +939,17 @@ class MainWindow(QMainWindow):
         if isinstance(w, QCheckBox):
             w.setChecked(_truthy(value))
         elif isinstance(w, QComboBox):
-            self._set_combo(w, value)
+            # A negatable schema arg renders as a default/on/off combo; a config bool
+            # maps to on/off. Choices/text combos take the value verbatim.
+            if isinstance(value, bool):
+                self._set_combo(w, "on" if value else "off")
+            else:
+                self._set_combo(w, value)
         elif isinstance(w, QLineEdit):
-            w.setText(str(value or ""))
+            if isinstance(value, (list, tuple)):  # nargs arg → space-joined
+                w.setText(" ".join(str(x) for x in value))
+            else:
+                w.setText(str(value if value is not None else ""))
 
     # ----- Ctrl+F argument search ----------------------------------------- #
     def _build_search_index(self) -> list[dict]:
@@ -2305,6 +2313,11 @@ class MainWindow(QMainWindow):
                 setter = self._setters.get(dest)
                 if setter:
                     setter(val)
+                elif dest in self._widgets:
+                    # Schema/advanced fields register no setter (only a getter in
+                    # self._adv) — set them onto their widget by dest so a loaded
+                    # config's dropdowns / values populate, not just curated fields.
+                    self._set_widget_value(dest, val)
             subsets = form.get("subsets")
             if isinstance(subsets, list):
                 self._clear_subset_cards()
@@ -2350,7 +2363,9 @@ class MainWindow(QMainWindow):
             return
         try:
             with open(path, encoding="utf-8") as f:
-                form = load_toml_to_form(f.read())
+                # Pass the full set of rendered field dests so schema/advanced args
+                # (dropdowns + values) populate their fields instead of extra_flags.
+                form = load_toml_to_form(f.read(), known_dests=set(self._widgets))
             self._apply(form)
             self._do_preview()
         except Exception as exc:  # noqa: BLE001

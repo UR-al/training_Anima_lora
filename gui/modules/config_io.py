@@ -332,8 +332,16 @@ def _extract_dataset(data: dict, form: dict) -> None:
         form["target_res"] = [str(t) for t in sorted(tiers)]
 
 
-def load_toml_to_form(toml_text: str) -> dict:
-    """Parse a config TOML into the GUI ``form`` dict (see module docstring)."""
+def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
+    """Parse a config TOML into the GUI ``form`` dict (see module docstring).
+
+    ``known_dests`` (optional): a set of arg dests the caller renders as real form
+    fields beyond the curated ``_DIRECT_FIELDS`` set — e.g. the native GUI's full
+    schema-arg fields (``backend.list_arg_groups``). Any such key passes through to
+    ``form[key]`` (raw value) instead of being folded into ``extra_flags``, so a
+    loaded config populates its dropdown / field rather than the catch-all box.
+    """
+    known = set(known_dests or ())
     data = tomllib.loads(toml_text)
     data.pop("base_config", None)  # inheritance ref — we flatten, ignore it
 
@@ -397,6 +405,10 @@ def load_toml_to_form(toml_text: str) -> dict:
                 emit(key, True)
         elif key in _DROP:
             continue
+        elif key in known:
+            # A schema/advanced field the caller renders directly (native GUI):
+            # pass the raw value through so it populates the field, not extra_flags.
+            form[key] = value
         else:
             emit(key, value)
 
