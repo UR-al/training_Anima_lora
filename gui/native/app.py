@@ -71,6 +71,7 @@ from gui.modules.arg_help import ARG_HELP  # Korean per-dest help (en fallback)
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 from gui.native.tag_sort import KEEP_TOKENS_SEPARATOR
 
+
 # --------------------------------------------------------------------------- #
 # i18n — English / 한국어. tr(s) returns the Korean string when the language is
 # "ko" and one is known, else the English text (so untranslated / deliberately
@@ -138,6 +139,29 @@ _KO = {
     "Core / hardware": "코어 / 하드웨어",
     "Web monitor": "웹 모니터",
     "More flags": "기타 플래그",
+    # schema-arg cluster headers (group boxes under each tab)
+    "misc": "기타",
+    "Precision": "정밀도",
+    "Batch & steps": "배치 & 스텝",
+    "Memory · checkpointing · offload": "메모리 · 체크포인팅 · 오프로드",
+    "Dataloader": "데이터로더",
+    "VAE / TE encode & cache": "VAE / TE 인코딩 & 캐시",
+    "Resume position": "재개 위치",
+    "Learning rate & schedule": "학습률 & 스케줄",
+    "Loss": "손실",
+    "Timestep / flow-matching": "타임스텝 / flow-matching",
+    "Noise": "노이즈",
+    "Validation": "검증",
+    "Sampling": "샘플링",
+    "Save / checkpoints": "저장 / 체크포인트",
+    "Logging": "로깅",
+    "Data / paths": "데이터 / 경로",
+    "Caption variants": "캡션 변형",
+    "Captions": "캡션",
+    "Per-layer LR": "레이어별 학습률",
+    "Cond-diff loss": "Cond-diff 손실",
+    "Functional loss": "Functional 손실",
+    "LLM adapter": "LLM 어댑터",
     # field labels
     "DiT checkpoint": "DiT 체크포인트",
     "Text encoder (Qwen3)": "텍스트 인코더 (Qwen3)",
@@ -248,6 +272,7 @@ def tr(s: str) -> str:
     """Translate a UI string to the active language (English fallback)."""
     return _KO.get(s, s) if _LANG == "ko" else s
 
+
 # --------------------------------------------------------------------------- #
 # Curated layout — (tab, [(group_title, [(dest, label, kind), …]), …]).
 # kind ∈ text | combo:<src> | tristate | bool | file | dir | scope | opthelp.
@@ -348,7 +373,11 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 [
                     ("optimizer_type", "Optimizer", "combo:optimizers"),
                     ("optimizer_args", "optimizer_args", "kvblock"),
-                    ("optimizer_args", "↳ optimizer args help", "opthelp:optimizer_type"),
+                    (
+                        "optimizer_args",
+                        "↳ optimizer args help",
+                        "opthelp:optimizer_type",
+                    ),
                 ],
             ),
             (
@@ -393,7 +422,11 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 [
                     ("loss_type", "Loss type", "combo:l2,huber,smooth_l1"),
                     ("huber_c", "Huber c", "text"),
-                    ("huber_schedule", "Huber schedule", "combo:constant,exponential,snr"),
+                    (
+                        "huber_schedule",
+                        "Huber schedule",
+                        "combo:constant,exponential,snr",
+                    ),
                     ("network_dropout", "Network dropout", "text"),
                     ("scale_weight_norms", "Scale weight norms", "text"),
                     ("max_grad_norm", "Max grad norm", "text"),
@@ -449,7 +482,13 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
         [
             (
                 "Attention",
-                [("attn_mode", "Attention mode", "combo:torch,flash,sageattn,flex,sdpa")],
+                [
+                    (
+                        "attn_mode",
+                        "Attention mode",
+                        "combo:torch,flash,sageattn,flex,sdpa",
+                    )
+                ],
             ),
         ],
     ),
@@ -475,6 +514,9 @@ _ROUTE_RULES: list[tuple[str, list[str], list[str]]] = [
             "huggingface",
             "hub_",
             "resume",
+            # save-resume cadence — a SAVE knob, NOT memory checkpointing; pin it to
+            # Folder so the Optimizer rule's bare "checkpointing" can't steal it.
+            "checkpointing_epochs",
             "logging",
             "log_tracker",
             "console_log",
@@ -615,18 +657,36 @@ def _truthy(v: object) -> bool:
 # (target dest, predicate(driver values) → enabled, reason-when-disabled). The reason
 # is tr()'d and shown as the disabled field's tooltip so the user sees WHY it's greyed.
 _GREY_RULES: list[tuple[str, object, str]] = [
-    ("huber_c", lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
-     "active only when loss_type is huber / smooth_l1"),
-    ("huber_schedule", lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
-     "active only when loss_type is huber / smooth_l1"),
-    ("sigmoid_scale", lambda v: v.get("timestep_sampling") in ("", "sigmoid"),
-     "active only when timestep_sampling is sigmoid (or blank)"),
-    ("logit_mean", lambda v: v.get("weighting_scheme") == "logit_normal",
-     "active only when weighting_scheme is logit_normal"),
-    ("logit_std", lambda v: v.get("weighting_scheme") == "logit_normal",
-     "active only when weighting_scheme is logit_normal"),
-    ("lr_scheduler_type", lambda v: not _truthy(v.get("use_constantcosine")),
-     "disabled while use_constantcosine is on (it replaces the scheduler)"),
+    (
+        "huber_c",
+        lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
+        "active only when loss_type is huber / smooth_l1",
+    ),
+    (
+        "huber_schedule",
+        lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
+        "active only when loss_type is huber / smooth_l1",
+    ),
+    (
+        "sigmoid_scale",
+        lambda v: v.get("timestep_sampling") in ("", "sigmoid"),
+        "active only when timestep_sampling is sigmoid (or blank)",
+    ),
+    (
+        "logit_mean",
+        lambda v: v.get("weighting_scheme") == "logit_normal",
+        "active only when weighting_scheme is logit_normal",
+    ),
+    (
+        "logit_std",
+        lambda v: v.get("weighting_scheme") == "logit_normal",
+        "active only when weighting_scheme is logit_normal",
+    ),
+    (
+        "lr_scheduler_type",
+        lambda v: not _truthy(v.get("use_constantcosine")),
+        "disabled while use_constantcosine is on (it replaces the scheduler)",
+    ),
 ]
 # Driver dests whose change re-evaluates the rules above + the subset-column greying.
 _GREY_DRIVERS = [
@@ -853,7 +913,9 @@ class MainWindow(QMainWindow):
                 grid.setColumnStretch(2, 1)  # description column absorbs the width
                 rows = sorted(by_cluster[cluster], key=lambda a: a.get("dest") or "")
                 for r, arg in enumerate(rows):
-                    lbl = QLabel(arg.get("dest") or arg.get("flag"))  # arg name: English
+                    lbl = QLabel(
+                        arg.get("dest") or arg.get("flag")
+                    )  # arg name: English
                     fw = self._build_adv_field(arg)
                     fw.setMaximumWidth(200)
                     # Description in Korean when available (ARG_HELP), else the English
@@ -899,7 +961,9 @@ class MainWindow(QMainWindow):
             form.addRow(label, e)
         # Default ON (privacy): sample images otherwise leave the machine to
         # Anthropic + OpenAI. The user opts in to sending them by unchecking this.
-        no_img = QCheckBox("Don't send sample images (privacy — they go to Anthropic+OpenAI)")
+        no_img = QCheckBox(
+            "Don't send sample images (privacy — they go to Anthropic+OpenAI)"
+        )
         no_img.setChecked(True)
         self._watch["watch_no_images"] = no_img
         form.addRow(no_img)
@@ -942,7 +1006,9 @@ class MainWindow(QMainWindow):
             w = self._build_field(dest, kind)
             # Path pickers / args-help / scope span the full width; the compact fields
             # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
-            if kind in ("file", "dir", "scope", "kvblock") or kind.startswith("opthelp"):
+            if kind in ("file", "dir", "scope", "kvblock") or kind.startswith(
+                "opthelp"
+            ):
                 if c != 0:
                     r += 1
                     c = 0
@@ -2077,9 +2143,9 @@ class MainWindow(QMainWindow):
 # dark surface instead of the default OS grey.
 # ──────────────────────────────────────────────────────────────────────────── #
 _C = {
-    "bg": "#0A0A0A",      # window / tab pages
-    "card": "#141414",    # group boxes
-    "input": "#1C1C1C",   # inputs / buttons
+    "bg": "#0A0A0A",  # window / tab pages
+    "card": "#141414",  # group boxes
+    "input": "#1C1C1C",  # inputs / buttons
     "raised": "#242424",  # hover
     "border": "#2A2A2A",
     "accent": "#FACC15",  # Gemini gold

@@ -528,9 +528,45 @@ _ARG_CLUSTERS = [
             "t_max",
         ],
     ),
+    ("Noise", ["ip_noise"]),
     ("Validation", ["validation", "validate", "cmmd", "max_validation"]),
     ("Sampling", ["sample"]),
+    # Folder-tab catch-alls, split out of the old single (misc) dump so related
+    # knobs sit under a header. "save" is broad (catches every save_* cadence
+    # knob); checkpointing_epochs is a save cadence (it's routed to Folder, not a
+    # memory knob — the bare "checkpointing" memory cluster above uses the longer
+    # gradient_/cpu_/unsloth_ prefixes so it can't steal it).
+    (
+        "Save / checkpoints",
+        ["save", "output_config", "checkpointing_epochs"],
+    ),
+    # Logging knobs (console/tracker/prefix) — Folder tab, per user.
+    ("Logging", ["console_log", "log_prefix", "log_tracker", "logging", "wandb"]),
+    (
+        "Data / paths",
+        [
+            "train_data_dir",
+            "reg_data_dir",
+            "in_json",
+            "tokenizer_cache",
+            "huggingface",
+            "lora_path",
+        ],
+    ),
+    # Subset-tab captions. "Caption variants" MUST precede "Captions" so
+    # use_shuffled_caption_variants* lands with its own group, not the generic one.
+    ("Caption variants", ["use_shuffled"]),
+    ("Captions", ["caption", "weighted_caption"]),
+    # anima_lora-tab sub-groups, split out of its big (misc) dump. "BYG" precedes
+    # "EMA" so byg_ema_decay groups with the BYG knobs (not the generic EMA box).
+    ("Per-layer LR", ["self_attn_lr", "cross_attn_lr", "mlp_lr", "mod_lr"]),
+    ("BYG (Be-Your-Gaussian)", ["byg"]),
     ("EMA", ["ema"]),
+    ("Cond-diff loss", ["cond_diff"]),
+    ("VR control-variate", ["vr_"]),
+    ("Functional loss", ["functional", "inversion"]),
+    ("EasyControl", ["easycontrol"]),
+    ("LLM adapter", ["llm_adapter"]),
 ]
 
 
@@ -973,7 +1009,9 @@ def _slow_options_sig() -> str:
         ROOT / "train.py",
         ROOT / "library" / "config" / "cli_args.py",
         ROOT / "library" / "anima" / "training.py",  # owns add_anima_training_arguments
-        Path(__file__).resolve(),  # this module owns list_arg_groups / optimizer_arg_help
+        Path(
+            __file__
+        ).resolve(),  # this module owns list_arg_groups / optimizer_arg_help
         ROOT / "custom_scheduler" / "LoraEasyCustomOptimizer",
     ]
     sig = {"v": _CACHE_VERSION}
