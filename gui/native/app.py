@@ -347,6 +347,38 @@ _SUBSET_BOOL_COLS = {"flip_aug", "random_crop"}
 _SCOPE_FLAGS = {"network_train_unet_only", "network_train_text_encoder_only"}
 
 
+def _truthy(v: object) -> bool:
+    return bool(v) and str(v).lower() not in ("false", "0", "")
+
+
+# Conflict / dependency greying — ported from the Gradio panel's _interactive_states.
+# (target dest, predicate(driver values) → enabled). A greyed target is disabled AND
+# excluded from the launch command (its value defers to the config chain).
+_GREY_RULES: list[tuple[str, object]] = [
+    ("huber_c", lambda v: v.get("loss_type") in ("huber", "smooth_l1")),
+    ("huber_schedule", lambda v: v.get("loss_type") in ("huber", "smooth_l1")),
+    ("sigmoid_scale", lambda v: v.get("timestep_sampling") in ("", "sigmoid")),
+    ("logit_mean", lambda v: v.get("weighting_scheme") == "logit_normal"),
+    ("logit_std", lambda v: v.get("weighting_scheme") == "logit_normal"),
+    ("lr_scheduler_type", lambda v: not _truthy(v.get("use_constantcosine"))),
+]
+# Driver dests whose change re-evaluates the rules above + the subset-column greying.
+_GREY_DRIVERS = [
+    "loss_type",
+    "timestep_sampling",
+    "weighting_scheme",
+    "use_constantcosine",
+    "use_vae_cache",
+    "use_text_cache",
+]
+# Subset table columns greyed by a cache driver (live-encoding-only knobs are inert
+# once the cache is on): (col_key, driver_dest).
+_SUBSET_GREY = [
+    ("random_crop", "use_vae_cache"),
+    ("caption_dropout_rate", "use_text_cache"),
+]
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -357,6 +389,7 @@ class MainWindow(QMainWindow):
         self._setters: dict[str, object] = {}
         self._adv: list[tuple[dict, object]] = []
         self._scope: QComboBox | None = None
+        self._widgets: dict[str, QWidget] = {}  # dest → editable widget (for greying)
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -379,6 +412,9 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         self.setCentralWidget(splitter)
+
+        self._wire_greying()
+        self._apply_greying()
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
@@ -450,15 +486,15 @@ class MainWindow(QMainWindow):
         if kind == "bool":
             cb = QCheckBox()
             self._getters[dest] = lambda c=cb: c.isChecked()
-            self._setters[dest] = lambda v, c=cb: c.setChecked(
-                bool(v) and str(v).lower() not in ("false", "0", "")
-            )
+            self._setters[dest] = lambda v, c=cb: c.setChecked(_truthy(v))
+            self._widgets[dest] = cb
             return cb
         if kind == "tristate":
             combo = QComboBox()
             combo.addItems(["", "on", "off"])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
+            self._widgets[dest] = combo
             return combo
         if kind.startswith("combo:"):
             src = kind.split(":", 1)[1]
@@ -469,10 +505,12 @@ class MainWindow(QMainWindow):
             combo.addItems([str(x) for x in (items or [])])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
+            self._widgets[dest] = combo
             return combo
         edit = QLineEdit()
         self._getters[dest] = lambda e=edit: e.text().strip()
         self._setters[dest] = lambda v, e=edit: e.setText(str(v or ""))
+        self._widgets[dest] = edit
         if kind in ("file", "dir"):
             row = QWidget()
             hb = QHBoxLayout(row)
@@ -533,6 +571,7 @@ class MainWindow(QMainWindow):
                     ),
                 )
             )
+            self._widgets[arg.get("dest") or ""] = combo
             return combo
         if arg.get("is_bool"):
             cb = QCheckBox()
@@ -547,6 +586,7 @@ class MainWindow(QMainWindow):
                     ),
                 )
             )
+            self._widgets[arg.get("dest") or ""] = cb
             return cb
         if arg.get("choices"):
             combo = QComboBox()
@@ -569,6 +609,7 @@ class MainWindow(QMainWindow):
                     ),
                 )
             )
+            self._widgets[arg.get("dest") or ""] = combo
             return combo
         edit = QLineEdit()
         edit.setToolTip(help_txt)
@@ -587,7 +628,55 @@ class MainWindow(QMainWindow):
                 ),
             )
         )
+        self._widgets[arg.get("dest") or ""] = edit
         return edit
+
+    # ----- greying (conflict / dependency) -------------------------------- #
+    def _widget_value(self, dest: str) -> object:
+        w = self._widgets.get(dest)
+        if isinstance(w, QCheckBox):
+            return w.isChecked()
+        if isinstance(w, QComboBox):
+            return w.currentText().strip()
+        if isinstance(w, QLineEdit):
+            return w.text().strip()
+        return None
+
+    def _wire_greying(self) -> None:
+        for dest in _GREY_DRIVERS:
+            w = self._widgets.get(dest)
+            if isinstance(w, QComboBox):
+                w.currentTextChanged.connect(lambda *_: self._apply_greying())
+            elif isinstance(w, QLineEdit):
+                w.textChanged.connect(lambda *_: self._apply_greying())
+            elif isinstance(w, QCheckBox):
+                w.toggled.connect(lambda *_: self._apply_greying())
+
+    def _apply_greying(self) -> None:
+        vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}
+        for target, pred in _GREY_RULES:
+            w = self._widgets.get(target)
+            if w is not None:
+                w.setEnabled(bool(pred(vals)))
+        cols = {k: i for i, (k, _) in enumerate(_SUBSET_COLS)}
+        for col_key, driver in _SUBSET_GREY:
+            enabled = not _truthy(vals.get(driver))
+            ci = cols[col_key]
+            for r in range(self._subset_table.rowCount()):
+                self._set_cell_enabled(r, ci, enabled, col_key in _SUBSET_BOOL_COLS)
+
+    def _set_cell_enabled(
+        self, row: int, col: int, enabled: bool, checkable: bool
+    ) -> None:
+        item = self._subset_table.item(row, col)
+        if item is None:
+            return
+        flags = Qt.ItemIsSelectable
+        if enabled:
+            flags |= Qt.ItemIsEnabled | (
+                Qt.ItemIsUserCheckable if checkable else Qt.ItemIsEditable
+            )
+        item.setFlags(flags)
 
     def _build_extra_flags_box(self) -> QGroupBox:
         gb = QGroupBox("Raw extra flags")
@@ -645,6 +734,8 @@ class MainWindow(QMainWindow):
             else:
                 item = QTableWidgetItem(str(values.get(key, "") or ""))
             self._subset_table.setItem(r, c, item)
+        if hasattr(self, "_widgets"):
+            self._apply_greying()  # grey the new row's cache-gated cells
 
     def _subset_add_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -666,8 +757,8 @@ class MainWindow(QMainWindow):
             row: dict = {}
             for c, (key, _) in enumerate(_SUBSET_COLS):
                 item = self._subset_table.item(r, c)
-                if item is None:
-                    continue
+                if item is None or not (item.flags() & Qt.ItemIsEnabled):
+                    continue  # greyed cell (cache-gated) → inert
                 if key in _SUBSET_BOOL_COLS:
                     if item.checkState() == Qt.Checked:
                         row[key] = True
@@ -831,12 +922,24 @@ class MainWindow(QMainWindow):
         return panel
 
     # ----- form <-> dict -------------------------------------------------- #
+    def _enabled(self, dest: str) -> bool:
+        # A greyed (disabled) field is inert: excluded from the command so its
+        # value defers to the config chain (matches the Gradio panel).
+        w = self._widgets.get(dest)
+        return w is None or w.isEnabled()
+
     def _collect(self) -> dict:
-        form = {dest: get() for dest, get in self._getters.items()}
+        form = {
+            dest: get() for dest, get in self._getters.items() if self._enabled(dest)
+        }
         subsets = self._collect_subsets()
         if subsets:
             form["subsets"] = subsets
-        adv = [item for _a, g in self._adv if (item := g())]
+        adv = [
+            item
+            for a, g in self._adv
+            if self._enabled(a.get("dest") or "") and (item := g())
+        ]
         if self._scope is not None:
             idx = self._scope.currentIndex()
             if idx == 1:
@@ -872,6 +975,7 @@ class MainWindow(QMainWindow):
             for s in subsets:
                 if isinstance(s, dict):
                     self._subset_add_row(s)
+        self._apply_greying()  # re-evaluate after a config load changes drivers
 
     # ----- actions -------------------------------------------------------- #
     def _do_preview(self) -> None:
