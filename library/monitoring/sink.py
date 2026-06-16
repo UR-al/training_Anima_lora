@@ -226,6 +226,15 @@ class MonitorSink:
     ) -> None:
         if self._inner is not None:
             self._inner.run_end(status=status, final_step=final_step, error=error)
+        # Auto-save a portable snapshot of the finished run ("save game" → replay
+        # offline / compare). Guarded so it can never break training teardown.
+        if self._started and self._output_dir:
+            try:
+                from .train_monitor import save_run_snapshot
+
+                save_run_snapshot(self._output_dir)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("monitor snapshot failed: %s", exc)
 
     def close(self) -> None:
         if self._inner is not None:

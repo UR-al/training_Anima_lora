@@ -562,7 +562,7 @@
     <!-- HEADER -->
     <header class="header">
         <div class="header-left">
-            <div class="logo">ANIMA<span>//</span>TRAIN</div>
+            <div class="logo" id="logo">ANIMA<span>//</span>TRAIN</div>
             <div class="status-badge">
                 <div class="status-dot"></div>
                 <span id="status-text">STANDBY</span>
@@ -578,7 +578,7 @@
         <div class="stat-cell">
             <div class="stat-label">Epoch</div>
             <div class="stat-value" id="epoch">0</div>
-            <div class="stat-sub">of <span id="total-epochs">--</span></div>
+            <div class="stat-sub">of <span id="total-epochs">--</span> · <span id="steps-per-epoch">--</span>/ep</div>
         </div>
         <div class="stat-cell">
             <div class="stat-label">Step</div>
@@ -629,6 +629,18 @@
                             <input type="checkbox" id="show-raw" checked>
                             <label for="show-raw" style="cursor:pointer">Raw</label>
                         </div>
+                        <div class="control-group">
+                            <label class="control-label" for="loss-color">Color</label>
+                            <input type="color" id="loss-color" value="#39ff14" title="EMA line color">
+                        </div>
+                        <div class="control-group">
+                            <input type="checkbox" id="log-scale">
+                            <label for="log-scale" style="cursor:pointer">Log</label>
+                        </div>
+                        <div class="control-group">
+                            <button id="export-csv" title="Download loss/LR CSV" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:4px; padding:1px 6px; cursor:pointer; font-size:0.7rem;">CSV</button>
+                            <button id="export-png" title="Download loss chart PNG" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:4px; padding:1px 6px; cursor:pointer; font-size:0.7rem;">PNG</button>
+                        </div>
                     </div>
                 </div>
                 <div class="chart-legend">
@@ -646,6 +658,19 @@
                 <span class="chart-title">Learning Rate</span>
                 <div class="chart-legend">
                     <div class="legend-item"><div class="legend-dot lr"></div><span>LR</span></div>
+                    <input type="color" id="lr-color" value="#ff6b35" title="LR line color" style="margin-left:8px;">
+                </div>
+                <div id="lr-ctrl" style="display:flex; align-items:center; gap:5px; margin-left:auto; font-size:0.72rem; color:var(--text-secondary); flex-wrap:wrap;" title="Runtime LR control (needs --monitor)">
+                    <span>scale <strong id="lr-scale-val" style="color:var(--accent);">1.00</strong></span>
+                    <input type="number" id="lr-scale-input" step="0.05" min="0" placeholder="set" title="Type an exact LR scale, then Set / Enter" style="width:5.5ch; background:var(--bg-primary); color:var(--text-primary); border:1px solid var(--border); border-radius:4px; padding:1px 3px;">
+                    <button id="lr-set" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">set</button>
+                    <button id="lr-half" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">×0.5</button>
+                    <button id="lr-double" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">×2</button>
+                    <span style="color:var(--text-dim);">| decay</span>
+                    <input type="number" id="lr-decay-k" min="1" placeholder="steps" title="Cosine-decay over N steps" style="width:6ch; background:var(--bg-primary); color:var(--text-primary); border:1px solid var(--border); border-radius:4px; padding:1px 3px;">
+                    <input type="number" id="lr-decay-floor" step="0.05" min="0" placeholder="floor" title="Floor scale (0 = to zero)" style="width:5.5ch; background:var(--bg-primary); color:var(--text-primary); border:1px solid var(--border); border-radius:4px; padding:1px 3px;">
+                    <button id="lr-decay" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">go</button>
+                    <button id="lr-reset" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">reset</button>
                 </div>
             </div>
             <div class="chart-container small">
@@ -658,7 +683,10 @@
     <div class="panels-grid">
         <!-- Samples -->
         <div class="panel panel-samples">
-            <div class="panel-header">Samples</div>
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Samples <span id="sample-cadence" style="color:var(--text-dim); font-weight:400; font-size:0.75rem;"></span></span>
+                <button id="open-samples-btn" title="Open the sample folder" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:5px; padding:2px 8px; cursor:pointer; font-size:0.75rem;">📁 Folder</button>
+            </div>
             <div class="panel-content">
                 <div class="samples-container" id="samples-container">
                     <!-- 缩略图网格 -->
@@ -672,6 +700,25 @@
                             <div>No preview</div>
                         </div>
                     </div>
+                    <!-- scrubber: scrub samples by step -->
+                    <div id="sample-scrubber" style="display:none; align-items:center; gap:8px; margin-top:8px;">
+                        <input type="range" id="sample-slider" min="0" max="0" value="0" style="flex:1;">
+                        <span id="sample-step-label" style="font-size:0.72rem; color:var(--text-dim); white-space:nowrap;"></span>
+                        <a id="sample-download" href="#" download title="Download this sample" style="font-size:0.85rem; text-decoration:none; color:var(--text-secondary);">⤓</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Analysis (MCP agent notes, written via post_analysis) -->
+        <div class="panel">
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>🤖 AI Analysis</span>
+                <span id="ai-status" style="color:var(--text-dim); font-weight:400; font-size:0.72rem;">MCP</span>
+            </div>
+            <div class="panel-content">
+                <div id="ai-notes" style="font-size:0.8rem; display:flex; flex-direction:column; gap:6px;">
+                    <div style="color:var(--text-dim);">No AI notes yet — connect the MCP server (tools/anima_monitor_mcp.py) and ask your agent to analyze the run.</div>
                 </div>
             </div>
         </div>
@@ -699,6 +746,25 @@
                 </div>
             </div>
         </div>
+
+        <!-- Runs (saved snapshots → compare) -->
+        <div class="panel">
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Runs <span style="color:var(--text-dim); font-weight:400; font-size:0.72rem;">check to compare loss</span></span>
+                <button id="refresh-runs" title="Reload saved runs" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:5px; padding:2px 8px; cursor:pointer; font-size:0.75rem;">↻</button>
+            </div>
+            <div class="panel-content"><div id="runs-list" style="font-size:0.8rem;">No saved runs yet.</div></div>
+        </div>
+    </div>
+
+    <!-- RUN COMPARISON (overlay saved runs' loss) -->
+    <div class="chart-section" id="compare-section" style="display:none;">
+        <div class="chart-header">
+            <span class="chart-title">Run Comparison — loss (EMA)</span>
+        </div>
+        <div class="chart-container">
+            <canvas id="compareChart"></canvas>
+        </div>
     </div>
 
     <!-- FOOTER -->
@@ -711,6 +777,11 @@
         <div class="footer-item">Refresh: 1s</div>
         <div class="footer-item" id="connection-status">Connecting...</div>
     </footer>
+
+    <!-- Lightbox: full-res sample on click -->
+    <div id="lightbox" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; cursor:zoom-out;">
+        <img id="lightbox-img" src="" alt="" style="max-width:95vw; max-height:95vh; object-fit:contain; box-shadow:0 0 40px rgba(0,0,0,0.8);">
+    </div>
 
     <script>
         // 自动检测 API 地址：支持本地和云端训练
@@ -807,6 +878,66 @@
             // path, which is why the Y-axis looked right. Format the value explicitly.
             options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: (ctx) => 'LR: ' + (ctx.parsed.y == null ? ctx.parsed.y : Number(ctx.parsed.y).toExponential(3)) } } } }
         });
+
+        // ==================== Run comparison (saved snapshots) ====================
+        const COMPARE_COLORS = ['#39ff14','#ff6b35','#36d1ff','#c084fc','#facc15','#fb7185','#34d399','#60a5fa'];
+        const compareRuns = {};
+        const compareChart = new Chart(document.getElementById('compareChart'), {
+            type: 'line',
+            data: { datasets: [] },
+            options: {
+                ...chartDefaults,
+                parsing: false,
+                plugins: { ...chartDefaults.plugins, legend: { display: true, labels: { color: '#888', font: { family: "'JetBrains Mono'", size: 10 }, boxWidth: 12, boxHeight: 8 } } },
+                scales: {
+                    x: { type: 'linear', grid: chartDefaults.scales.x.grid, ticks: chartDefaults.scales.x.ticks },
+                    y: chartDefaults.scales.y
+                }
+            }
+        });
+
+        async function loadRuns() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/runs?_=${Date.now()}`);
+                const runs = await resp.json();
+                const el = document.getElementById('runs-list');
+                if (!runs.length) { el.innerHTML = 'No saved runs yet.'; return; }
+                el.innerHTML = runs.map(r => {
+                    const loss = (r.final_loss != null) ? Number(r.final_loss).toFixed(4) : '--';
+                    const checked = compareRuns[r.id] ? 'checked' : '';
+                    const name = (r.run || r.id);
+                    return `<label style="display:flex; align-items:center; gap:6px; padding:3px 0; cursor:pointer;">
+                        <input type="checkbox" class="run-check" data-id="${r.id}" data-run="${name.replace(/"/g,'')}" ${checked}>
+                        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.saved_at||''}">${name}</span>
+                        <span style="color:var(--text-dim);">${loss}</span>
+                    </label>`;
+                }).join('');
+                el.querySelectorAll('.run-check').forEach(cb => cb.addEventListener('change', e =>
+                    toggleRun(e.target.dataset.id, e.target.dataset.run, e.target.checked)));
+            } catch (e) { /* offline */ }
+        }
+
+        async function toggleRun(id, run, on) {
+            if (on) {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/run/${encodeURIComponent(id)}/state?_=${Date.now()}`);
+                    const st = await resp.json();
+                    let losses = downsample((st.losses || []).map(l => ({ step: l.step, loss: l.loss })), 1000);
+                    const ema = calcEMA(losses.map(l => l.loss), 0.05);
+                    const data = losses.map((l, i) => ({ x: l.step, y: ema[i] }));
+                    const color = COMPARE_COLORS[Object.keys(compareRuns).length % COMPARE_COLORS.length];
+                    compareChart.data.datasets.push({ runId: id, label: run, data, borderColor: color, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 });
+                    compareRuns[id] = true;
+                } catch (e) {}
+            } else {
+                const idx = compareChart.data.datasets.findIndex(d => d.runId === id);
+                if (idx >= 0) compareChart.data.datasets.splice(idx, 1);
+                delete compareRuns[id];
+            }
+            document.getElementById('compare-section').style.display =
+                compareChart.data.datasets.length ? 'block' : 'none';
+            compareChart.update();
+        }
 
         function calcEMA(data, alpha) {
             if (!data.length) return [];
@@ -920,6 +1051,19 @@
                 }
                 if (data.total_steps) document.getElementById('total-steps').textContent = data.total_steps;
 
+                // Title = run name; steps/epoch (sub-line) + sample cadence (Samples header)
+                const cfg = data.config || {};
+                if (cfg.run) document.getElementById('logo').textContent = cfg.run;
+                const tEpochs = cfg.total_epochs || 0;
+                if (data.total_steps && tEpochs) {
+                    document.getElementById('steps-per-epoch').textContent =
+                        Math.round(data.total_steps / tEpochs);
+                }
+                const cad = cfg.sample_every_n_steps
+                    ? `every ${cfg.sample_every_n_steps} steps`
+                    : (cfg.sample_every_n_epochs ? `every ${cfg.sample_every_n_epochs} ep` : '');
+                document.getElementById('sample-cadence').textContent = cad ? `(${cad})` : '';
+
                 // Charts
                 updateCharts(data);
 
@@ -947,6 +1091,19 @@
                     updateSamplesGrid(data.samples);
                 }
                 
+                // Best (min) loss / val readout (best marker)
+                const _losses = data.losses || [];
+                const _vals = data.val_losses || [];
+                const bestLoss = _losses.length ? _losses.reduce((a, b) => b.loss < a.loss ? b : a) : null;
+                const bestVal = _vals.length ? _vals.reduce((a, b) => b.loss < a.loss ? b : a) : null;
+                const analysisEl = document.getElementById('analysis');
+                if (analysisEl && (bestLoss || bestVal)) {
+                    let rows = '';
+                    if (bestLoss) rows += `<div class="analysis-row"><span class="analysis-label">Best loss</span><span class="analysis-value">${Number(bestLoss.loss).toFixed(4)} @ ${bestLoss.step}</span></div>`;
+                    if (bestVal) rows += `<div class="analysis-row"><span class="analysis-label">Best val</span><span class="analysis-value">${Number(bestVal.loss).toFixed(4)} @ ${bestVal.step}</span></div>`;
+                    analysisEl.innerHTML = rows;
+                }
+
                 // Config
                 if (data.config && Object.keys(data.config).length) {
                     const html = Object.entries(data.config).map(([k, v]) => `
@@ -969,6 +1126,127 @@
         setInterval(updateData, 1000);
         updateData();
 
+        // ==================== Chart color pickers (persisted) ====================
+        function applyChartColor(chart, dsIndex, color) {
+            chart.data.datasets[dsIndex].borderColor = color;
+            chart.update('none');
+        }
+        const lossColor = document.getElementById('loss-color');
+        const lrColor = document.getElementById('lr-color');
+        const savedLoss = localStorage.getItem('animaLossColor');
+        const savedLr = localStorage.getItem('animaLrColor');
+        if (savedLoss) { lossColor.value = savedLoss; applyChartColor(lossChart, 1, savedLoss); }
+        if (savedLr) { lrColor.value = savedLr; applyChartColor(lrChart, 0, savedLr); }
+        lossColor.addEventListener('input', e => {
+            applyChartColor(lossChart, 1, e.target.value);
+            localStorage.setItem('animaLossColor', e.target.value);
+        });
+        lrColor.addEventListener('input', e => {
+            applyChartColor(lrChart, 0, e.target.value);
+            localStorage.setItem('animaLrColor', e.target.value);
+        });
+
+        // ==================== Open sample folder (local server) ====================
+        document.getElementById('open-samples-btn').addEventListener('click', async () => {
+            try { await fetch(`${API_BASE}/open-samples`); } catch (e) {}
+        });
+
+        // ==================== Runs browser / compare ====================
+        document.getElementById('refresh-runs').addEventListener('click', loadRuns);
+        loadRuns();
+
+        // ==================== Runtime LR control ====================
+        async function lrCtrl(query) {
+            try {
+                const r = await fetch(`${API_BASE}/api/control${query}&_=${Date.now()}`);
+                return await r.json();
+            } catch (e) { return null; }
+        }
+        function showScale(d) {
+            if (d && d.effective_scale != null)
+                document.getElementById('lr-scale-val').textContent = Number(d.effective_scale).toFixed(2);
+        }
+        async function setScale() {
+            const v = parseFloat(document.getElementById('lr-scale-input').value);
+            if (!isNaN(v) && v >= 0) showScale(await lrCtrl(`?lr_scale=${v}`));
+        }
+        document.getElementById('lr-set').addEventListener('click', setScale);
+        document.getElementById('lr-scale-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') setScale();
+        });
+        document.getElementById('lr-half').addEventListener('click', async () => {
+            const d = await lrCtrl('?');
+            const cur = (d && d.control && d.control.lr_scale) || 1.0;
+            showScale(await lrCtrl(`?lr_scale=${cur * 0.5}`));
+        });
+        document.getElementById('lr-double').addEventListener('click', async () => {
+            const d = await lrCtrl('?');
+            const cur = (d && d.control && d.control.lr_scale) || 1.0;
+            showScale(await lrCtrl(`?lr_scale=${cur * 2}`));
+        });
+        document.getElementById('lr-reset').addEventListener('click', async () => showScale(await lrCtrl('?reset=1')));
+        document.getElementById('lr-decay').addEventListener('click', async () => {
+            const k = parseInt(document.getElementById('lr-decay-k').value || '500', 10);
+            const floor = parseFloat(document.getElementById('lr-decay-floor').value || '0');
+            if (k > 0) showScale(await lrCtrl(`?decay=1&k=${k}&floor=${isNaN(floor) ? 0 : floor}`));
+        });
+        setInterval(async () => showScale(await lrCtrl('?')), 3000);
+        lrCtrl('?').then(showScale);
+
+        // ==================== AI Analysis notes (MCP write-back) ====================
+        async function loadNotes() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/notes?_=${Date.now()}`);
+                const notes = await resp.json();
+                const el = document.getElementById('ai-notes');
+                const st = document.getElementById('ai-status');
+                if (!notes.length) { if (st) st.textContent = 'MCP · idle'; return; }
+                if (st) st.textContent = `MCP · ${notes.length}`;
+                el.innerHTML = notes.slice().reverse().map(n =>
+                    `<div style="border-left:2px solid var(--accent); padding-left:8px;">
+                        <div style="color:var(--text-dim); font-size:0.7rem;">${n.ts || ''} · ${n.author || 'ai'}</div>
+                        <div>${String(n.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>
+                    </div>`).join('');
+            } catch (e) { /* offline */ }
+        }
+        setInterval(loadNotes, 3000);
+        loadNotes();
+
+        // ==================== Log scale + export ====================
+        document.getElementById('log-scale').addEventListener('change', e => {
+            lossChart.options.scales.y = { ...chartDefaults.scales.y, type: e.target.checked ? 'logarithmic' : 'linear' };
+            lossChart.update();
+        });
+        document.getElementById('export-png').addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = lossChart.toBase64Image(); a.download = 'loss.png'; a.click();
+        });
+        document.getElementById('export-csv').addEventListener('click', () => {
+            const d = lastData || {};
+            let csv = 'step,loss\n' + (d.losses || []).map(l => `${l.step},${l.loss}`).join('\n');
+            csv += '\n\nstep,lr\n' + (d.lr_history || []).map(l => `${l.step},${l.lr}`).join('\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            a.download = 'metrics.csv'; a.click();
+        });
+
+        // ==================== Sample scrubber ====================
+        document.getElementById('sample-slider').addEventListener('input', e => {
+            activeIndex = parseInt(e.target.value, 10) || 0;
+            showPreview(activeIndex);
+            document.querySelectorAll('.sample-thumb').forEach((t, i) =>
+                t.classList.toggle('active', i === activeIndex));
+        });
+
+        // ==================== Sample lightbox (click → full-res) ====================
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        function openLightbox(src) { lightboxImg.src = src; lightbox.style.display = 'flex'; }
+        lightbox.addEventListener('click', () => { lightbox.style.display = 'none'; lightboxImg.src = ''; });
+        document.getElementById('sample-preview').addEventListener('click', (e) => {
+            if (e.target.tagName === 'IMG') openLightbox(e.target.src);
+        });
+
         // ==================== 缩略图网格 ====================
         let currentSamples = [];
         let activeIndex = 0;
@@ -986,6 +1264,17 @@
                 activeIndex = Math.min(activeIndex, list.length - 1);
             } else {
                 activeIndex = 0;
+            }
+
+            // scrubber range
+            const scrubber = document.getElementById('sample-scrubber');
+            const slider = document.getElementById('sample-slider');
+            if (list.length > 0) {
+                scrubber.style.display = 'flex';
+                slider.max = list.length - 1;
+                slider.value = activeIndex;
+            } else {
+                scrubber.style.display = 'none';
             }
             
             // 生成缩略图
@@ -1039,11 +1328,15 @@
             const imgUrl = `${API_BASE}/samples/${sample.path.split(/[\\\\/]/).pop()}`;
             
             preview.innerHTML = `
-                <img src="${imgUrl}" alt="Step ${sample.step}">
+                <img src="${imgUrl}" alt="Step ${sample.step}" style="cursor:zoom-in" title="Click to enlarge">
                 <div class="sample-preview-label">
                     Step <strong>${sample.step}</strong>
                 </div>
             `;
+            const lbl = document.getElementById('sample-step-label');
+            if (lbl) lbl.textContent = `Step ${sample.step} (${index + 1}/${currentSamples.length})`;
+            const dl = document.getElementById('sample-download');
+            if (dl) { dl.href = imgUrl; dl.download = `sample_step${sample.step}.png`; }
         }
     </script>
 </body>

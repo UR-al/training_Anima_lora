@@ -1668,8 +1668,9 @@ def _autobatch_argv(form: dict):
     if bts and bts != "0":
         argv += ["--blocks_to_swap", bts]
     if form.get("ab_auto_swap"):
-        # OOM at the base swap → auto-escalate to the minimal blocks_to_swap that fits.
-        argv += ["--max-swap", "26"]
+        # OOM at the base swap → auto-escalate to the minimal blocks_to_swap that
+        # fits, capped at ab_max_swap (the user-specified max N; default 26).
+        argv += ["--max-swap", str(form.get("ab_max_swap") or "26").strip()]
     if form.get("ab_compile"):
         argv += ["--compile"]
     if form.get("ab_auto_budget"):
@@ -1764,6 +1765,36 @@ def run_masking(form: dict) -> dict:
     if dl:
         env["MIT_DILATE"] = dl
     return _spawn_util(["tasks.py", "mask"], "mask", env)
+
+
+# Preprocess step → tasks.py subcommand (resize → VAE/TE/PE/pooled caches; the
+# `all` path runs the full resize→cache pipeline; reconcile drops stale caches).
+_PREPROCESS_STEPS = {
+    "all": "preprocess",
+    "resize": "preprocess-resize",
+    "vae": "preprocess-vae",
+    "te": "preprocess-te",
+    "pe": "preprocess-pe",
+    "pooled": "preprocess-pooled",
+    "reconcile": "preprocess-reconcile",
+}
+
+
+def run_tool(argv: list[str], name: str) -> dict:
+    """Run a repo ``tools/<x>.py`` (or any program) argv as a direct subprocess —
+    public wrapper over :func:`_spawn_util` for the GUI's diffusion-pipe tools
+    (strip-lora-layers, llm-adapter surgery). ``argv[0]`` is repo-relative."""
+    return _spawn_util(argv, name)
+
+
+def run_preprocess(step: str) -> dict:
+    """Run a ``tasks.py preprocess[-<step>]`` subcommand as a direct subprocess
+    (mirrors :func:`run_masking` / :func:`bench_autobatch` — training-exclusive,
+    output captured to the live-log path). ``step`` is a key of _PREPROCESS_STEPS."""
+    sub = _PREPROCESS_STEPS.get(step)
+    if not sub:
+        return {"ok": False, "error": f"unknown preprocess step: {step!r}"}
+    return _spawn_util(["tasks.py", sub], "preprocess")
 
 
 def launch(form: dict) -> dict:

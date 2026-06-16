@@ -250,6 +250,11 @@ COMMANDS = {
         utilities.cmd_export_logs,
         "Dump TB scalar logs to JSON (RUN=<dir>, ALL=1 for every subrun, JSONL=1 for line-delimited)",
     ),
+    "monitor": (
+        utilities.cmd_monitor,
+        "Standalone web monitor — browse/replay saved run snapshots & compare losses "
+        "offline (no training). [--output_dir output] [--port 8766] [--no-browser]",
+    ),
     "print-config": (
         utilities.cmd_print_config,
         "Dump merged config (METHOD=<name> PRESET=<name>) with provenance",

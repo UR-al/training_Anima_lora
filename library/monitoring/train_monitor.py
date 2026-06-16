@@ -2,7 +2,12 @@
 训练监控服务器
 实时显示 loss 曲线和采样图片
 """
+
 import json
+import os
+import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -47,7 +52,17 @@ _LAST_SAVE_T = 0.0
 _STATE_MAX_POINTS = 5000
 
 
-def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, speed=None, sample_path=None, config=None, val_loss=None):
+def update_monitor(
+    loss=None,
+    lr=None,
+    epoch=None,
+    step=None,
+    total_steps=None,
+    speed=None,
+    sample_path=None,
+    config=None,
+    val_loss=None,
+):
     """更新监控状态"""
     with _LOCK:
         # 先更新 step/epoch 等，使本次写入的 loss/lr 点位正确
@@ -61,7 +76,9 @@ def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, 
             MONITOR_STATE["speed"] = speed
 
         if loss is not None:
-            MONITOR_STATE["losses"].append({"step": MONITOR_STATE["step"], "loss": loss, "time": time.time()})
+            MONITOR_STATE["losses"].append(
+                {"step": MONITOR_STATE["step"], "loss": loss, "time": time.time()}
+            )
             # 保留最近 50000 个点（支持长时间训练）
             if len(MONITOR_STATE["losses"]) > 50000:
                 MONITOR_STATE["losses"] = MONITOR_STATE["losses"][-50000:]
@@ -70,16 +87,26 @@ def update_monitor(loss=None, lr=None, epoch=None, step=None, total_steps=None, 
         # dashboard can overlay it on the loss chart. The step used is whatever the
         # validation log carried (the global_step at the val pass).
         if val_loss is not None:
-            MONITOR_STATE["val_losses"].append({"step": MONITOR_STATE["step"], "loss": val_loss, "time": time.time()})
+            MONITOR_STATE["val_losses"].append(
+                {"step": MONITOR_STATE["step"], "loss": val_loss, "time": time.time()}
+            )
             if len(MONITOR_STATE["val_losses"]) > 50000:
                 MONITOR_STATE["val_losses"] = MONITOR_STATE["val_losses"][-50000:]
 
         if lr is not None:
-            MONITOR_STATE["lr_history"].append({"step": MONITOR_STATE["step"], "lr": lr})
+            MONITOR_STATE["lr_history"].append(
+                {"step": MONITOR_STATE["step"], "lr": lr}
+            )
             if len(MONITOR_STATE["lr_history"]) > 50000:
                 MONITOR_STATE["lr_history"] = MONITOR_STATE["lr_history"][-50000:]
         if sample_path is not None:
-            MONITOR_STATE["samples"].append({"path": str(sample_path), "step": MONITOR_STATE["step"], "time": time.time()})
+            MONITOR_STATE["samples"].append(
+                {
+                    "path": str(sample_path),
+                    "step": MONITOR_STATE["step"],
+                    "time": time.time(),
+                }
+            )
             # 只保留最近 50 张
             if len(MONITOR_STATE["samples"]) > 50:
                 MONITOR_STATE["samples"] = MONITOR_STATE["samples"][-50:]
@@ -116,6 +143,49 @@ def save_state(force=False):
         pass
 
 
+def save_run_snapshot(output_dir, run_name=None):
+    """Archive the finished run as a portable bundle under ``<output_dir>/runs/
+    <run>_<timestamp>/`` — ``state.json`` (full history), ``meta.json`` (summary),
+    and a copy of the referenced ``sample/*.png`` — so it can be re-opened offline
+    and compared against other runs even after ``<output_dir>/sample`` is cleared.
+    Returns the archive path (or None on failure)."""
+    try:
+        state = get_state(0)  # full, un-downsampled history
+        cfg = state.get("config") or {}
+        run = run_name or cfg.get("run") or "run"
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in str(run))
+        dest = Path(output_dir) / "runs" / f"{safe}_{ts}"
+        sdir = dest / "samples"
+        sdir.mkdir(parents=True, exist_ok=True)
+        src_sample = Path(output_dir) / "sample"
+        for s in state.get("samples") or []:
+            fn = Path(str(s.get("path", ""))).name
+            src = src_sample / fn
+            if fn and src.exists():
+                try:
+                    shutil.copy2(src, sdir / fn)
+                except OSError:
+                    pass
+        losses = state.get("losses") or []
+        meta = {
+            "run": run,
+            "saved_at": ts,
+            "step": state.get("step"),
+            "epoch": state.get("epoch"),
+            "total_steps": state.get("total_steps"),
+            "final_loss": losses[-1].get("loss") if losses else None,
+            "config": cfg,
+        }
+        (dest / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (dest / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        print(f"[Monitor] saved run snapshot → {dest}")
+        return str(dest)
+    except Exception as exc:  # never break training teardown
+        print(f"[Monitor] snapshot failed: {exc}")
+        return None
+
+
 def get_state(max_points: int = _STATE_MAX_POINTS):
     """获取当前状态（线程安全快照：复制顶层列表，避免读取时被并发追加）.
 
@@ -141,9 +211,18 @@ def get_state(max_points: int = _STATE_MAX_POINTS):
     return snapshot
 
 
-def restore_monitor_state(losses=None, lr_history=None, epoch=None, step=None, total_steps=None, start_time=None, config=None, val_losses=None):
+def restore_monitor_state(
+    losses=None,
+    lr_history=None,
+    epoch=None,
+    step=None,
+    total_steps=None,
+    start_time=None,
+    config=None,
+    val_losses=None,
+):
     """恢复监控状态（用于断点续训）
-    
+
     Args:
         losses: 历史 loss 列表，格式 [{"step": int, "loss": float, "time": float}, ...]
         lr_history: 历史 lr 列表，格式 [{"step": int, "lr": float}, ...]
@@ -587,17 +666,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 class MonitorHandler(SimpleHTTPRequestHandler):
     """监控服务器 Handler"""
-    
+
     def __init__(self, *args, output_dir=None, **kwargs):
         self.output_dir = output_dir or Path("./output")
         super().__init__(*args, **kwargs)
-    
+
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            
+
             # 优先使用 monitor_smooth.html
             smooth_html = Path(__file__).resolve().parent / "monitor_smooth.html"
             if smooth_html.exists():
@@ -605,7 +684,9 @@ class MonitorHandler(SimpleHTTPRequestHandler):
                     content = f.read()
                 self.wfile.write(content.encode("utf-8"))
             else:
-                print(f"[Monitor] Warning: smooth UI not found at {smooth_html}, using fallback.")
+                print(
+                    f"[Monitor] Warning: smooth UI not found at {smooth_html}, using fallback."
+                )
                 self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
         elif self.path.startswith("/api/state"):
             # 支持 query 参数：max_points（对 losses/lr_history 降采样，降低传输和前端渲染压力）
@@ -626,7 +707,9 @@ class MonitorHandler(SimpleHTTPRequestHandler):
                 if "losses" in state:
                     state["losses"] = _downsample_uniform(state["losses"], max_points)
                 if "lr_history" in state:
-                    state["lr_history"] = _downsample_uniform(state["lr_history"], max_points)
+                    state["lr_history"] = _downsample_uniform(
+                        state["lr_history"], max_points
+                    )
             self.wfile.write(json.dumps(state).encode("utf-8"))
         elif self.path.startswith("/samples/"):
             # 提供采样图片. anima-lora 把样图存到 <output_dir>/sample/（单数），
@@ -643,17 +726,131 @@ class MonitorHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(f.read())
             else:
                 self.send_error(404)
+        elif self.path.startswith("/open-samples"):
+            # Local dashboard → open the sample dir in the OS file browser.
+            d = self.output_dir / "sample"
+            if not d.exists():
+                d = self.output_dir / "samples"
+            ok = False
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                if sys.platform.startswith("win"):
+                    os.startfile(str(d))  # noqa: S606
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(d)])
+                else:
+                    subprocess.Popen(["xdg-open", str(d)])
+                ok = True
+            except Exception:
+                ok = False
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": ok, "path": str(d)}).encode("utf-8"))
+        elif self.path.startswith("/api/runs"):
+            # List saved run archives (newest first) for the Runs browser / compare.
+            runs = []
+            runs_dir = self.output_dir / "runs"
+            if runs_dir.is_dir():
+                for sub in sorted(runs_dir.iterdir(), reverse=True):
+                    mf = sub / "meta.json"
+                    if mf.is_file():
+                        try:
+                            m = json.loads(mf.read_text(encoding="utf-8"))
+                            m["id"] = sub.name
+                            runs.append(m)
+                        except Exception:
+                            pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(runs).encode("utf-8"))
+        elif self.path.startswith("/api/run/"):
+            # /api/run/<id>/state  |  /api/run/<id>/sample/<file>
+            parts = self.path.split("?", 1)[0].strip("/").split("/")
+            runs_root = (self.output_dir / "runs").resolve()
+            served = False
+            if len(parts) >= 4 and ".." not in parts:
+                run_dir = runs_root / parts[2]
+                try:
+                    inside = str(run_dir.resolve()).startswith(str(runs_root))
+                except Exception:
+                    inside = False
+                if inside and parts[3] == "state":
+                    sf = run_dir / "state.json"
+                    if sf.is_file():
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Cache-Control", "no-cache")
+                        self.end_headers()
+                        self.wfile.write(sf.read_bytes())
+                        served = True
+                elif inside and parts[3] == "sample" and len(parts) >= 5:
+                    img = run_dir / "samples" / parts[4]
+                    if img.is_file():
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.end_headers()
+                        self.wfile.write(img.read_bytes())
+                        served = True
+            if not served:
+                self.send_error(404)
+        elif self.path.startswith("/api/notes"):
+            # AI-Analysis notes (written by the MCP server's post_analysis tool).
+            try:
+                from . import mcp_data
+
+                notes = mcp_data.read_notes()
+            except Exception:
+                notes = []
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(notes).encode("utf-8"))
+        elif self.path.startswith("/api/control"):
+            # Runtime LR control. Query sets it; bare GET returns the current state.
+            # ?lr_scale=X  ·  ?reset=1  ·  ?decay=1&k=K&floor=F (from the current step)
+            from . import mcp_data
+
+            qs = parse_qs(urlparse(self.path).query or "")
+            step = int(MONITOR_STATE.get("step") or 0)
+            try:
+                if "lr_scale" in qs:
+                    mcp_data.set_lr_scale(float(qs["lr_scale"][0]))
+                elif "reset" in qs:
+                    mcp_data.reset_control()
+                elif "decay" in qs:
+                    k = int(qs.get("k", ["500"])[0])
+                    floor = float(qs.get("floor", ["0"])[0])
+                    mcp_data.start_lr_decay(step, k, floor)
+            except (ValueError, KeyError):
+                pass
+            ctrl = mcp_data.read_control()
+            out = {
+                "control": ctrl,
+                "step": step,
+                "effective_scale": mcp_data.effective_lr_scale(ctrl, step),
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(out).encode("utf-8"))
         else:
             self.send_error(404)
-    
+
     def log_message(self, format, *args):
         pass  # 静默日志
 
 
-def start_monitor_server(port=8766, host="127.0.0.1", output_dir=None, open_browser=True):
+def start_monitor_server(
+    port=8766, host="127.0.0.1", output_dir=None, open_browser=True
+):
     """启动监控服务器"""
     output_dir = Path(output_dir) if output_dir else Path("./output")
-    
+
     def handler(*args, **kwargs):
         return MonitorHandler(*args, output_dir=output_dir, **kwargs)
 
@@ -665,28 +862,30 @@ def start_monitor_server(port=8766, host="127.0.0.1", output_dir=None, open_brow
     # daemon_threads so handler threads never block process exit.
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
-    
+
     def run():
         shown_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
         print(f"📊 训练监控面板: http://{shown_host}:{port}")
         server.serve_forever()
-    
+
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    
+
     if open_browser:
         time.sleep(0.5)
-        webbrowser.open(f"http://{('localhost' if host in ('0.0.0.0','127.0.0.1') else host)}:{port}")
-    
+        webbrowser.open(
+            f"http://{('localhost' if host in ('0.0.0.0', '127.0.0.1') else host)}:{port}"
+        )
+
     return server
 
 
 if __name__ == "__main__":
     # 测试模式
     import random
-    
+
     server = start_monitor_server(port=8766)
-    
+
     print("测试模式：模拟训练数据...")
     for i in range(1000):
         update_monitor(
@@ -701,6 +900,6 @@ if __name__ == "__main__":
                 "rank": 64,
                 "epochs": 10,
                 "batch_size": 4,
-            }
+            },
         )
         time.sleep(0.1)
