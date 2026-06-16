@@ -67,6 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui import backend
+from gui.modules.arg_help import ARG_HELP  # Korean per-dest help (en fallback)
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 from gui.native.tag_sort import KEEP_TOKENS_SEPARATOR
 
@@ -215,6 +216,7 @@ _KO = {
     "▸ Show usable args": "▸ 사용 가능한 인자 보기",
     "▾ Hide args": "▾ 인자 숨기기",
     "Pick an optimizer / scheduler first.": "옵티마이저 / 스케줄러를 먼저 선택하세요.",
+    "➕ Add arg": "➕ 인자 추가",
     "Loss / timestep / weighting": "손실 / 타임스텝 / 가중치",
     "Huber c": "Huber c",
     "Huber schedule": "Huber 스케줄",
@@ -303,7 +305,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("network_module", "Network module", "combo:network_modules"),
                     ("network_dim", "Network dim (rank)", "text"),
                     ("network_alpha", "Network alpha", "text"),
-                    ("network_args", "network_args (k=v …)", "text"),
+                    ("network_args", "network_args", "kvblock"),
                 ],
             ),
             (
@@ -322,7 +324,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 "Optimizer",
                 [
                     ("optimizer_type", "Optimizer", "combo:optimizers"),
-                    ("optimizer_args", "optimizer_args (k=v …)", "text"),
+                    ("optimizer_args", "optimizer_args", "kvblock"),
                     ("optimizer_args", "↳ optimizer args help", "opthelp:optimizer_type"),
                 ],
             ),
@@ -336,7 +338,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     # constant→cosine one-shot lives WITH the scheduler (it replaces it).
                     ("use_constantcosine", "Constant→cosine (one-shot)", "bool"),
                     ("constantcosine_tail_epochs", "↳ cosine tail (epochs)", "text"),
-                    ("lr_scheduler_args", "lr_scheduler_args", "text"),
+                    ("lr_scheduler_args", "lr_scheduler_args", "kvblock"),
                     (
                         "lr_scheduler_args",
                         "↳ scheduler args help",
@@ -815,10 +817,15 @@ class MainWindow(QMainWindow):
                 grid.setColumnStretch(2, 1)  # description column absorbs the width
                 rows = sorted(by_cluster[cluster], key=lambda a: a.get("dest") or "")
                 for r, arg in enumerate(rows):
-                    lbl = QLabel(arg.get("dest") or arg.get("flag"))
+                    lbl = QLabel(arg.get("dest") or arg.get("flag"))  # arg name: English
                     fw = self._build_adv_field(arg)
                     fw.setMaximumWidth(200)
-                    desc = QLabel((arg.get("help") or "").strip())
+                    # Description in Korean when available (ARG_HELP), else the English
+                    # argparse help. The arg NAME stays English either way.
+                    htext = (arg.get("help") or "").strip()
+                    if _LANG == "ko":
+                        htext = ARG_HELP.get(arg.get("dest") or "", htext)
+                    desc = QLabel(htext)
                     desc.setObjectName("argDesc")
                     desc.setWordWrap(True)
                     grid.addWidget(lbl, r, 0)
@@ -899,7 +906,7 @@ class MainWindow(QMainWindow):
             w = self._build_field(dest, kind)
             # Path pickers / args-help / scope span the full width; the compact fields
             # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
-            if kind in ("file", "dir", "scope") or kind.startswith("opthelp"):
+            if kind in ("file", "dir", "scope", "kvblock") or kind.startswith("opthelp"):
                 if c != 0:
                     r += 1
                     c = 0
@@ -964,6 +971,8 @@ class MainWindow(QMainWindow):
             # open panel (no collapse + re-expand needed).
             self._opthelp_panels.append((source, btn, body))
             return box
+        if kind == "kvblock":
+            return self._build_kv_block(dest)
         if kind == "bool":
             cb = QCheckBox()
             self._getters[dest] = lambda c=cb: c.isChecked()
@@ -1009,6 +1018,77 @@ class MainWindow(QMainWindow):
         edit.setMinimumWidth(200)
         edit.setMaximumWidth(360)
         return edit
+
+    def _build_kv_block(self, dest: str) -> QWidget:
+        """A key=value block editor (like the kohya_ss 'NETWORK ARGS' panel): an Add
+        button + an unlimited list of key/value rows, each deletable. Collected as
+        newline-joined ``key=value`` tokens (what the backend's _arg_split consumes)."""
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(4)
+        add = QPushButton(tr("➕ Add arg"))
+        add.setObjectName("subOpt")
+        holder = QWidget()
+        rows_lay = QVBoxLayout(holder)
+        rows_lay.setContentsMargins(0, 0, 0, 0)
+        rows_lay.setSpacing(4)
+        rows: list[dict] = []
+
+        def _add_row(key: str = "", val: str = "") -> None:
+            rw = QWidget()
+            h = QHBoxLayout(rw)
+            h.setContentsMargins(0, 0, 0, 0)
+            ke = QLineEdit(key)
+            ke.setPlaceholderText("key")
+            ve = QLineEdit(val)
+            ve.setPlaceholderText("value")
+            dele = QPushButton("🗑")
+            dele.setObjectName("icon")
+            dele.setFixedWidth(40)
+            h.addWidget(ke, 1)
+            h.addWidget(ve, 1)
+            h.addWidget(dele)
+            entry = {"w": rw, "k": ke, "v": ve}
+            dele.clicked.connect(
+                lambda _=False, e=entry: (
+                    rows.remove(e) if e in rows else None,
+                    e["w"].setParent(None),
+                    e["w"].deleteLater(),
+                )
+            )
+            rows.append(entry)
+            rows_lay.addWidget(rw)
+
+        add.clicked.connect(lambda *_: _add_row())
+        v.addWidget(add)
+        v.addWidget(holder)
+
+        def _get() -> str:
+            out = []
+            for e in rows:
+                k = e["k"].text().strip()
+                val = e["v"].text().strip()
+                if k:
+                    out.append(f"{k}={val}" if val != "" else k)
+            return "\n".join(out)
+
+        def _set(s) -> None:
+            for e in list(rows):
+                e["w"].setParent(None)
+                e["w"].deleteLater()
+            rows.clear()
+            for tok in str(s or "").replace("\n", " ").split():
+                k, _, val = tok.partition("=")
+                _add_row(k, val)
+            if not rows:
+                _add_row()
+
+        self._getters[dest] = _get
+        self._setters[dest] = _set
+        self._widgets[dest] = box
+        _add_row()
+        return box
 
     def _browse(self, edit: QLineEdit, kind: str) -> None:
         start = edit.text().strip() or str(backend.ROOT)
