@@ -98,5 +98,42 @@ def test_is_val_subset_routes_whole_subset_to_validation(tmp_path):
         logging.disable(logging.NOTSET)
 
 
+def test_is_val_only_marked_subset_validates_in_a_shared_block(tmp_path):
+    """One [[datasets]] block holding an is_val subset + normal subsets: ONLY the
+    is_val subset validates; the normal subsets stay training-only. Regression for the
+    leak where every subset in a val-active block was pulled into validation (a
+    22-image is_val subset next to two 40-image train subsets validated all 102)."""
+    logging.disable(logging.CRITICAL)
+    try:
+        from library.config.loader import generate_dataset_group_by_blueprint
+
+        val = _make_subset(str(tmp_path), "valhold", 6)
+        tr1 = _make_subset(str(tmp_path), "trainA", 10)
+        tr2 = _make_subset(str(tmp_path), "trainB", 10)
+        bp = _blueprint(
+            {
+                "datasets": [
+                    {
+                        "batch_size": 1,
+                        "subsets": [
+                            {"image_dir": val, "is_val": True},
+                            {"image_dir": tr1},
+                            {"image_dir": tr2},
+                        ],
+                    }
+                ]
+            }
+        )
+        train_group, val_group = generate_dataset_group_by_blueprint(
+            bp.dataset_group, constant_token_buckets=True
+        )
+        n_train = sum(d.num_train_images for d in train_group.datasets)
+        n_val = sum(d.num_train_images for d in val_group.datasets) if val_group else 0
+        assert n_train == 20, f"train pool = the two normal subsets, got {n_train}"
+        assert n_val == 6, f"only the is_val subset (6) should validate, got {n_val}"
+    finally:
+        logging.disable(logging.NOTSET)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

@@ -247,6 +247,15 @@ class DreamBoothDataset(BaseDataset):
                         self.validation_seed,
                         validation_split_num=self.validation_split_num,
                     )
+            elif not self.is_training_dataset:
+                # This block's VALIDATION dataset is only being built because a SIBLING
+                # subset is is_val (no split is configured on the block). A plain
+                # subset here is training-only — it must contribute NOTHING to the
+                # validation pass, or it would leak its whole self into validation
+                # (the bug: a 22-image is_val subset alongside two 40-image train
+                # subsets in one block validated all 102 instead of just 22).
+                img_paths = []
+                sizes = []
 
             # sample_ratio shrinks only the training pool. The validation pool
             # is pinned by validation_split_num / validation_split — applying
