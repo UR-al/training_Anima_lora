@@ -21,9 +21,10 @@ Training child tabs (curated fields + schema args routed in by keyword):
 - **Extra**: everything uncaught (inference stacks: dcw/spectrum/spd/… ) + a raw
   ``extra_flags`` box.
 
-Utils child tabs drive the backend util launchers: Preprocess (resize → VAE/TE/
-PE/pooled caches), Update (git pull + uv sync), Auto-batch search, Masking (SAM3 +
-MIT). Right panel: command preview, Start/Stop, live log, config TOML load/save.
+Utils child tabs: Dataset (image+caption viewer/editor, tag sorter, mask overlay),
+Preprocess (resize → VAE/TE/PE/pooled caches), Update (git pull + uv sync),
+Auto-batch search, Masking (SAM3 + MIT). Right panel: command preview, Start/Stop,
+live log, config TOML load/save.
 
 Schema args come from ``backend.list_arg_groups()`` (needs torch to populate);
 without it the curated fields still render and the structure is intact.
@@ -848,7 +849,10 @@ class MainWindow(QMainWindow):
 
     # ----- utils parent --------------------------------------------------- #
     def _build_utils_parent(self) -> QTabWidget:
+        from gui.native.dataset_view import DatasetView
+
         inner = QTabWidget()
+        inner.addTab(DatasetView(), "Dataset")
         inner.addTab(self._scroll(self._build_preprocess_tab()), "Preprocess")
         inner.addTab(self._scroll(self._build_update_tab()), "Update")
         inner.addTab(self._scroll(self._build_autobatch_tab()), "Auto-batch")
