@@ -21,9 +21,9 @@ Training child tabs (curated fields + schema args routed in by keyword):
 - **Extra**: everything uncaught (inference stacks: dcw/spectrum/spd/… ) + a raw
   ``extra_flags`` box.
 
-Utils child tabs drive the backend util launchers: Update (git pull + uv sync),
-Auto-batch search, Masking (SAM3 + MIT). Right panel: command preview, Start/Stop,
-live log, config TOML load/save.
+Utils child tabs drive the backend util launchers: Preprocess (resize → VAE/TE/
+PE/pooled caches), Update (git pull + uv sync), Auto-batch search, Masking (SAM3 +
+MIT). Right panel: command preview, Start/Stop, live log, config TOML load/save.
 
 Schema args come from ``backend.list_arg_groups()`` (needs torch to populate);
 without it the curated fields still render and the structure is intact.
@@ -771,10 +771,42 @@ class MainWindow(QMainWindow):
     # ----- utils parent --------------------------------------------------- #
     def _build_utils_parent(self) -> QTabWidget:
         inner = QTabWidget()
+        inner.addTab(self._scroll(self._build_preprocess_tab()), "Preprocess")
         inner.addTab(self._scroll(self._build_update_tab()), "Update")
         inner.addTab(self._scroll(self._build_autobatch_tab()), "Auto-batch")
         inner.addTab(self._scroll(self._build_masking_tab()), "Masking")
         return inner
+
+    def _build_preprocess_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "Resize → cache (VAE / TE / PE / pooled). Reads configs/preprocess.toml "
+                "+ base.toml for paths/target_res. Mutually exclusive with a run; output "
+                "streams to the log."
+            )
+        )
+        steps = [
+            ("All (resize → cache)", "all"),
+            ("Resize", "resize"),
+            ("VAE latents", "vae"),
+            ("Text-encoder", "te"),
+            ("PE features", "pe"),
+            ("Pooled TE", "pooled"),
+            ("Reconcile (drop stale)", "reconcile"),
+        ]
+        for label, step in steps:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _=False, s=step: self._do_preprocess(s))
+            vbox.addWidget(btn)
+        vbox.addStretch(1)
+        return w
+
+    def _do_preprocess(self, step: str) -> None:
+        res = backend.run_preprocess(step)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Preprocess", str(res.get("error") or res))
 
     def _build_update_tab(self) -> QWidget:
         w = QWidget()

@@ -1766,6 +1766,29 @@ def run_masking(form: dict) -> dict:
     return _spawn_util(["tasks.py", "mask"], "mask", env)
 
 
+# Preprocess step → tasks.py subcommand (resize → VAE/TE/PE/pooled caches; the
+# `all` path runs the full resize→cache pipeline; reconcile drops stale caches).
+_PREPROCESS_STEPS = {
+    "all": "preprocess",
+    "resize": "preprocess-resize",
+    "vae": "preprocess-vae",
+    "te": "preprocess-te",
+    "pe": "preprocess-pe",
+    "pooled": "preprocess-pooled",
+    "reconcile": "preprocess-reconcile",
+}
+
+
+def run_preprocess(step: str) -> dict:
+    """Run a ``tasks.py preprocess[-<step>]`` subcommand as a direct subprocess
+    (mirrors :func:`run_masking` / :func:`bench_autobatch` — training-exclusive,
+    output captured to the live-log path). ``step`` is a key of _PREPROCESS_STEPS."""
+    sub = _PREPROCESS_STEPS.get(step)
+    if not sub:
+        return {"ok": False, "error": f"unknown preprocess step: {step!r}"}
+    return _spawn_util(["tasks.py", sub], "preprocess")
+
+
 def launch(form: dict) -> dict:
     """Spawn ``train.py`` as a direct child subprocess and capture its console to a
     logfile under ``output/logs/`` (so the Gradio/web live-log panel can tail it).
