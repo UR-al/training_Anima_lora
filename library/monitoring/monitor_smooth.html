@@ -591,6 +591,11 @@
             <div class="stat-sub"><span id="loss-trend" class="stat-trend">--</span></div>
         </div>
         <div class="stat-cell">
+            <div class="stat-label">Val loss</div>
+            <div class="stat-value" id="val-loss" style="color:#36d1ff;">--</div>
+            <div class="stat-sub">best <span id="val-best">--</span></div>
+        </div>
+        <div class="stat-cell">
             <div class="stat-label">Speed</div>
             <div class="stat-value" id="speed">0.00</div>
             <div class="stat-sub" id="speed-unit">it/s</div>
@@ -1002,8 +1007,16 @@
                         valArr[bi] = v.loss;
                     });
                     lossChart.data.datasets[2].data = valArr;
+                    // Headline val readouts: latest validation pass + best (min) so far.
+                    const latestVal = vl[vl.length - 1];
+                    const bestV = vl.reduce((a, b) => (b.loss < a.loss ? b : a));
+                    document.getElementById('val-loss').textContent = Number(latestVal.loss).toFixed(4);
+                    document.getElementById('val-best').textContent =
+                        Number(bestV.loss).toFixed(4) + ' @ ' + bestV.step;
                 } else {
                     lossChart.data.datasets[2].data = [];
+                    document.getElementById('val-loss').textContent = '--';
+                    document.getElementById('val-best').textContent = '--';
                 }
                 lossChart.update('none');
 

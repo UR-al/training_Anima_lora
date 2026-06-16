@@ -522,6 +522,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         tension: 0.4,
                         pointRadius: 0,
                         borderWidth: 2
+                    },
+                    {
+                        label: 'Validation',
+                        data: [],
+                        borderColor: '#36d1ff',
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        tension: 0,
+                        spanGaps: true,
+                        pointRadius: 4,
+                        pointStyle: 'rectRot',
+                        borderWidth: 1.5
                     }
                 ]
             },
@@ -586,6 +598,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     lossChart.data.labels = displayLosses.map(l => l.step);
                     lossChart.data.datasets[0].data = rawLosses;      // 原始曲线
                     lossChart.data.datasets[1].data = smoothLosses;   // 平滑曲线
+                    // Validation (sparse): align each val point onto the nearest
+                    // training-step label so it overlays the loss curve.
+                    const _vl = data.val_losses || [];
+                    if (_vl.length) {
+                        const _steps = displayLosses.map(l => l.step);
+                        const _arr = new Array(_steps.length).fill(null);
+                        _vl.forEach(v => { let bi=0, bd=Infinity; for (let i=0;i<_steps.length;i++){ const d=Math.abs(_steps[i]-v.step); if (d<bd){bd=d;bi=i;} } _arr[bi]=v.loss; });
+                        lossChart.data.datasets[2].data = _arr;
+                        const _bv = _vl.reduce((a,b)=> b.loss<a.loss ? b : a);
+                        const _vlEl = document.getElementById('val-loss');
+                        if (_vlEl) _vlEl.textContent = Number(_vl[_vl.length-1].loss).toFixed(4) + ' (best ' + Number(_bv.loss).toFixed(4) + ')';
+                    } else {
+                        lossChart.data.datasets[2].data = [];
+                    }
                     lossChart.update('none');
                     
                     // 显示平滑后的趋势（最近 100 步 vs 之前 100 步）
