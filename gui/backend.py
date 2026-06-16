@@ -1668,8 +1668,9 @@ def _autobatch_argv(form: dict):
     if bts and bts != "0":
         argv += ["--blocks_to_swap", bts]
     if form.get("ab_auto_swap"):
-        # OOM at the base swap → auto-escalate to the minimal blocks_to_swap that fits.
-        argv += ["--max-swap", "26"]
+        # OOM at the base swap → auto-escalate to the minimal blocks_to_swap that
+        # fits, capped at ab_max_swap (the user-specified max N; default 26).
+        argv += ["--max-swap", str(form.get("ab_max_swap") or "26").strip()]
     if form.get("ab_compile"):
         argv += ["--compile"]
     if form.get("ab_auto_budget"):

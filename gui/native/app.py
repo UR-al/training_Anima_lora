@@ -8,8 +8,9 @@ Gradio one; only the UI differs (native dialogs, real tables, no localhost).
 Training child tabs (curated fields + schema args routed in by keyword):
 - **Folder**: every path/folder picker; sample / validation / save / logging /
   resume args land here.
-- **Subset**: the subset table (→ ``form['subsets']``) + global caption/shuffle
-  flags.
+- **Subset**: the subset table (→ ``form['subsets']``; per-subset multi-scale
+  ``tiers`` + ``gradient_checkpointing``) + an Auto-preprocess toggle + global
+  caption/shuffle flags.
 - **Network**: adapter selection — method (LoRA type), network module/dim/alpha/
   args, LyCORIS preset + algo.
 - **Optimizer**: the training-settings mega-tab — optimizer/scheduler (+args),
@@ -23,8 +24,9 @@ Training child tabs (curated fields + schema args routed in by keyword):
 
 Utils child tabs: Dataset (image+caption viewer/editor, tag sorter, mask overlay),
 Preprocess (resize → VAE/TE/PE/pooled caches), Update (git pull + uv sync),
-Auto-batch search, Masking (SAM3 + MIT). Right panel: command preview, Start/Stop,
-live log, config TOML load/save.
+Auto-batch (multi-scale tier search + max-N blocks_to_swap / activation-budget
+search), Masking (SAM3 + MIT). Right panel: command preview, Start/Stop, live log,
+config TOML load/save, and a collapsible saved-run **Queue** (expands upward).
 
 Schema args come from ``backend.list_arg_groups()`` (needs torch to populate);
 without it the curated fields still render and the structure is intact.
@@ -105,7 +107,21 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             ),
         ],
     ),
-    ("Subset", []),
+    (
+        "Subset",
+        [
+            (
+                "Preprocess",
+                [
+                    (
+                        "auto_preprocess",
+                        "Auto-preprocess on Start (resize → cache per subset tiers)",
+                        "bool",
+                    ),
+                ],
+            ),
+        ],
+    ),
     (
         "Network",
         [
@@ -342,11 +358,12 @@ _SUBSET_COLS = [
     ("caption_extension", "caption_ext"),
     ("caption_dropout_rate", "cap_dropout"),
     ("batch_size", "batch_size"),
-    ("tiers", "tiers (e.g. 512,1024)"),
+    ("tiers", "tiers (multi-scale, e.g. 512,1024)"),
     ("flip_aug", "flip_aug"),
     ("random_crop", "random_crop"),
+    ("gradient_checkpointing", "grad_ckpt"),
 ]
-_SUBSET_BOOL_COLS = {"flip_aug", "random_crop"}
+_SUBSET_BOOL_COLS = {"flip_aug", "random_crop", "gradient_checkpointing"}
 # Flags handled by the curated train-scope combo (kept out of schema routing).
 _SCOPE_FLAGS = {"network_train_unet_only", "network_train_text_encoder_only"}
 
@@ -439,20 +456,15 @@ class MainWindow(QMainWindow):
             inner.addTab(
                 self._scroll(self._build_training_tab(tab_name, groups)), tab_name
             )
-        inner.addTab(self._scroll(self._build_queue_tab()), "Queue")
         return inner
 
-    # ----- saved-run queue ------------------------------------------------ #
-    def _build_queue_tab(self) -> QWidget:
+    # ----- saved-run queue (collapsible panel, not a tab) ----------------- #
+    def _build_queue_panel(self) -> QWidget:
         w = QWidget()
         vbox = QVBoxLayout(w)
-        vbox.addWidget(
-            QLabel(
-                "Saved-run queue: stack configs, then run them one after another "
-                "(each is the current form snapshot)."
-            )
-        )
+        vbox.setContentsMargins(0, 0, 0, 0)
         self._queue_list = QListWidget()
+        self._queue_list.setMaximumHeight(140)
         vbox.addWidget(self._queue_list, 1)
         row1 = QHBoxLayout()
         b_add = QPushButton("➕ Add current")
@@ -938,10 +950,75 @@ class MainWindow(QMainWindow):
         vbox = QVBoxLayout(w)
         vbox.addWidget(
             QLabel(
-                "Max-batch search (tasks.py bench-autobatch) using the current Training "
-                "fields. Mutually exclusive with a run; output streams to the log."
+                "Max-batch search (tasks.py bench-autobatch). Check one or more "
+                "resolution tiers (multi-scale) — each is searched. Output → log."
             )
         )
+        self._ab: dict[str, object] = {}
+
+        # multi-scale resolution tiers (search each)
+        gb_res = QGroupBox("Resolution tiers (multi-scale)")
+        rl = QHBoxLayout(gb_res)
+        self._ab_res_checks: list[tuple[int, QCheckBox]] = []
+        for t in self._options.get("target_res_tiers") or [512, 768, 1024, 1280, 1536]:
+            cb = QCheckBox(str(t))
+            if t == 1024:
+                cb.setChecked(True)
+            rl.addWidget(cb)
+            self._ab_res_checks.append((int(t), cb))
+        rl.addStretch(1)
+        vbox.addWidget(gb_res)
+
+        gb = QGroupBox("Search")
+        form = QFormLayout(gb)
+
+        def _line(key: str, default: str = "") -> QLineEdit:
+            e = QLineEdit(default)
+            self._ab[key] = e
+            return e
+
+        form.addRow("Max batch", _line("ab_max_batch", "8"))
+        form.addRow("Blocks to swap (base)", _line("ab_blocks_to_swap", "0"))
+        # blocks_to_swap as a MAX-N search: auto-escalate up to ab_max_swap.
+        self._ab_auto_swap = QCheckBox("Auto-escalate blocks_to_swap up to max N")
+        self._ab["ab_auto_swap"] = self._ab_auto_swap
+        form.addRow(self._ab_auto_swap, _line("ab_max_swap", "26"))
+        # activation budget as a MIN search.
+        self._ab_auto_budget = QCheckBox("Auto-search activation budget (down to min)")
+        self._ab["ab_auto_budget"] = self._ab_auto_budget
+        form.addRow(self._ab_auto_budget, _line("ab_budget", "0.1"))
+        self._ab_compile = QCheckBox("torch.compile")
+        self._ab["ab_compile"] = self._ab_compile
+        form.addRow("Compile", self._ab_compile)
+
+        nm = QComboBox()
+        nm.setEditable(True)
+        nm.addItems([str(x) for x in (self._options.get("network_modules") or [])])
+        nm.setCurrentText("networks.lora_anima")
+        self._ab["ab_network_module"] = nm
+        form.addRow("Network module", nm)
+        form.addRow("Network dim", _line("ab_network_dim", "16"))
+        form.addRow("Network alpha", _line("ab_network_alpha", "8"))
+        form.addRow("network_args", _line("ab_network_args"))
+        opt = QComboBox()
+        opt.setEditable(True)
+        opt.addItems([str(x) for x in (self._options.get("optimizers") or [])])
+        opt.setCurrentText("AdamW")
+        self._ab["ab_optimizer_type"] = opt
+        form.addRow("Optimizer", opt)
+        ab_dit = QLineEdit()
+        self._ab["ab_dit"] = ab_dit
+        dit_row = QWidget()
+        hb = QHBoxLayout(dit_row)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.addWidget(ab_dit)
+        bd = QPushButton("📁")
+        bd.setFixedWidth(36)
+        bd.clicked.connect(lambda _=False: self._browse(ab_dit, "file"))
+        hb.addWidget(bd)
+        form.addRow("DiT (blank = config)", dit_row)
+        vbox.addWidget(gb)
+
         btn = QPushButton("Run auto-batch search")
         btn.clicked.connect(self._do_autobatch)
         vbox.addWidget(btn)
@@ -949,7 +1026,15 @@ class MainWindow(QMainWindow):
         return w
 
     def _do_autobatch(self) -> None:
-        res = backend.bench_autobatch(self._collect())
+        form: dict = {"ab_res": [t for t, cb in self._ab_res_checks if cb.isChecked()]}
+        for key, w in self._ab.items():
+            if isinstance(w, QCheckBox):
+                form[key] = w.isChecked()
+            elif isinstance(w, QComboBox):
+                form[key] = w.currentText().strip()
+            else:
+                form[key] = w.text().strip()
+        res = backend.bench_autobatch(form)
         if not res.get("ok"):
             QMessageBox.warning(self, "Auto-batch", str(res.get("error") or res))
 
@@ -1033,7 +1118,23 @@ class MainWindow(QMainWindow):
         self._log.setReadOnly(True)
         self._log.setFont(QFont("monospace"))
         vbox.addWidget(self._log, 1)
+
+        # Collapsible saved-run queue: the panel sits ABOVE its toggle, so it
+        # expands upward (and collapses back down) like a bottom drawer.
+        self._queue_panel = self._build_queue_panel()
+        self._queue_panel.setVisible(False)
+        vbox.addWidget(self._queue_panel)
+        self._queue_btn = QPushButton("▲ Queue")
+        self._queue_btn.setCheckable(True)
+        self._queue_btn.toggled.connect(self._toggle_queue)
+        vbox.addWidget(self._queue_btn)
         return panel
+
+    def _toggle_queue(self, on: bool) -> None:
+        self._queue_panel.setVisible(on)
+        self._queue_btn.setText("▼ Queue" if on else "▲ Queue")
+        if on:
+            self._queue_refresh()
 
     # ----- form <-> dict -------------------------------------------------- #
     def _enabled(self, dest: str) -> bool:
