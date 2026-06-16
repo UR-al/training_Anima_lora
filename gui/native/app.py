@@ -810,7 +810,7 @@ class MainWindow(QMainWindow):
 
     def _build_field(self, dest: str, kind: str) -> QWidget:
         if kind == "scope":
-            combo = QComboBox()
+            combo = _Combo()
             combo.addItems(["both (UNet + TE)", "UNet only", "TE only"])
             self._scope = combo
             return combo
@@ -825,7 +825,7 @@ class MainWindow(QMainWindow):
             self._widgets[dest] = cb
             return cb
         if kind == "tristate":
-            combo = QComboBox()
+            combo = _Combo()
             combo.addItems(["", "on", "off"])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
         if kind.startswith("combo:"):
             src = kind.split(":", 1)[1]
             items = self._options.get(src) if src in self._options else src.split(",")
-            combo = QComboBox()
+            combo = _Combo()
             combo.setEditable(True)
             combo.lineEdit().installEventFilter(self._combo_open_filter)
             combo.addItem("")
@@ -895,7 +895,7 @@ class MainWindow(QMainWindow):
         flag = arg.get("flag")
         help_txt = arg.get("help") or ""
         if arg.get("negatable"):
-            combo = QComboBox()
+            combo = _Combo()
             combo.addItems(["default", "on", "off"])
             combo.setToolTip(help_txt)
             self._adv.append(
@@ -926,9 +926,9 @@ class MainWindow(QMainWindow):
             self._widgets[arg.get("dest") or ""] = cb
             return cb
         if arg.get("choices"):
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.lineEdit().installEventFilter(self._combo_open_filter)
+            # Non-editable (like the negatable/use_cmmd combos) — choices are a fixed
+            # argparse set, so no free-text entry; cleaner, matches the other dropdowns.
+            combo = _Combo()
             combo.addItem("")
             combo.addItems([str(x) for x in arg["choices"]])
             combo.setToolTip(help_txt)
@@ -1093,7 +1093,7 @@ class MainWindow(QMainWindow):
         _dir("cache_dir", "Cache dir", placeholder="(auto — shared with primary)")
         _text("num_repeats", "Number of repeats", "1")
         _text("keep_tokens", "Keep tokens", "0")
-        cext = QComboBox()
+        cext = _Combo()
         cext.setEditable(True)
         cext.lineEdit().installEventFilter(self._combo_open_filter)
         cext.addItems([".txt", ".caption"])
@@ -1285,7 +1285,7 @@ class MainWindow(QMainWindow):
         self._surg: dict[str, object] = {}
         gb2 = QGroupBox("LLM-adapter surgery (tools/llm_adapter_surgery.py)")
         f2 = QFormLayout(gb2)
-        mode = QComboBox()
+        mode = _Combo()
         mode.addItems(["strip", "attach"])
         self._surg["mode"] = mode
         f2.addRow("Mode", mode)
@@ -1473,7 +1473,7 @@ class MainWindow(QMainWindow):
         self._ab["ab_compile"] = self._ab_compile
         form.addRow("Compile", self._ab_compile)
 
-        nm = QComboBox()
+        nm = _Combo()
         nm.setEditable(True)
         nm.addItems([str(x) for x in (self._options.get("network_modules") or [])])
         nm.setCurrentText("networks.lora_anima")
@@ -1482,7 +1482,7 @@ class MainWindow(QMainWindow):
         form.addRow("Network dim", _line("ab_network_dim", "16"))
         form.addRow("Network alpha", _line("ab_network_alpha", "8"))
         form.addRow("network_args", _line("ab_network_args"))
-        opt = QComboBox()
+        opt = _Combo()
         opt.setEditable(True)
         opt.addItems([str(x) for x in (self._options.get("optimizers") or [])])
         opt.setCurrentText("AdamW")
@@ -1568,7 +1568,7 @@ class MainWindow(QMainWindow):
         cfg_row.addStretch(1)
         # Language selector — switches the whole UI live (en ⇄ 한국어), persisted.
         cfg_row.addWidget(QLabel(tr("Language")))
-        self._lang_combo = QComboBox()
+        self._lang_combo = _Combo()
         self._lang_combo.addItem("English", "en")
         self._lang_combo.addItem("한국어", "ko")
         self._lang_combo.setCurrentIndex(1 if _LANG == "ko" else 0)
@@ -1903,6 +1903,16 @@ QScrollBar::handle:horizontal:hover {{ background: {faint}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 """.format(**_C)
+
+
+class _Combo(QComboBox):
+    """A combo that does NOT change its value on mouse-wheel scroll. The default Qt
+    behavior silently switches a dropdown when you scroll the page past it (very easy
+    to mis-set in a long form); here the wheel is ignored so it bubbles to the parent
+    scroll area and the page scrolls instead. The popup list still scrolls when open."""
+
+    def wheelEvent(self, e):  # noqa: N802 (Qt signature)
+        e.ignore()
 
 
 class _FadeTooltip(QObject):
