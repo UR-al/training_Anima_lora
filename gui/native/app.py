@@ -6,8 +6,10 @@ Two parent tabs — **Training** and **Utils** — over the shared, torch-free
 Gradio one; only the UI differs (native dialogs, real tables, no localhost).
 
 Training child tabs (curated fields + schema args routed in by keyword):
-- **Folder**: every path/folder picker + the subset table; sample / validation /
-  save / logging / resume args land here.
+- **Folder**: every path/folder picker; sample / validation / save / logging /
+  resume args land here.
+- **Subset**: the subset table (→ ``form['subsets']``) + global caption/shuffle
+  flags.
 - **Network**: adapter selection — method (LoRA type), network module/dim/alpha/
   args, LyCORIS preset + algo.
 - **Optimizer**: the training-settings mega-tab — optimizer/scheduler (+args),
@@ -99,6 +101,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             ),
         ],
     ),
+    ("Subset", []),
     (
         "Network",
         [
@@ -228,6 +231,19 @@ _ROUTE_RULES: list[tuple[str, list[str], list[str]]] = [
     ),
     ("Monitoring", ["monitor"], []),
     ("Metadata", ["metadata"], []),
+    (
+        "Subset",
+        [
+            "caption",
+            "shuffle",
+            "weighted_caption",
+            "token_warmup",
+            "secondary_separator",
+            "keep_tokens_separator",
+            "wildcard",
+        ],
+        [],
+    ),
     (
         "Optimizer",
         [
@@ -390,7 +406,7 @@ class MainWindow(QMainWindow):
         vbox = QVBoxLayout(w)
         for title, fields in groups:
             vbox.addWidget(self._build_group(title, fields))
-        if tab_name == "Folder":
+        if tab_name == "Subset":
             vbox.addWidget(self._build_subset_box())
         # Schema args routed into this tab (populated only when torch is present).
         schema = self._tab_schema.get(tab_name) or []
