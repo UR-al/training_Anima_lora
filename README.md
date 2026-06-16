@@ -34,6 +34,8 @@ Then, in the GUI's **Model files** panel (or via `make download-models`), fetch 
 - **Run:** **preview the command**, then **Start** / **Stop**. Training runs as a **direct `train.py` subprocess**; stdout/stderr is captured to `output/logs/` and tailed live in the panel. There is no job queue daemon — a saved-run **Queue** launches runs sequentially.
 - **Extras:** Auto-preprocess at train start, a **Utils** tab (SAM3 / MIT masking + auto-batch search), and a one-click link to the **live monitor** (loss / LR / sample dashboard; rehydrates the curve on `--resume`).
 
+> **Prefer a desktop app?** A native **PySide6** control panel ships too — `run_gui_native.bat` (or `python tasks.py native-gui`; opt-in `gui` extra: `uv sync --extra gui`) — as an alternative to the browser panel. It drives the same `train.py`.
+
 ## CLI
 
 ```powershell
