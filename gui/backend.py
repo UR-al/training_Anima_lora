@@ -1094,8 +1094,14 @@ def build_options_cache() -> dict:
         "anima_dests": _anima_specific_dests(),
     }
     try:
-        STORE_DIR.mkdir(parents=True, exist_ok=True)
-        _slow_cache_path().write_text(_json.dumps(data), encoding="utf-8")
+        # Only persist a SUCCESSFUL introspection. If `import train` failed (torch/deps
+        # missing in this process), list_arg_groups() returns [] — writing that would
+        # poison every later torch-free read with an empty schema (the sig still matches,
+        # so it sticks until a source mtime changes). Skip the write: this process runs
+        # degraded, but the next run with deps rebuilds + persists a good cache.
+        if data["arg_groups"]:
+            STORE_DIR.mkdir(parents=True, exist_ok=True)
+            _slow_cache_path().write_text(_json.dumps(data), encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass
     _SLOW_CACHE = data
