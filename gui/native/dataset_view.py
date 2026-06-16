@@ -20,7 +20,9 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -31,12 +33,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from gui import backend
-from gui.native import tag_sort
+from gui.native import image_dupes, tag_sort
 
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 _MASKS_REL = "post_image_dataset/masks"
@@ -190,6 +194,20 @@ class DatasetView(QWidget):
         top.addWidget(browse)
         top.addWidget(load)
         outer.addLayout(top)
+
+        # dataset validation: group near-duplicates by perceptual-hash similarity
+        val = QHBoxLayout()
+        b_dupes = QPushButton("Validate: find duplicates")
+        b_dupes.clicked.connect(self._find_duplicates)
+        self._dup_thresh = QSpinBox()
+        self._dup_thresh.setRange(0, 32)
+        self._dup_thresh.setValue(10)
+        self._dup_thresh.setToolTip("Max Hamming distance (bits) — lower = stricter")
+        val.addWidget(b_dupes)
+        val.addWidget(QLabel("max distance"))
+        val.addWidget(self._dup_thresh)
+        val.addStretch(1)
+        outer.addLayout(val)
 
         split = QSplitter(Qt.Horizontal)
         self._list = QListWidget()
@@ -347,3 +365,72 @@ class DatasetView(QWidget):
             )
         except OSError as exc:
             QMessageBox.warning(self, "Save caption", str(exc))
+
+    # ----- dataset validation: near-duplicate detection ------------------- #
+    @staticmethod
+    def _dhash(path: Path, size: int = 8) -> int | None:
+        """64-bit difference hash via QImage (no extra deps): downscale to grayscale
+        (size+1 × size) and compare horizontally adjacent pixels."""
+        img = QImage(str(path))
+        if img.isNull():
+            return None
+        img = img.convertToFormat(QImage.Format_Grayscale8).scaled(
+            size + 1, size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+        bits = 0
+        i = 0
+        for y in range(size):
+            for x in range(size):
+                if img.pixelColor(x, y).red() > img.pixelColor(x + 1, y).red():
+                    bits |= 1 << i
+                i += 1
+        return bits
+
+    def _find_duplicates(self) -> None:
+        if self._dir is None or self._list.count() == 0:
+            return
+        hashes: dict[str, int] = {}
+        for i in range(self._list.count()):
+            name = self._list.item(i).text()
+            h = self._dhash(self._dir / name)
+            if h is not None:
+                hashes[name] = h
+            if i % 25 == 0:
+                QApplication.processEvents()  # keep the UI responsive on big folders
+        groups = image_dupes.group_duplicates(hashes, self._dup_thresh.value())
+        self._show_dupes(groups, hashes)
+
+    def _show_dupes(self, groups: list[list[str]], hashes: dict[str, int]) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Duplicate groups")
+        dlg.resize(460, 520)
+        lv = QVBoxLayout(dlg)
+        n = sum(len(g) for g in groups)
+        lv.addWidget(
+            QLabel(
+                f"{len(groups)} group(s), {n} images. Double-click a file to open it."
+                if groups
+                else "No near-duplicates found at this threshold."
+            )
+        )
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["file", "similarity"])
+        for gi, g in enumerate(groups, 1):
+            top = QTreeWidgetItem([f"Group {gi} ({len(g)} images)", ""])
+            ref = hashes[g[0]]
+            for name in g:
+                sim = image_dupes.similarity(hashes[name], ref)
+                child = QTreeWidgetItem([name, f"{sim * 100:.0f}%"])
+                top.addChild(child)
+            tree.addTopLevelItem(top)
+            top.setExpanded(True)
+        tree.itemDoubleClicked.connect(lambda it, _c: self._goto_image(it))
+        lv.addWidget(tree, 1)
+        dlg.exec()
+
+    def _goto_image(self, item: QTreeWidgetItem) -> None:
+        if item.childCount():  # a group header, not a file
+            return
+        matches = self._list.findItems(item.text(0), Qt.MatchExactly)
+        if matches:
+            self._list.setCurrentItem(matches[0])
