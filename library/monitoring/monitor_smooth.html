@@ -707,6 +707,25 @@
                 </div>
             </div>
         </div>
+
+        <!-- Runs (saved snapshots → compare) -->
+        <div class="panel">
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Runs <span style="color:var(--text-dim); font-weight:400; font-size:0.72rem;">check to compare loss</span></span>
+                <button id="refresh-runs" title="Reload saved runs" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:5px; padding:2px 8px; cursor:pointer; font-size:0.75rem;">↻</button>
+            </div>
+            <div class="panel-content"><div id="runs-list" style="font-size:0.8rem;">No saved runs yet.</div></div>
+        </div>
+    </div>
+
+    <!-- RUN COMPARISON (overlay saved runs' loss) -->
+    <div class="chart-section" id="compare-section" style="display:none;">
+        <div class="chart-header">
+            <span class="chart-title">Run Comparison — loss (EMA)</span>
+        </div>
+        <div class="chart-container">
+            <canvas id="compareChart"></canvas>
+        </div>
     </div>
 
     <!-- FOOTER -->
@@ -820,6 +839,66 @@
             // path, which is why the Y-axis looked right. Format the value explicitly.
             options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: (ctx) => 'LR: ' + (ctx.parsed.y == null ? ctx.parsed.y : Number(ctx.parsed.y).toExponential(3)) } } } }
         });
+
+        // ==================== Run comparison (saved snapshots) ====================
+        const COMPARE_COLORS = ['#39ff14','#ff6b35','#36d1ff','#c084fc','#facc15','#fb7185','#34d399','#60a5fa'];
+        const compareRuns = {};
+        const compareChart = new Chart(document.getElementById('compareChart'), {
+            type: 'line',
+            data: { datasets: [] },
+            options: {
+                ...chartDefaults,
+                parsing: false,
+                plugins: { ...chartDefaults.plugins, legend: { display: true, labels: { color: '#888', font: { family: "'JetBrains Mono'", size: 10 }, boxWidth: 12, boxHeight: 8 } } },
+                scales: {
+                    x: { type: 'linear', grid: chartDefaults.scales.x.grid, ticks: chartDefaults.scales.x.ticks },
+                    y: chartDefaults.scales.y
+                }
+            }
+        });
+
+        async function loadRuns() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/runs?_=${Date.now()}`);
+                const runs = await resp.json();
+                const el = document.getElementById('runs-list');
+                if (!runs.length) { el.innerHTML = 'No saved runs yet.'; return; }
+                el.innerHTML = runs.map(r => {
+                    const loss = (r.final_loss != null) ? Number(r.final_loss).toFixed(4) : '--';
+                    const checked = compareRuns[r.id] ? 'checked' : '';
+                    const name = (r.run || r.id);
+                    return `<label style="display:flex; align-items:center; gap:6px; padding:3px 0; cursor:pointer;">
+                        <input type="checkbox" class="run-check" data-id="${r.id}" data-run="${name.replace(/"/g,'')}" ${checked}>
+                        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.saved_at||''}">${name}</span>
+                        <span style="color:var(--text-dim);">${loss}</span>
+                    </label>`;
+                }).join('');
+                el.querySelectorAll('.run-check').forEach(cb => cb.addEventListener('change', e =>
+                    toggleRun(e.target.dataset.id, e.target.dataset.run, e.target.checked)));
+            } catch (e) { /* offline */ }
+        }
+
+        async function toggleRun(id, run, on) {
+            if (on) {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/run/${encodeURIComponent(id)}/state?_=${Date.now()}`);
+                    const st = await resp.json();
+                    let losses = downsample((st.losses || []).map(l => ({ step: l.step, loss: l.loss })), 1000);
+                    const ema = calcEMA(losses.map(l => l.loss), 0.05);
+                    const data = losses.map((l, i) => ({ x: l.step, y: ema[i] }));
+                    const color = COMPARE_COLORS[Object.keys(compareRuns).length % COMPARE_COLORS.length];
+                    compareChart.data.datasets.push({ runId: id, label: run, data, borderColor: color, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 });
+                    compareRuns[id] = true;
+                } catch (e) {}
+            } else {
+                const idx = compareChart.data.datasets.findIndex(d => d.runId === id);
+                if (idx >= 0) compareChart.data.datasets.splice(idx, 1);
+                delete compareRuns[id];
+            }
+            document.getElementById('compare-section').style.display =
+                compareChart.data.datasets.length ? 'block' : 'none';
+            compareChart.update();
+        }
 
         function calcEMA(data, alpha) {
             if (!data.length) return [];
@@ -1019,6 +1098,10 @@
         document.getElementById('open-samples-btn').addEventListener('click', async () => {
             try { await fetch(`${API_BASE}/open-samples`); } catch (e) {}
         });
+
+        // ==================== Runs browser / compare ====================
+        document.getElementById('refresh-runs').addEventListener('click', loadRuns);
+        loadRuns();
 
         // ==================== Sample lightbox (click → full-res) ====================
         const lightbox = document.getElementById('lightbox');
