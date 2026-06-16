@@ -37,7 +37,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -1263,6 +1263,7 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         self._btn_preview = QPushButton("Preview")
         self._btn_start = QPushButton("▶ Start")
+        self._btn_start.setObjectName("primary")  # the single gold call-to-action
         self._btn_stop = QPushButton("■ Stop")
         self._btn_monitor = QPushButton("Open monitor")
         self._btn_preview.clicked.connect(self._do_preview)
@@ -1451,9 +1452,145 @@ class MainWindow(QMainWindow):
                 sb.setValue(sb.maximum())
 
 
+# ──────────────────────────────────────────────────────────────────────────── #
+# Theme — "Gemini" near-black + gold accent, modelled on the Image-viewer Vue UI
+# (frontend/src/style.css). Dark QPalette for default widget surfaces + a QSS pass
+# for rounding / accent / inputs / scrollbars so the whole panel reads as one sleek
+# dark surface instead of the default OS grey.
+# ──────────────────────────────────────────────────────────────────────────── #
+_C = {
+    "bg": "#0A0A0A",      # window / tab pages
+    "card": "#141414",    # group boxes
+    "input": "#1C1C1C",   # inputs / buttons
+    "raised": "#242424",  # hover
+    "border": "#2A2A2A",
+    "accent": "#FACC15",  # Gemini gold
+    "accent_hi": "#FFE04A",
+    "text": "#EDEDED",
+    "muted": "#9A9A9A",
+    "faint": "#5A5A5A",
+}
+
+_QSS = """
+* {{ font-family: 'Pretendard','Segoe UI','Inter',sans-serif; font-size: 13px; outline: none; }}
+QMainWindow, QDialog {{ background: {bg}; }}
+QToolTip {{ background: {input}; color: {text}; border: 1px solid {border};
+           padding: 5px 8px; border-radius: 6px; }}
+
+QSplitter::handle {{ background: {bg}; }}
+QSplitter::handle:horizontal {{ width: 6px; }}
+
+/* Tabs */
+QTabWidget::pane {{ border: 1px solid {border}; border-radius: 12px; background: {bg};
+                   top: -1px; padding: 4px; }}
+QTabBar {{ qproperty-drawBase: 0; background: transparent; }}
+QTabBar::tab {{ background: transparent; color: {muted}; padding: 8px 16px; margin: 2px;
+               border: 1px solid transparent; border-radius: 8px; font-weight: 600; }}
+QTabBar::tab:hover {{ color: {text}; background: {card}; }}
+QTabBar::tab:selected {{ color: #000; background: {accent}; }}
+
+/* Cards */
+QGroupBox {{ background: {card}; border: 1px solid {border}; border-radius: 12px;
+            margin-top: 16px; padding: 14px 12px 12px 12px; font-weight: 600; color: {text}; }}
+QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; left: 14px;
+                   padding: 2px 8px; color: #C8C8C8; background: {card};
+                   border-radius: 6px; font-size: 11px; font-weight: 700; }}
+
+QLabel {{ color: {muted}; background: transparent; }}
+
+/* Buttons */
+QPushButton {{ background: {input}; color: {text}; border: 1px solid {border};
+              border-radius: 8px; padding: 7px 14px; font-weight: 600; }}
+QPushButton:hover {{ background: {raised}; border-color: {faint}; color: #fff; }}
+QPushButton:pressed {{ background: {bg}; }}
+QPushButton:disabled {{ color: {faint}; background: #131313; border-color: #1c1c1c; }}
+QPushButton:checked {{ background: {accent}; color: #000; border-color: {accent}; }}
+QPushButton#primary {{ background: {accent}; color: #000; border: none; font-weight: 800;
+                      padding: 8px 18px; }}
+QPushButton#primary:hover {{ background: {accent_hi}; }}
+QPushButton#primary:disabled {{ background: #3a3413; color: #777; }}
+
+/* Inputs */
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
+    background: {input}; color: {text}; border: 1px solid {border}; border-radius: 8px;
+    padding: 6px 10px; selection-background-color: {accent}; selection-color: #000; }}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {accent}; background: {card}; }}
+QLineEdit:disabled, QPlainTextEdit:disabled {{ color: {faint}; background: #131313; }}
+QLineEdit::placeholder {{ color: {faint}; }}
+
+/* Combo */
+QComboBox {{ background: {input}; color: {text}; border: 1px solid {border};
+            border-radius: 8px; padding: 6px 10px; }}
+QComboBox:hover {{ border-color: {faint}; }}
+QComboBox:focus, QComboBox:on {{ border-color: {accent}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox::down-arrow {{ width: 0; height: 0; border-left: 4px solid transparent;
+    border-right: 4px solid transparent; border-top: 5px solid {muted}; margin-right: 8px; }}
+QComboBox QAbstractItemView {{ background: {input}; color: {text}; border: 1px solid {border};
+    border-radius: 8px; selection-background-color: {accent}; selection-color: #000;
+    outline: none; padding: 4px; }}
+
+/* Checkboxes */
+QCheckBox, QRadioButton {{ color: {text}; spacing: 8px; background: transparent; }}
+QCheckBox:disabled, QRadioButton:disabled {{ color: {faint}; }}
+QCheckBox::indicator, QRadioButton::indicator {{ width: 16px; height: 16px;
+    border: 1px solid {border}; border-radius: 4px; background: {input}; }}
+QRadioButton::indicator {{ border-radius: 8px; }}
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {accent}; }}
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+    background: {accent}; border-color: {accent}; }}
+
+/* Tables / lists */
+QTableWidget, QListWidget {{ background: {bg}; alternate-background-color: {card};
+    color: {text}; border: 1px solid {border}; border-radius: 8px;
+    gridline-color: {border}; outline: none; }}
+QTableWidget::item, QListWidget::item {{ padding: 4px; }}
+QTableWidget::item:selected, QListWidget::item:selected {{ background: {accent}; color: #000; }}
+QHeaderView::section {{ background: {input}; color: {muted}; padding: 6px 8px; border: none;
+    border-right: 1px solid {border}; border-bottom: 1px solid {border}; font-weight: 700; }}
+QTableCornerButton::section {{ background: {input}; border: none; }}
+
+/* Scroll */
+QScrollArea {{ border: none; background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {border}; border-radius: 5px; min-height: 28px; }}
+QScrollBar::handle:vertical:hover {{ background: {faint}; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: {border}; border-radius: 5px; min-width: 28px; }}
+QScrollBar::handle:horizontal:hover {{ background: {faint}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+""".format(**_C)
+
+
+def _apply_theme(app: QApplication) -> None:
+    """Dark 'Gemini' palette + QSS. Palette covers default surfaces (so nothing flashes
+    OS-grey); QSS does rounding / gold accent / inputs / scrollbars."""
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(_C["bg"]))
+    pal.setColor(QPalette.WindowText, QColor(_C["text"]))
+    pal.setColor(QPalette.Base, QColor(_C["input"]))
+    pal.setColor(QPalette.AlternateBase, QColor(_C["card"]))
+    pal.setColor(QPalette.Text, QColor(_C["text"]))
+    pal.setColor(QPalette.Button, QColor(_C["input"]))
+    pal.setColor(QPalette.ButtonText, QColor(_C["text"]))
+    pal.setColor(QPalette.ToolTipBase, QColor(_C["input"]))
+    pal.setColor(QPalette.ToolTipText, QColor(_C["text"]))
+    pal.setColor(QPalette.Highlight, QColor(_C["accent"]))
+    pal.setColor(QPalette.HighlightedText, QColor("#000000"))
+    pal.setColor(QPalette.PlaceholderText, QColor(_C["faint"]))
+    pal.setColor(QPalette.Disabled, QPalette.Text, QColor(_C["faint"]))
+    pal.setColor(QPalette.Disabled, QPalette.WindowText, QColor(_C["faint"]))
+    app.setPalette(pal)
+    app.setStyle("Fusion")  # consistent base across OSes; QSS refines it
+    app.setStyleSheet(_QSS)
+
+
 def run() -> None:
     """Create the QApplication and show the main window (blocking)."""
     app = QApplication.instance() or QApplication(sys.argv)
+    _apply_theme(app)
     win = MainWindow()
     win.show()
     app.exec()
