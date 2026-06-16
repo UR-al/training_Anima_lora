@@ -633,6 +633,14 @@
                             <label class="control-label" for="loss-color">Color</label>
                             <input type="color" id="loss-color" value="#39ff14" title="EMA line color">
                         </div>
+                        <div class="control-group">
+                            <input type="checkbox" id="log-scale">
+                            <label for="log-scale" style="cursor:pointer">Log</label>
+                        </div>
+                        <div class="control-group">
+                            <button id="export-csv" title="Download loss/LR CSV" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:4px; padding:1px 6px; cursor:pointer; font-size:0.7rem;">CSV</button>
+                            <button id="export-png" title="Download loss chart PNG" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:4px; padding:1px 6px; cursor:pointer; font-size:0.7rem;">PNG</button>
+                        </div>
                     </div>
                 </div>
                 <div class="chart-legend">
@@ -679,6 +687,12 @@
                             <div class="sample-empty-icon">◇</div>
                             <div>No preview</div>
                         </div>
+                    </div>
+                    <!-- scrubber: scrub samples by step -->
+                    <div id="sample-scrubber" style="display:none; align-items:center; gap:8px; margin-top:8px;">
+                        <input type="range" id="sample-slider" min="0" max="0" value="0" style="flex:1;">
+                        <span id="sample-step-label" style="font-size:0.72rem; color:var(--text-dim); white-space:nowrap;"></span>
+                        <a id="sample-download" href="#" download title="Download this sample" style="font-size:0.85rem; text-decoration:none; color:var(--text-secondary);">⤓</a>
                     </div>
                 </div>
             </div>
@@ -1052,6 +1066,19 @@
                     updateSamplesGrid(data.samples);
                 }
                 
+                // Best (min) loss / val readout (best marker)
+                const _losses = data.losses || [];
+                const _vals = data.val_losses || [];
+                const bestLoss = _losses.length ? _losses.reduce((a, b) => b.loss < a.loss ? b : a) : null;
+                const bestVal = _vals.length ? _vals.reduce((a, b) => b.loss < a.loss ? b : a) : null;
+                const analysisEl = document.getElementById('analysis');
+                if (analysisEl && (bestLoss || bestVal)) {
+                    let rows = '';
+                    if (bestLoss) rows += `<div class="analysis-row"><span class="analysis-label">Best loss</span><span class="analysis-value">${Number(bestLoss.loss).toFixed(4)} @ ${bestLoss.step}</span></div>`;
+                    if (bestVal) rows += `<div class="analysis-row"><span class="analysis-label">Best val</span><span class="analysis-value">${Number(bestVal.loss).toFixed(4)} @ ${bestVal.step}</span></div>`;
+                    analysisEl.innerHTML = rows;
+                }
+
                 // Config
                 if (data.config && Object.keys(data.config).length) {
                     const html = Object.entries(data.config).map(([k, v]) => `
@@ -1103,6 +1130,32 @@
         document.getElementById('refresh-runs').addEventListener('click', loadRuns);
         loadRuns();
 
+        // ==================== Log scale + export ====================
+        document.getElementById('log-scale').addEventListener('change', e => {
+            lossChart.options.scales.y = { ...chartDefaults.scales.y, type: e.target.checked ? 'logarithmic' : 'linear' };
+            lossChart.update();
+        });
+        document.getElementById('export-png').addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = lossChart.toBase64Image(); a.download = 'loss.png'; a.click();
+        });
+        document.getElementById('export-csv').addEventListener('click', () => {
+            const d = lastData || {};
+            let csv = 'step,loss\n' + (d.losses || []).map(l => `${l.step},${l.loss}`).join('\n');
+            csv += '\n\nstep,lr\n' + (d.lr_history || []).map(l => `${l.step},${l.lr}`).join('\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            a.download = 'metrics.csv'; a.click();
+        });
+
+        // ==================== Sample scrubber ====================
+        document.getElementById('sample-slider').addEventListener('input', e => {
+            activeIndex = parseInt(e.target.value, 10) || 0;
+            showPreview(activeIndex);
+            document.querySelectorAll('.sample-thumb').forEach((t, i) =>
+                t.classList.toggle('active', i === activeIndex));
+        });
+
         // ==================== Sample lightbox (click → full-res) ====================
         const lightbox = document.getElementById('lightbox');
         const lightboxImg = document.getElementById('lightbox-img');
@@ -1129,6 +1182,17 @@
                 activeIndex = Math.min(activeIndex, list.length - 1);
             } else {
                 activeIndex = 0;
+            }
+
+            // scrubber range
+            const scrubber = document.getElementById('sample-scrubber');
+            const slider = document.getElementById('sample-slider');
+            if (list.length > 0) {
+                scrubber.style.display = 'flex';
+                slider.max = list.length - 1;
+                slider.value = activeIndex;
+            } else {
+                scrubber.style.display = 'none';
             }
             
             // 生成缩略图
@@ -1187,6 +1251,10 @@
                     Step <strong>${sample.step}</strong>
                 </div>
             `;
+            const lbl = document.getElementById('sample-step-label');
+            if (lbl) lbl.textContent = `Step ${sample.step} (${index + 1}/${currentSamples.length})`;
+            const dl = document.getElementById('sample-download');
+            if (dl) { dl.href = imgUrl; dl.download = `sample_step${sample.step}.png`; }
         }
     </script>
 </body>
