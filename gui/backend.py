@@ -173,6 +173,7 @@ _CURATED_ARGS = {
     "sample_every_n_epochs",
     "sample_sampler",
     "sample_at_first",
+    "sample_decode_inline",
     "seed",
     "monitor",
     "monitor_host",
@@ -1212,6 +1213,7 @@ def _method_preset_extra(form: dict):
         ("--sample_every_n_steps", "sample_every_n_steps"),
         ("--sample_every_n_epochs", "sample_every_n_epochs"),
         ("--sample_sampler", "sample_sampler"),
+        ("--sample_decode_inline", "sample_decode_inline"),  # true/false/auto
         # constant→cosine one-shot (use_constantcosine appends a cosine tail; the
         # floor is lr_scheduler_min_lr_ratio).
         ("--constantcosine_tail_epochs", "constantcosine_tail_epochs"),

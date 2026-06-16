@@ -38,11 +38,19 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPropertyAnimation, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QKeySequence,
+    QPalette,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -139,6 +147,8 @@ _KO = {
     "Core / hardware": "코어 / 하드웨어",
     "Web monitor": "웹 모니터",
     "More flags": "기타 플래그",
+    "Find argument": "인자 찾기",
+    "Find argument… (name / description)": "인자 찾기… (이름 / 설명)",
     # schema-arg cluster headers (group boxes under each tab)
     "misc": "기타",
     "Precision": "정밀도",
@@ -172,6 +182,11 @@ _KO = {
     "Warm-start weights": "웜스타트 가중치",
     "Dataset config TOML": "데이터셋 설정 TOML",
     "Sample prompts file": "샘플 프롬프트 파일",
+    "Sample every N steps": "N 스텝마다 샘플",
+    "Sample every N epochs": "N epoch마다 샘플",
+    "Sample before training": "학습 전 샘플 생성",
+    "Sample sampler": "샘플 샘플러",
+    "Sample decode inline": "샘플 인라인 디코드",
     "LoRA type (method)": "LoRA 종류 (method)",
     "Network module": "네트워크 모듈",
     "Network dim (rank)": "네트워크 dim (rank)",
@@ -302,10 +317,27 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 ],
             ),
             (
-                "Dataset / samples",
+                "Dataset",
                 [
                     ("dataset_config", "Dataset config TOML", "file"),
+                ],
+            ),
+            (
+                # All sample-IMAGE-generation knobs consolidated here (per user).
+                # The cadence/sampler/at_first/decode flags are emitted from the form
+                # by backend._method_preset_extra (they're in _CURATED_ARGS).
+                "Sampling",
+                [
                     ("sample_prompts", "Sample prompts file", "file"),
+                    ("sample_every_n_steps", "Sample every N steps", "text"),
+                    ("sample_every_n_epochs", "Sample every N epochs", "text"),
+                    ("sample_at_first", "Sample before training", "bool"),
+                    ("sample_sampler", "Sample sampler", "combo:euler,er_sde,lcm"),
+                    (
+                        "sample_decode_inline",
+                        "Sample decode inline",
+                        "combo:auto,true,false",
+                    ),
                 ],
             ),
         ],
@@ -745,6 +777,11 @@ class MainWindow(QMainWindow):
 
         self._build_central()
 
+        # Ctrl+F → find any argument by name/label/description and jump to it.
+        self._find_sc = QShortcut(QKeySequence.Find, self)
+        self._find_sc.activated.connect(self._show_search)
+        self._search_dlg: QDialog | None = None
+
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._poll)
@@ -778,10 +815,40 @@ class MainWindow(QMainWindow):
             saved = {d: g() for d, g in self._getters.items()}
         except Exception:
             saved = {}
+        # Schema ("advanced") fields live in self._adv + self._widgets, NOT in the
+        # getter/setter registries — so they used to RESET on a language switch (the
+        # "budget + dropdowns get cleared" bug). Snapshot their values by dest and
+        # restore them onto the rebuilt widgets below.
+        saved_adv: dict[str, object] = {}
+        try:
+            for arg, _g in self._adv:
+                d = arg.get("dest")
+                if d:
+                    saved_adv[d] = self._widget_value(d)
+        except Exception:
+            pass
+        # Auto-batch panel widgets live in self._ab (its own dict, no getters) and the
+        # tier toggles in self._ab_res_checks — both rebuilt by _build_autobatch_tab, so
+        # they reset on a language switch too (the "budget + dropdowns cleared" bug).
+        saved_ab: dict[str, object] = {}
+        try:
+            for k, wdg in getattr(self, "_ab", {}).items():
+                if isinstance(wdg, QCheckBox):
+                    saved_ab[k] = wdg.isChecked()
+                elif isinstance(wdg, QComboBox):
+                    saved_ab[k] = wdg.currentText()
+                else:
+                    saved_ab[k] = wdg.text()
+        except Exception:
+            pass
+        saved_ab_res = [
+            t for t, cb in getattr(self, "_ab_res_checks", []) if cb.isChecked()
+        ]
         try:
             saved_subsets = self._collect_subsets()
         except Exception:
             saved_subsets = []
+        view = self._capture_view_state()  # current tab + scroll positions
         if getattr(self, "_timer", None) is not None:
             self._timer.stop()
         # Reset the per-build registries (repopulated by _build_central → builders).
@@ -799,26 +866,212 @@ class MainWindow(QMainWindow):
                     setter(v)
                 except Exception:
                     pass
+        for d, v in saved_adv.items():  # schema fields: set by dest (no setter exists)
+            try:
+                self._set_widget_value(d, v)
+            except Exception:
+                pass
+        for k, v in saved_ab.items():  # auto-batch panel widgets (own dict)
+            wdg = getattr(self, "_ab", {}).get(k)
+            try:
+                if isinstance(wdg, QCheckBox):
+                    wdg.setChecked(bool(v))
+                elif isinstance(wdg, QComboBox):
+                    self._set_combo(wdg, v)
+                elif wdg is not None:
+                    wdg.setText(str(v or ""))
+            except Exception:
+                pass
+        if saved_ab_res:
+            for t, cb in getattr(self, "_ab_res_checks", []):
+                cb.setChecked(t in saved_ab_res)
         for s in saved_subsets:  # subset cards aren't in the getter registry
             try:
                 self._add_subset_card(s)
             except Exception:
                 pass
+        self._restore_view_state(view)  # restore the tab + scroll the user was on
         if getattr(self, "_timer", None) is not None:
             self._timer.start()
 
+    # ----- view-state preservation across a language-switch rebuild ------- #
+    def _capture_view_state(self) -> dict:
+        st: dict = {}
+        pt = getattr(self, "_parent_tabs", None)
+        if pt is not None:
+            st["parent"] = pt.currentIndex()
+        ti = getattr(self, "_training_inner", None)
+        if ti is not None:
+            st["training"] = ti.currentIndex()
+        ui = getattr(self, "_utils_inner", None)
+        if ui is not None:
+            st["utils"] = ui.currentIndex()
+        st["scrolls"] = [
+            sc.verticalScrollBar().value()
+            for sc in getattr(self, "_training_scrolls", [])
+        ]
+        return st
+
+    def _restore_view_state(self, st: dict) -> None:
+        pt = getattr(self, "_parent_tabs", None)
+        if pt is not None and "parent" in st:
+            pt.setCurrentIndex(st["parent"])
+        ti = getattr(self, "_training_inner", None)
+        if ti is not None and "training" in st:
+            ti.setCurrentIndex(st["training"])
+        ui = getattr(self, "_utils_inner", None)
+        if ui is not None and "utils" in st:
+            ui.setCurrentIndex(st["utils"])
+        scrolls = getattr(self, "_training_scrolls", [])
+        vals = st.get("scrolls") or []
+        # Scrollbar maximum isn't valid until the layout settles → defer the set.
+        for sc, val in zip(scrolls, vals):
+            QTimer.singleShot(
+                0, lambda sc=sc, val=val: sc.verticalScrollBar().setValue(val)
+            )
+
+    def _set_widget_value(self, dest: str, value: object) -> None:
+        """Set a field's value by dest onto whatever widget now backs it — used to
+        restore schema/advanced fields across the language-switch rebuild, since those
+        register no setter (only a getter in self._adv)."""
+        w = self._widgets.get(dest)
+        if isinstance(w, QCheckBox):
+            w.setChecked(_truthy(value))
+        elif isinstance(w, QComboBox):
+            self._set_combo(w, value)
+        elif isinstance(w, QLineEdit):
+            w.setText(str(value or ""))
+
+    # ----- Ctrl+F argument search ----------------------------------------- #
+    def _build_search_index(self) -> list[dict]:
+        """Searchable field index: every curated + schema field with a live widget →
+        its containing Training-tab index + searchable label + Korean help. Rebuilt on
+        each open so it tracks the current language and any rebuild."""
+        idx: list[dict] = []
+        tab_order = {name: i for i, (name, _g) in enumerate(_TRAINING_TABS)}
+        seen: set[str] = set()
+        for tname, groups in _TRAINING_TABS:  # curated fields (carry a human label)
+            for _title, fields in groups:
+                for dest, label, _kind in fields:
+                    w = self._widgets.get(dest)
+                    if w is None or dest in seen:
+                        continue
+                    seen.add(dest)
+                    idx.append(
+                        {
+                            "dest": dest,
+                            "label": label,
+                            "ko": ARG_HELP.get(dest, ""),
+                            "tab": tab_order.get(tname, 0),
+                            "w": w,
+                        }
+                    )
+        for tname, args in (self._tab_schema or {}).items():  # schema (auto) fields
+            ti = tab_order.get(tname)
+            if ti is None:
+                continue
+            for arg in args:
+                dest = arg.get("dest") or ""
+                w = self._widgets.get(dest)
+                if not dest or w is None or dest in seen:
+                    continue
+                seen.add(dest)
+                idx.append(
+                    {
+                        "dest": dest,
+                        "label": dest,  # arg name stays English
+                        "ko": ARG_HELP.get(dest, (arg.get("help") or "")),
+                        "tab": ti,
+                        "w": w,
+                    }
+                )
+        return idx
+
+    def _show_search(self) -> None:
+        if self._search_dlg is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle(tr("Find argument"))
+            dlg.setModal(False)
+            dlg.resize(480, 400)
+            v = QVBoxLayout(dlg)
+            edit = QLineEdit()
+            edit.setPlaceholderText(tr("Find argument… (name / description)"))
+            results = QListWidget()
+            v.addWidget(edit)
+            v.addWidget(results, 1)
+            edit.textChanged.connect(self._search_filter)
+            edit.returnPressed.connect(
+                lambda: self._goto_search(results.item(0)) if results.count() else None
+            )
+            results.itemActivated.connect(self._goto_search)
+            self._search_dlg = dlg
+            self._search_edit = edit
+            self._search_results = results
+        self._search_data = self._build_search_index()
+        self._search_filter(self._search_edit.text())
+        self._search_dlg.show()
+        self._search_dlg.raise_()
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def _search_filter(self, text: str) -> None:
+        q = (text or "").strip().lower()
+        self._search_results.clear()
+        tab_names = [tr(n) for n, _g in _TRAINING_TABS]
+        for entry in getattr(self, "_search_data", []):
+            hay = f"{entry['dest']} {entry['label']} {entry['ko']}".lower()
+            if q and q not in hay:
+                continue
+            tn = tab_names[entry["tab"]] if 0 <= entry["tab"] < len(tab_names) else ""
+            disp = f"[{tn}] {entry['dest']}"
+            if entry["label"] and entry["label"] != entry["dest"]:
+                disp += f" — {tr(entry['label'])}"
+            it = QListWidgetItem(disp)
+            it.setData(Qt.UserRole, entry)
+            self._search_results.addItem(it)
+            if self._search_results.count() >= 80:
+                break
+
+    def _goto_search(self, item) -> None:
+        if item is None:
+            return
+        entry = item.data(Qt.UserRole)
+        if not entry:
+            return
+        if getattr(self, "_parent_tabs", None) is not None:
+            self._parent_tabs.setCurrentIndex(0)  # Training parent
+        ti = entry["tab"]
+        if getattr(self, "_training_inner", None) is not None:
+            self._training_inner.setCurrentIndex(ti)
+        scrolls = getattr(self, "_training_scrolls", [])
+        w = entry["w"]
+        if 0 <= ti < len(scrolls):
+            scrolls[ti].ensureWidgetVisible(w)
+        # Flash a gold border so the field is easy to spot, then clear it.
+        w.setStyleSheet("border: 2px solid #FACC15; border-radius: 4px;")
+        QTimer.singleShot(1600, lambda w=w: w.setStyleSheet(""))
+        try:
+            w.setFocus()
+        except Exception:
+            pass
+        if self._search_dlg is not None:
+            self._search_dlg.hide()
+
     def _build_parent_tabs(self) -> QTabWidget:
         parent = QTabWidget()
+        self._parent_tabs = parent  # kept so a language-switch can restore the tab
         parent.addTab(self._build_training_parent(), tr("Training"))
         parent.addTab(self._build_utils_parent(), tr("Utils"))
         return parent
 
     def _build_training_parent(self) -> QTabWidget:
         inner = QTabWidget()
+        self._training_inner = inner
+        self._training_scrolls = []  # per-tab QScrollArea → restore scroll on rebuild
         for tab_name, groups in _TRAINING_TABS:
-            inner.addTab(
-                self._scroll(self._build_training_tab(tab_name, groups)), tr(tab_name)
-            )
+            sc = self._scroll(self._build_training_tab(tab_name, groups))
+            self._training_scrolls.append(sc)
+            inner.addTab(sc, tr(tab_name))
         return inner
 
     # ----- saved-run queue (collapsible panel, not a tab) ----------------- #
@@ -1582,6 +1835,7 @@ class MainWindow(QMainWindow):
         from gui.native.dataset_view import DatasetView
 
         inner = QTabWidget()
+        self._utils_inner = inner
         inner.addTab(DatasetView(), tr("Dataset"))
         inner.addTab(self._scroll(self._build_preprocess_tab()), tr("Preprocess"))
         inner.addTab(self._scroll(self._build_update_tab()), tr("Update"))
@@ -2074,6 +2328,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Launch failed", str(res.get("error") or res))
             return
         self._log.clear()
+        self._log_cache = ""
 
     def _do_stop(self) -> None:
         res = backend.stop()
@@ -2128,12 +2383,18 @@ class MainWindow(QMainWindow):
         else:
             self._status.setText("idle")
         lines = backend.log_tail(400).get("lines") or []
-        if lines:
+        text = "\n".join(lines)
+        # Only touch the document when it actually changed. Re-setting it every poll
+        # re-rendered and yanked the scrollbar to the TOP whenever the user had
+        # scrolled up to read history (the "log jumps up" bug). Preserve position:
+        # pin to bottom only if already there, otherwise keep the user's spot.
+        if text != getattr(self, "_log_cache", None):
             sb = self._log.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 4
-            self._log.setPlainText("\n".join(lines))
-            if at_bottom:
-                sb.setValue(sb.maximum())
+            prev = sb.value()
+            self._log.setPlainText(text)
+            self._log_cache = text
+            sb.setValue(sb.maximum() if at_bottom else min(prev, sb.maximum()))
 
 
 # ──────────────────────────────────────────────────────────────────────────── #

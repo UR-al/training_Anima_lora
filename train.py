@@ -2536,6 +2536,17 @@ class AnimaTrainer:
                         "run": args.output_name or "run",
                         "method": getattr(args, "method", None),
                         "preset": getattr(args, "preset", None),
+                        # LyCORIS preset rides in --network_args as "preset=<name>";
+                        # surface it separately so the dashboard doesn't conflate it
+                        # with the hardware preset above (it used to show only "preset").
+                        "lycoris_preset": next(
+                            (
+                                a.split("=", 1)[1]
+                                for a in (getattr(args, "network_args", None) or [])
+                                if isinstance(a, str) and a.startswith("preset=")
+                            ),
+                            None,
+                        ),
                         "optimizer": getattr(args, "optimizer_type", None),
                         "lr": getattr(args, "learning_rate", None),
                         "sample_every_n_steps": getattr(
