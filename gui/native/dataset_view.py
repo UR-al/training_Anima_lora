@@ -3,20 +3,22 @@
 
 Browse an image folder (default ``image_dataset/``), see each image with its
 ``.txt`` caption side-by-side, edit + save the caption, sort the tags into the
-Anima canonical order (``gui.native.tag_sort``), and overlay the SAM3/MIT mask
-(``post_image_dataset/masks/…/{stem}_mask.png``) with a toggle.
+Anima canonical order (``gui.native.tag_sort``), and view **and paint** the
+SAM3/MIT mask (``post_image_dataset/masks/…/{stem}_mask.png``).
 
-Milestone: viewer + caption edit/sort + mask overlay (read-only). Brush painting
-of the mask is the next milestone — :class:`ImageMaskView` already keeps the mask
-as a separate layer so the paint path slots in without a rewrite.
+The mask layer is held as a white-on-black ``QImage`` at image resolution — the
+exact on-disk format — so loading an existing mask is a single ``drawPixmap`` and
+saving is a single ``QImage.save`` (no per-pixel loops, no Qt6 alpha-channel
+pitfalls). Brush paints white (masked) / black (erase); the overlay shows the
+layer at partial opacity. (Red-tinted overlay is a cosmetic follow-up.)
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
+from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -40,38 +43,117 @@ _MASKS_REL = "post_image_dataset/masks"
 
 
 class ImageMaskView(QWidget):
-    """Aspect-fit image with an optional tinted mask overlay."""
+    """Aspect-fit image with a paintable white-on-black mask layer overlay."""
 
     def __init__(self) -> None:
         super().__init__()
         self._pix: QPixmap | None = None
-        self._mask: QPixmap | None = None
+        self._mask: QImage | None = None  # RGB32, image-res, white=masked
         self._show_mask = False
-        self.setMinimumSize(360, 360)
+        self._editable = False
+        self._dragging = False
+        self.brush_size = 40  # image-pixel radius
+        self.erase = False
 
+    # ----- content -------------------------------------------------------- #
     def set_image(self, pix: QPixmap | None) -> None:
         self._pix = pix
+        self._mask = None
         self.update()
 
-    def set_mask(self, pix: QPixmap | None) -> None:
-        self._mask = pix
+    def load_mask(self, pix: QPixmap | None) -> None:
+        if self._pix is None:
+            self._mask = None
+            self.update()
+            return
+        size = self._pix.size()
+        m = QImage(size, QImage.Format_RGB32)
+        m.fill(Qt.black)
+        if pix is not None:
+            p = QPainter(m)
+            p.drawPixmap(QRect(0, 0, size.width(), size.height()), pix)
+            p.end()
+        self._mask = m
         self.update()
 
-    def set_show_mask(self, on: bool) -> None:
-        self._show_mask = on
-        self.update()
+    def _ensure_mask(self) -> None:
+        if self._mask is None and self._pix is not None:
+            self._mask = QImage(self._pix.size(), QImage.Format_RGB32)
+            self._mask.fill(Qt.black)
 
     def has_mask(self) -> bool:
         return self._mask is not None
 
+    def clear_mask(self) -> None:
+        self._ensure_mask()
+        if self._mask is not None:
+            self._mask.fill(Qt.black)
+            self.update()
+
+    def save_mask(self, path: Path) -> bool:
+        if self._mask is None:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return self._mask.save(str(path), "PNG")
+
+    # ----- view / edit modes ---------------------------------------------- #
+    def set_show_mask(self, on: bool) -> None:
+        self._show_mask = on
+        self.update()
+
+    def set_editable(self, on: bool) -> None:
+        self._editable = on
+        if on:
+            self._ensure_mask()
+            self._show_mask = True
+        self.update()
+
+    # ----- geometry ------------------------------------------------------- #
     def _fit_rect(self, size: QSize) -> QRect:
-        if size.isEmpty():
+        if size.isEmpty() or self.width() == 0 or self.height() == 0:
             return self.rect()
         scale = min(self.width() / size.width(), self.height() / size.height())
         w, h = int(size.width() * scale), int(size.height() * scale)
         return QRect((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
-    def paintEvent(self, _event) -> None:  # noqa: N802 (Qt override)
+    def _img_point(self, pos) -> QPoint | None:
+        if self._pix is None:
+            return None
+        tr = self._fit_rect(self._pix.size())
+        if tr.width() == 0 or tr.height() == 0:
+            return None
+        x = (pos.x() - tr.x()) * self._pix.width() / tr.width()
+        y = (pos.y() - tr.y()) * self._pix.height() / tr.height()
+        return QPoint(int(x), int(y))
+
+    def _paint_at(self, pos) -> None:
+        self._ensure_mask()
+        if self._mask is None:
+            return
+        ip = self._img_point(pos)
+        if ip is None:
+            return
+        p = QPainter(self._mask)
+        p.setPen(Qt.NoPen)
+        p.setBrush(Qt.black if self.erase else Qt.white)
+        p.drawEllipse(ip, self.brush_size, self.brush_size)
+        p.end()
+        self.update()
+
+    # ----- events --------------------------------------------------------- #
+    def mousePressEvent(self, e) -> None:  # noqa: N802 (Qt override)
+        if self._editable and e.button() == Qt.LeftButton:
+            self._dragging = True
+            self._paint_at(e.position().toPoint())
+
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if self._editable and self._dragging:
+            self._paint_at(e.position().toPoint())
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        self._dragging = False
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), Qt.darkGray)
         if self._pix is None:
@@ -80,7 +162,7 @@ class ImageMaskView(QWidget):
         p.drawPixmap(target, self._pix)
         if self._show_mask and self._mask is not None:
             p.setOpacity(0.45)
-            p.drawPixmap(target, self._mask)
+            p.drawImage(target, self._mask)
             p.setOpacity(1.0)
 
 
@@ -113,18 +195,51 @@ class DatasetView(QWidget):
         self._list = QListWidget()
         self._list.currentItemChanged.connect(self._on_select)
         split.addWidget(self._list)
+        split.addWidget(self._build_center())
+        split.addWidget(self._build_caption_panel())
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 3)
+        split.setStretchFactor(2, 2)
+        outer.addWidget(split, 1)
+        self._load_folder()
 
+    def _build_center(self) -> QWidget:
         center = QWidget()
         cv = QVBoxLayout(center)
         self._view = ImageMaskView()
         cv.addWidget(self._view, 1)
-        self._mask_toggle = QCheckBox("Show mask overlay")
+        # mask toolbar
+        bar = QHBoxLayout()
+        self._mask_toggle = QCheckBox("Show mask")
         self._mask_toggle.toggled.connect(self._view.set_show_mask)
-        cv.addWidget(self._mask_toggle)
+        self._edit_toggle = QCheckBox("Edit (brush)")
+        self._edit_toggle.toggled.connect(self._on_edit_toggle)
+        self._erase = QCheckBox("Erase")
+        self._erase.toggled.connect(lambda v: setattr(self._view, "erase", v))
+        self._brush = QSpinBox()
+        self._brush.setRange(1, 512)
+        self._brush.setValue(self._view.brush_size)
+        self._brush.valueChanged.connect(lambda v: setattr(self._view, "brush_size", v))
+        bar.addWidget(self._mask_toggle)
+        bar.addWidget(self._edit_toggle)
+        bar.addWidget(self._erase)
+        bar.addWidget(QLabel("brush"))
+        bar.addWidget(self._brush)
+        cv.addLayout(bar)
+        bar2 = QHBoxLayout()
+        b_clear = QPushButton("Clear mask")
+        b_save = QPushButton("Save mask")
+        b_clear.clicked.connect(self._view.clear_mask)
+        b_save.clicked.connect(self._save_mask)
+        bar2.addWidget(b_clear)
+        bar2.addWidget(b_save)
+        bar2.addStretch(1)
         self._mask_note = QLabel("")
-        cv.addWidget(self._mask_note)
-        split.addWidget(center)
+        bar2.addWidget(self._mask_note)
+        cv.addLayout(bar2)
+        return center
 
+    def _build_caption_panel(self) -> QWidget:
         right = QWidget()
         rv = QVBoxLayout(right)
         rv.addWidget(QLabel("Caption (.txt)"))
@@ -140,13 +255,7 @@ class DatasetView(QWidget):
         rv.addLayout(btns)
         vocab_msg = "vocab.json loaded" if self._vocab else "no vocab.json (rule-based)"
         rv.addWidget(QLabel(f"tag classifier: {vocab_msg}"))
-        split.addWidget(right)
-
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 3)
-        split.setStretchFactor(2, 2)
-        outer.addWidget(split, 1)
-        self._load_folder()
+        return right
 
     # ----- folder / list -------------------------------------------------- #
     def _choose_folder(self) -> None:
@@ -189,15 +298,30 @@ class DatasetView(QWidget):
         self._view.set_image(QPixmap(str(img)) if img.exists() else None)
         mask = self._mask_path(img)
         if mask.exists():
-            self._view.set_mask(QPixmap(str(mask)))
+            self._view.load_mask(QPixmap(str(mask)))
             self._mask_note.setText(f"mask: {mask.name}")
         else:
-            self._view.set_mask(None)
-            self._mask_note.setText("no mask for this image")
+            self._view.load_mask(None)
+            self._mask_note.setText("no mask on disk")
         cap = img.with_suffix(".txt")
         self._caption.setPlainText(
             cap.read_text(encoding="utf-8") if cap.exists() else ""
         )
+
+    def _on_edit_toggle(self, on: bool) -> None:
+        self._view.set_editable(on)
+        if on:
+            self._mask_toggle.setChecked(True)
+
+    def _save_mask(self) -> None:
+        if self._current is None:
+            return
+        if not self._view.save_mask(self._mask_path(self._current)):
+            QMessageBox.warning(
+                self, "Save mask", "No mask to save (paint or load one)."
+            )
+        else:
+            self._mask_note.setText(f"saved: {self._mask_path(self._current).name}")
 
     # ----- caption -------------------------------------------------------- #
     def _sort_caption(self) -> None:
