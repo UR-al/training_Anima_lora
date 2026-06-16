@@ -45,8 +45,11 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -435,7 +438,82 @@ class MainWindow(QMainWindow):
             inner.addTab(
                 self._scroll(self._build_training_tab(tab_name, groups)), tab_name
             )
+        inner.addTab(self._scroll(self._build_queue_tab()), "Queue")
         return inner
+
+    # ----- saved-run queue ------------------------------------------------ #
+    def _build_queue_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "Saved-run queue: stack configs, then run them one after another "
+                "(each is the current form snapshot)."
+            )
+        )
+        self._queue_list = QListWidget()
+        vbox.addWidget(self._queue_list, 1)
+        row1 = QHBoxLayout()
+        b_add = QPushButton("➕ Add current")
+        b_load = QPushButton("Load selected → form")
+        b_rm = QPushButton("➖ Remove selected")
+        b_add.clicked.connect(self._queue_add)
+        b_load.clicked.connect(self._queue_load)
+        b_rm.clicked.connect(self._queue_remove)
+        for b in (b_add, b_load, b_rm):
+            row1.addWidget(b)
+        vbox.addLayout(row1)
+        row2 = QHBoxLayout()
+        b_refresh = QPushButton("Refresh")
+        b_clear = QPushButton("Clear all")
+        b_run = QPushButton("▶ Run queue")
+        b_refresh.clicked.connect(self._queue_refresh)
+        b_clear.clicked.connect(self._queue_clear)
+        b_run.clicked.connect(self._queue_run)
+        for b in (b_refresh, b_clear, b_run):
+            row2.addWidget(b)
+        vbox.addLayout(row2)
+        self._queue_refresh()
+        return w
+
+    def _queue_refresh(self) -> None:
+        self._queue_list.clear()
+        for it in backend.queue_list():
+            li = QListWidgetItem(f"#{it.get('id')}  {it.get('name')}")
+            li.setData(Qt.UserRole, it)
+            self._queue_list.addItem(li)
+
+    def _queue_selected(self) -> dict | None:
+        li = self._queue_list.currentItem()
+        return li.data(Qt.UserRole) if li else None
+
+    def _queue_add(self) -> None:
+        name, ok = QInputDialog.getText(self, "Queue", "Job name:")
+        if not ok:
+            return
+        backend.queue_add(name.strip(), self._collect())
+        self._queue_refresh()
+
+    def _queue_load(self) -> None:
+        it = self._queue_selected()
+        if it and isinstance(it.get("form"), dict):
+            self._apply(it["form"])
+            self._do_preview()
+
+    def _queue_remove(self) -> None:
+        it = self._queue_selected()
+        if it:
+            backend.queue_remove(it.get("id"))
+            self._queue_refresh()
+
+    def _queue_clear(self) -> None:
+        backend.queue_clear()
+        self._queue_refresh()
+
+    def _queue_run(self) -> None:
+        res = backend.queue_run()
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Queue", str(res.get("error") or res))
 
     def _build_training_tab(self, tab_name: str, groups: list) -> QWidget:
         w = QWidget()
