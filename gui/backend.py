@@ -1478,7 +1478,7 @@ def _dataset_subsets(form: dict) -> list[dict]:
                 d[k] = cast(v)
             except (TypeError, ValueError):
                 pass
-        for fk in ("flip_aug", "random_crop"):
+        for fk in ("flip_aug", "random_crop", "is_val"):
             if s.get(fk):
                 d[fk] = True
         # per-subset tiers (multi-scale): "512,1024" → [512,1024]; blank = all tiers
@@ -1528,6 +1528,7 @@ def _build_precached_config(form: dict) -> str | None:
         "caption_dropout_rate",
         "flip_aug",
         "random_crop",
+        "is_val",
     )
     blocks = []
     for s in subs:
@@ -1665,6 +1666,8 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         }
         if s.get("flip_aug"):
             block_common["flip_aug"] = True
+        if s.get("is_val"):
+            block_common["is_val"] = True  # whole subset → held-out validation
         rc_entry: dict = {}
         if s.get("random_crop"):
             rc_entry["random_crop"] = True
@@ -2533,6 +2536,7 @@ _SUBSET_KEYS = {
     "flip_aug": bool,
     "color_aug": bool,
     "random_crop": bool,
+    "is_val": bool,  # whole subset → held-out validation
     "caption_prefix": str,
     "caption_suffix": str,
 }

@@ -335,6 +335,7 @@ class DreamBoothSubset(BaseSubset):
         path_pattern: Optional[str] = None,
         repeat_by_folder_name: bool = False,
         random_crop_padding_percent: float = 0.05,
+        is_val: bool = False,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified"
 
@@ -371,6 +372,9 @@ class DreamBoothSubset(BaseSubset):
         )
 
         self.is_reg = is_reg
+        # Whole-subset held-out validation (symmetric to is_reg, which is train-only):
+        # an is_val subset's images all go to the validation pass, none to training.
+        self.is_val = is_val
         self.class_tokens = class_tokens
         self.caption_extension = caption_extension
         if self.caption_extension and not self.caption_extension.startswith("."):

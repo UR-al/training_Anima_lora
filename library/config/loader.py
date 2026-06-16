@@ -97,6 +97,8 @@ class BaseSubsetParams:
 @dataclass
 class DreamBoothSubsetParams(BaseSubsetParams):
     is_reg: bool = False
+    # Whole subset → held-out validation (all images validate, none train).
+    is_val: bool = False
     class_tokens: Optional[str] = None
     caption_extension: str = ".caption"
     cache_info: bool = False
@@ -210,6 +212,7 @@ class ConfigSanitizer:
     DB_SUBSET_DISTINCT_SCHEMA = {
         Required("image_dir"): str,
         "is_reg": bool,
+        "is_val": bool,
         "alpha_mask": bool,
         "cache_dir": str,
         "cond_cache_dir": str,
@@ -414,7 +417,9 @@ def _count_training_image_paths(dataset_blueprint: "DatasetBlueprint") -> int:
     total = 0
     for subset_blueprint in dataset_blueprint.subsets:
         params = subset_blueprint.params
-        if getattr(params, "is_reg", False):
+        # Reg images aren't part of the training pool; is_val subsets are held out
+        # for validation — neither counts toward the train-pool size threshold.
+        if getattr(params, "is_reg", False) or getattr(params, "is_val", False):
             continue
         image_dir = getattr(params, "image_dir", None)
         if not image_dir or not os.path.isdir(image_dir):
@@ -464,7 +469,19 @@ def generate_dataset_group_by_blueprint(
             **asdict(dataset_blueprint.params),
             is_training_dataset=True,
         )
-        datasets.append(dataset)
+        # A block whose subsets are ALL is_val contributes nothing to training (its
+        # images are held out for validation) — don't add an empty training dataset
+        # (make_buckets / the training loop would choke on 0 images).
+        if (
+            any(getattr(s, "is_val", False) for s in subsets)
+            and getattr(dataset, "num_train_images", 0) == 0
+        ):
+            logger.info(
+                "Dataset block is entirely is_val subsets → validation-only; "
+                "excluded from the training group."
+            )
+        else:
+            datasets.append(dataset)
 
     val_datasets: List[DreamBoothDataset] = []
     for dataset_blueprint in dataset_group_blueprint.datasets:
@@ -477,9 +494,15 @@ def generate_dataset_group_by_blueprint(
             )
             continue
 
+        # Build a validation dataset for this block if it requests a split OR holds
+        # any whole-subset (is_val) held-out validation subset.
+        has_val_subset = any(
+            getattr(sb.params, "is_val", False) for sb in dataset_blueprint.subsets
+        )
         if (
             dataset_blueprint.params.validation_split == 0.0
             and dataset_blueprint.params.validation_split_num <= 0
+            and not has_val_subset
         ):
             continue
 

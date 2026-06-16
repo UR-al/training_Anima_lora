@@ -243,6 +243,7 @@ _KO = {
     "Flip augment": "좌우 반전",
     "Random crop": "랜덤 크롭",
     "Grad checkpointing": "그래디언트 체크포인팅",
+    "Validation set (hold out)": "검증셋으로 사용 (전체 분리)",
     "▸ Optional args": "▸ 선택 인자",
     "▾ Optional args": "▾ 선택 인자",
     "Tiers (multi-scale)": "타일 (멀티스케일)",
@@ -1712,6 +1713,7 @@ class MainWindow(QMainWindow):
             ("flip_aug", "Flip augment"),
             ("random_crop", "Random crop"),
             ("gradient_checkpointing", "Grad checkpointing"),
+            ("is_val", "Validation set (hold out)"),
         ):
             cb = QCheckBox(tr(label))
             cb.setChecked(_truthy(values.get(key)))
@@ -1823,7 +1825,7 @@ class MainWindow(QMainWindow):
             cext = f.get("caption_extension")
             if cext is not None and cext.currentText().strip():
                 row["caption_extension"] = cext.currentText().strip()
-            for k in ("flip_aug", "random_crop", "gradient_checkpointing"):
+            for k in ("flip_aug", "random_crop", "gradient_checkpointing", "is_val"):
                 w = f.get(k)
                 if w is not None and w.isEnabled() and w.isChecked():
                     row[k] = True

@@ -60,6 +60,7 @@ _DB_SUBSET_DISTINCT_KEYS = frozenset(
     {
         "image_dir",
         "is_reg",
+        "is_val",
         "alpha_mask",
         "cache_dir",
         "cond_cache_dir",

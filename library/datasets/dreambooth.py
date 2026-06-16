@@ -224,7 +224,16 @@ class DreamBoothDataset(BaseDataset):
                         f"set image size from cache files: {size_set_count}/{len(img_paths)}"
                     )
 
-            if self.validation_split > 0.0 or self.validation_split_num > 0:
+            if getattr(subset, "is_val", False):
+                # Whole subset is held-out validation (symmetric to is_reg, which is
+                # train-only): every image goes to the validation pass, none to
+                # training — independent of the block's validation_split. The val
+                # dataset for this block is created in generate_dataset_group_by_
+                # blueprint when any subset is is_val.
+                if self.is_training_dataset:
+                    img_paths = []
+                    sizes = []
+            elif self.validation_split > 0.0 or self.validation_split_num > 0:
                 if subset.is_reg is True:
                     if self.is_training_dataset is False:
                         img_paths = []
