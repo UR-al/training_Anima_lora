@@ -36,7 +36,9 @@ def cmd_comfy_batch(extra):
         make comfy-batch W=colorize.json
         make comfy-batch W=colorize.json IMAGES=/path/to/imgs
     """
-    workflow = os.environ.get("W") or (extra[0] if extra else "workflows/modhydra-simple.json")
+    workflow = os.environ.get("W") or (
+        extra[0] if extra else "workflows/modhydra-simple.json"
+    )
     if os.sep not in workflow and "/" not in workflow:
         workflow = f"workflows/{workflow}"
     remaining = extra[1:] if (extra and not os.environ.get("W")) else list(extra)
@@ -109,6 +111,13 @@ def cmd_vendor_sync(extra):
     their inference subset when not running inside the anima_lora repo.
     """
     run([PY, "scripts/sync_vendor.py", *extra])
+
+
+def cmd_monitor(extra):
+    """Standalone web monitor — browse saved run snapshots / replay a finished run
+    offline and compare losses (no training). python tasks.py monitor
+    [--output_dir output] [--port 8766] [--no-browser]."""
+    run([PY, "tools/run_monitor.py", *(extra or [])])
 
 
 def cmd_export_logs(extra):
