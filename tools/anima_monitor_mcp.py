@@ -109,5 +109,28 @@ def post_analysis(text: str) -> str:
     return f"posted at {note['ts']}"
 
 
+@mcp.tool()
+def set_lr_scale(scale: float) -> dict:
+    """Steer the LR live: multiply the *scheduled* LR by ``scale`` (1.0 = normal,
+    0.5 = half, 2.0 = double). Takes effect within ~10 steps (training must run
+    with --monitor). Clears any active decay. Returns the new control state."""
+    return D.set_lr_scale(scale)
+
+
+@mcp.tool()
+def start_lr_decay(k_steps: int, floor: float = 0.0) -> dict:
+    """Begin an on-demand cosine decay of the LR from the current scale → ``floor``
+    over ``k_steps``, starting now (the "constantcosine, but I pick the moment"
+    move). Needs --monitor. Returns the new control state."""
+    step = int(D.read_state().get("step") or 0)
+    return D.start_lr_decay(step, k_steps, floor)
+
+
+@mcp.tool()
+def reset_lr() -> dict:
+    """Back to the scheduled LR (scale 1.0, no decay)."""
+    return D.reset_control()
+
+
 if __name__ == "__main__":
     mcp.run()  # stdio transport

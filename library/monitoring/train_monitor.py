@@ -809,6 +809,35 @@ class MonitorHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(json.dumps(notes).encode("utf-8"))
+        elif self.path.startswith("/api/control"):
+            # Runtime LR control. Query sets it; bare GET returns the current state.
+            # ?lr_scale=X  ·  ?reset=1  ·  ?decay=1&k=K&floor=F (from the current step)
+            from . import mcp_data
+
+            qs = parse_qs(urlparse(self.path).query or "")
+            step = int(MONITOR_STATE.get("step") or 0)
+            try:
+                if "lr_scale" in qs:
+                    mcp_data.set_lr_scale(float(qs["lr_scale"][0]))
+                elif "reset" in qs:
+                    mcp_data.reset_control()
+                elif "decay" in qs:
+                    k = int(qs.get("k", ["500"])[0])
+                    floor = float(qs.get("floor", ["0"])[0])
+                    mcp_data.start_lr_decay(step, k, floor)
+            except (ValueError, KeyError):
+                pass
+            ctrl = mcp_data.read_control()
+            out = {
+                "control": ctrl,
+                "step": step,
+                "effective_scale": mcp_data.effective_lr_scale(ctrl, step),
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(out).encode("utf-8"))
         else:
             self.send_error(404)
 

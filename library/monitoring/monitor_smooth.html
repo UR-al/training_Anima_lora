@@ -660,6 +660,13 @@
                     <div class="legend-item"><div class="legend-dot lr"></div><span>LR</span></div>
                     <input type="color" id="lr-color" value="#ff6b35" title="LR line color" style="margin-left:8px;">
                 </div>
+                <div id="lr-ctrl" style="display:flex; align-items:center; gap:5px; margin-left:auto; font-size:0.72rem; color:var(--text-secondary);" title="Runtime LR control (needs --monitor)">
+                    <span>scale <strong id="lr-scale-val" style="color:var(--accent);">1.00</strong></span>
+                    <button id="lr-half" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">×0.5</button>
+                    <button id="lr-double" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">×2</button>
+                    <button id="lr-decay" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">decay</button>
+                    <button id="lr-reset" style="background:var(--bg-tertiary); color:inherit; border:1px solid var(--border); border-radius:4px; padding:1px 5px; cursor:pointer;">reset</button>
+                </div>
             </div>
             <div class="chart-container small">
                 <canvas id="lrChart"></canvas>
@@ -1142,6 +1149,37 @@
         // ==================== Runs browser / compare ====================
         document.getElementById('refresh-runs').addEventListener('click', loadRuns);
         loadRuns();
+
+        // ==================== Runtime LR control ====================
+        async function lrCtrl(query) {
+            try {
+                const r = await fetch(`${API_BASE}/api/control${query}&_=${Date.now()}`);
+                return await r.json();
+            } catch (e) { return null; }
+        }
+        function showScale(d) {
+            if (d && d.effective_scale != null)
+                document.getElementById('lr-scale-val').textContent = Number(d.effective_scale).toFixed(2);
+        }
+        document.getElementById('lr-half').addEventListener('click', async () => {
+            const d = await lrCtrl('?');
+            const cur = (d && d.control && d.control.lr_scale) || 1.0;
+            showScale(await lrCtrl(`?lr_scale=${cur * 0.5}`));
+        });
+        document.getElementById('lr-double').addEventListener('click', async () => {
+            const d = await lrCtrl('?');
+            const cur = (d && d.control && d.control.lr_scale) || 1.0;
+            showScale(await lrCtrl(`?lr_scale=${cur * 2}`));
+        });
+        document.getElementById('lr-reset').addEventListener('click', async () => showScale(await lrCtrl('?reset=1')));
+        document.getElementById('lr-decay').addEventListener('click', async () => {
+            const k = parseInt(prompt('Cosine-decay the LR over how many steps?', '500') || '0', 10);
+            if (!k) return;
+            const floor = parseFloat(prompt('Floor scale (0 = decay to zero):', '0') || '0');
+            showScale(await lrCtrl(`?decay=1&k=${k}&floor=${floor}`));
+        });
+        setInterval(async () => showScale(await lrCtrl('?')), 3000);
+        lrCtrl('?').then(showScale);
 
         // ==================== AI Analysis notes (MCP write-back) ====================
         async function loadNotes() {
