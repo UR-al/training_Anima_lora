@@ -211,6 +211,9 @@ _KO = {
     "LR scheduler": "LR 스케줄러",
     "Constant→cosine (one-shot)": "Constant→cosine (원샷)",
     "↳ cosine tail (epochs)": "↳ cosine tail (epoch)",
+    "LR decay steps": "LR decay 스텝",
+    "Min LR ratio": "최소 LR 비율",
+    "Scheduler timescale": "스케줄러 timescale",
     "↳ optimizer args help": "↳ 옵티마이저 인자 도움말",
     "↳ scheduler args help": "↳ 스케줄러 인자 도움말",
     "▸ Show usable args": "▸ 사용 가능한 인자 보기",
@@ -345,6 +348,10 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                         "opthelp:lr_scheduler_type",
                     ),
                     ("lr_warmup_steps", "Warmup steps", "text"),
+                    # scheduler-cluster flags pulled out of "More flags" to sit here.
+                    ("lr_decay_steps", "LR decay steps", "text"),
+                    ("lr_scheduler_min_lr_ratio", "Min LR ratio", "text"),
+                    ("lr_scheduler_timescale", "Scheduler timescale", "text"),
                 ],
             ),
             (
