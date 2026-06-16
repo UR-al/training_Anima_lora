@@ -1669,8 +1669,11 @@ def _autobatch_argv(form: dict):
         argv += ["--blocks_to_swap", bts]
     if form.get("ab_auto_swap"):
         # OOM at the base swap → auto-escalate to the minimal blocks_to_swap that
-        # fits, capped at ab_max_swap (the user-specified max N; default 26).
-        argv += ["--max-swap", str(form.get("ab_max_swap") or "26").strip()]
+        # fits, capped at ab_max_swap (the user-specified max N; default 26). Coerce
+        # a non-numeric form value to the default instead of passing it through to a
+        # confusing child-process argparse error.
+        mx = str(form.get("ab_max_swap") or "26").strip()
+        argv += ["--max-swap", mx if mx.isdigit() else "26"]
     if form.get("ab_compile"):
         argv += ["--compile"]
     if form.get("ab_auto_budget"):
@@ -1825,6 +1828,61 @@ def run_preprocess(step: str) -> dict:
     return _spawn_util(["tasks.py", sub], "preprocess")
 
 
+# Cross-process run lock. The in-process _STATE guard only sees THIS process's run,
+# so a second front-end (the native GUI vs the Gradio GUI, or two windows) couldn't
+# see — and wouldn't refuse against — a train.py started elsewhere, and two GPU-bound
+# runs could collide (OOM / racing checkpoint writes). This advisory lockfile records
+# the live train.py PID; it is STALE-AWARE (a dead PID is ignored), so a crashed GUI
+# never blocks the next launch. It does NOT cover a bare `make lora` CLI run (that
+# bypasses this backend) — those users serialize manually.
+_LOCK_PATH = ROOT / "output" / "logs" / ".train_active.lock"
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        import psutil
+
+        return psutil.pid_exists(int(pid))
+    except Exception:  # noqa: BLE001 — psutil missing/err: don't hard-block a launch
+        return False
+
+
+def _other_run_active():
+    """A train.py launched by ANOTHER process (other GUI/window) is still alive.
+    Returns the lock dict or None. Ignores this process's own tracked run (the
+    in-process guard already covers that) and any stale (dead-PID) lock."""
+    import json as _json
+
+    try:
+        lk = _json.loads(_LOCK_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    pid = lk.get("pid")
+    own = _STATE.get("proc")
+    if own is not None and pid == own.pid:
+        return None
+    return lk if (pid and _pid_alive(pid)) else None
+
+
+def _write_lock(pid) -> None:
+    import json as _json
+
+    try:
+        _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LOCK_PATH.write_text(
+            _json.dumps({"pid": int(pid), "at": time.time()}), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _clear_lock() -> None:
+    try:
+        _LOCK_PATH.unlink()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def launch(form: dict) -> dict:
     """Spawn ``train.py`` as a direct child subprocess and capture its console to a
     logfile under ``output/logs/`` (so the Gradio/web live-log panel can tail it).
@@ -1836,6 +1894,16 @@ def launch(form: dict) -> dict:
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
         return {"ok": False, "error": "A run is already in progress."}
+    other = _other_run_active()
+    if other is not None:
+        return {
+            "ok": False,
+            "error": (
+                f"Another training run (pid {other.get('pid')}) is already active on "
+                "this machine — stop it first. Only one run at a time (they share the "
+                "GPU). If you're sure none is running, delete output/logs/.train_active.lock."
+            ),
+        }
 
     # Auto-preprocess → train: with the job queue gone we chain the two as a SINGLE
     # subprocess (tools/gui_chain_preprocess_train.py) instead of a queue hop. Build
@@ -1905,6 +1973,7 @@ def launch(form: dict) -> dict:
         monitor_url=mon,
         log_path=str(log_path),
     )
+    _write_lock(proc.pid)  # cross-process guard against a second concurrent run
     return {
         "ok": True,
         "command": cmd_str,
@@ -1938,6 +2007,8 @@ def _log_tail(stdout_path, n: int = 12):
 def status() -> dict:
     proc = _STATE.get("proc")
     running = proc is not None and proc.poll() is None
+    if proc is not None and not running:
+        _clear_lock()  # our run ended → drop the cross-process lock
     return {
         "running": running,
         "pid": proc.pid if proc else None,
@@ -1959,7 +2030,9 @@ def stop() -> dict:
             proc.terminate()
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+        _clear_lock()
         return {"ok": True, "stopped": "direct"}
+    _clear_lock()
     return {"ok": False, "error": "no run in progress"}
 
 

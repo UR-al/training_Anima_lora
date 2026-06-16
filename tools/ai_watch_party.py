@@ -14,6 +14,11 @@ through the torch-free :mod:`library.monitoring.mcp_data`).
 Run: ``python tools/ai_watch_party.py [--rounds N] [--interval 30]``. Needs the
 optional ``watch`` extra (``uv sync --extra watch``) and ANTHROPIC_API_KEY +
 OPENAI_API_KEY in the environment.
+
+Privacy: by default each round sends the latest **sample image** plus the run
+name/metrics to the Anthropic AND OpenAI APIs (third-party servers). For a LoRA of
+a private subject/likeness, pass ``--no-images`` to send metrics-only (the kohya
+native GUI defaults to no-images for this reason). No filesystem paths are sent.
 """
 
 from __future__ import annotations

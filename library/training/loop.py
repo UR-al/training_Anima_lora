@@ -516,14 +516,33 @@ def _run_step(trainer, state: LoopState, batch) -> torch.Tensor:
 # Runtime LR control cache (single training process). The control file is re-read
 # at most every 10 steps; the effective multiplier is recomputed every step from
 # the cached control + current step (so an on-demand cosine decay still ramps).
-_LR_CTRL = {"cache": {}, "read_step": -10_000}
+# ``groups`` tracks, per param-group, the unscaled base LR and the value we last
+# wrote — so we SET ``lr = base * scale`` each step rather than multiplying in
+# place. ``scale`` caches the last effective multiplier so the monitor can report
+# the *realized* LR (scheduled × scale), not the bare scheduled value.
+_LR_CTRL = {"cache": {}, "read_step": -10_000, "groups": {}, "scale": 1.0}
+
+
+def current_lr_scale() -> float:
+    """The runtime LR multiplier last applied by ``_apply_runtime_lr`` (1.0 when
+    no control is active). Used so the monitor logs the realized LR, not the bare
+    scheduled value."""
+    return float(_LR_CTRL.get("scale", 1.0) or 1.0)
 
 
 def _apply_runtime_lr(args, state: LoopState) -> None:
     """Apply the live LR multiplier from ``monitor_data/control.json`` to the
-    just-scheduled optimizer LR (gated on ``--monitor``). The scheduler resets each
-    param-group's lr every step, so multiplying here never compounds. Fully
-    guarded — a control-file glitch can never perturb the run."""
+    just-scheduled optimizer LR (gated on ``--monitor``).
+
+    We SET ``lr = base * scale`` per param-group rather than multiplying in place.
+    A plain in-place multiply only avoids compounding when a real scheduler rewrites
+    ``lr`` from ``base_lrs`` every step — but schedule-free optimizers run under a
+    no-op ``DummyScheduler`` (``library/training/schedulers.py``) that never touches
+    ``lr``, so an in-place ``*=`` would compound geometrically (scale 0.5 → 0.5ⁿ → 0,
+    scale 2.0 → blow-up). To stay correct for both, we detect whether the scheduler
+    reset ``lr`` since our last write: if it's unchanged we reuse the stored base
+    (schedule-free case), otherwise the fresh value IS the new base (real scheduler).
+    Fully guarded — a control-file glitch can never perturb the run."""
     if not getattr(args, "monitor", False):
         return
     try:
@@ -534,12 +553,26 @@ def _apply_runtime_lr(args, state: LoopState) -> None:
             _LR_CTRL["cache"] = mcp_data.read_control()
             _LR_CTRL["read_step"] = gs
         ctrl = _LR_CTRL["cache"]
-        if not ctrl:
-            return
-        scale = mcp_data.effective_lr_scale(ctrl, gs)
-        if scale != 1.0:
-            for pg in state.optimizer.param_groups:
-                pg["lr"] *= scale
+        scale = mcp_data.effective_lr_scale(ctrl, gs) if ctrl else 1.0
+        _LR_CTRL["scale"] = scale
+        groups = _LR_CTRL["groups"]
+        for i, pg in enumerate(state.optimizer.param_groups):
+            cur = float(pg["lr"])
+            st = groups.get(i)
+            if st is None:
+                # Never scaled this group yet: at scale 1.0 leave the scheduler's
+                # value untouched (zero effect / zero tracking for the normal run).
+                if scale == 1.0:
+                    continue
+                base = cur
+            elif abs(cur - st["written"]) <= 1e-12 * max(1.0, abs(cur)):
+                base = st["base"]  # lr unchanged since our write → schedule-free
+            else:
+                base = cur  # a real scheduler rewrote lr → it is the fresh base
+            target = base * scale
+            if target != cur:
+                pg["lr"] = target
+            groups[i] = {"base": base, "written": target}
     except Exception:
         pass
 

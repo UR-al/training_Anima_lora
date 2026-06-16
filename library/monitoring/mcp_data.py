@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -50,6 +51,11 @@ def status(state: dict) -> dict:
     elapsed = (time.time() - start) if start else 0.0
     eta = ((total - step) * (elapsed / step)) if (step and total and elapsed) else None
     cfg = state.get("config") or {}
+    # Surface the live runtime-LR multiplier so an MCP agent / the dashboard can
+    # CONFIRM a set_lr_scale took effect. The lr_curve reports the *scheduled* LR
+    # (realized = scheduled × lr_scale); without this the feedback loop is blind.
+    ctrl = read_control()
+    lr_scale = effective_lr_scale(ctrl, step) if ctrl else 1.0
     return {
         "run": cfg.get("run"),
         "epoch": state.get("epoch"),
@@ -57,6 +63,7 @@ def status(state: dict) -> dict:
         "total_steps": total,
         "progress_pct": round(100 * step / total, 1) if total else None,
         "latest_loss": losses[-1].get("loss") if losses else None,
+        "lr_scale": lr_scale,
         "speed_it_s": state.get("speed"),
         "elapsed_s": round(elapsed, 1) if elapsed else None,
         "eta_s": round(eta, 1) if eta else None,
@@ -178,7 +185,12 @@ def read_control(control_path: str | Path | None = None) -> dict:
 def write_control(control: dict, control_path: str | Path | None = None) -> dict:
     p = Path(control_path) if control_path else CONTROL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(control), encoding="utf-8")
+    # Atomic write (tmp + os.replace) so the training loop's poll can never read a
+    # half-written control.json (two writers exist: the dashboard's /api/control
+    # thread and the MCP server process).
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(control), encoding="utf-8")
+    os.replace(tmp, p)
     return control
 
 

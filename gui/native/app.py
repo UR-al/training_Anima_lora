@@ -581,7 +581,10 @@ class MainWindow(QMainWindow):
             e = QLineEdit(default)
             self._watch[key] = e
             form.addRow(label, e)
-        no_img = QCheckBox("Don't send sample images (cheaper)")
+        # Default ON (privacy): sample images otherwise leave the machine to
+        # Anthropic + OpenAI. The user opts in to sending them by unchecking this.
+        no_img = QCheckBox("Don't send sample images (privacy — they go to Anthropic+OpenAI)")
+        no_img.setChecked(True)
         self._watch["watch_no_images"] = no_img
         form.addRow(no_img)
         btn = QPushButton("▶ Start watch party")

@@ -2546,6 +2546,15 @@ class AnimaTrainer:
                         ),
                     },
                 )
+                # Clear any stale runtime-LR control left in control.json by a PRIOR
+                # session on this checkout (it's a fixed repo path, not per-run) so a
+                # leftover lr_scale / decay can't silently steer this fresh run.
+                try:
+                    from library.monitoring import mcp_data
+
+                    mcp_data.reset_control()
+                except Exception:
+                    pass
             else:
                 self.progress_sink = inner_sink
 

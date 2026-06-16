@@ -671,6 +671,34 @@ class MonitorHandler(SimpleHTTPRequestHandler):
         self.output_dir = output_dir or Path("./output")
         super().__init__(*args, **kwargs)
 
+    def _mutation_allowed(self) -> bool:
+        """State-changing routes (live LR control, open-folder) are localhost-only +
+        CSRF-guarded. Read routes stay open so a LAN host bound via --monitor_host
+        0.0.0.0 can still WATCH; but it cannot STEER a live run. Two gates:
+          1. client must be loopback — a LAN/remote host is read-only even on 0.0.0.0
+             (the monitor was read-only before runtime LR control existed; control
+             must not silently inherit the documented "expose on the LAN" bind).
+          2. Sec-Fetch-Site must be same-origin/none — blocks a cross-site page in the
+             operator's own browser from forging a control GET (CSRF), since the live
+             LR mutation lands even though the response is opaque to the attacker."""
+        host = (self.client_address[0] if self.client_address else "") or ""
+        if host not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            return False
+        site = self.headers.get("Sec-Fetch-Site")
+        if site is not None and site not in ("same-origin", "none"):
+            return False
+        return True
+
+    def _deny_control(self):
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps(
+                {"ok": False, "error": "control restricted to a local same-origin client"}
+            ).encode("utf-8")
+        )
+
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
@@ -727,7 +755,11 @@ class MonitorHandler(SimpleHTTPRequestHandler):
             else:
                 self.send_error(404)
         elif self.path.startswith("/open-samples"):
-            # Local dashboard → open the sample dir in the OS file browser.
+            # Local dashboard → open the sample dir in the OS file browser. Launches
+            # an OS process, so gate it like the control routes (loopback + same-origin)
+            # — a remote/cross-site GET must not pop a file-manager on the training host.
+            if not self._mutation_allowed():
+                return self._deny_control()
             d = self.output_dir / "sample"
             if not d.exists():
                 d = self.output_dir / "samples"
@@ -816,6 +848,12 @@ class MonitorHandler(SimpleHTTPRequestHandler):
 
             qs = parse_qs(urlparse(self.path).query or "")
             step = int(MONITOR_STATE.get("step") or 0)
+            # A bare GET reads the current control state (open to all, incl. a LAN
+            # dashboard); only the state-CHANGING variants are gated (loopback +
+            # same-origin) so a remote/cross-site request can't steer the live LR.
+            mutating = any(k in qs for k in ("lr_scale", "reset", "decay"))
+            if mutating and not self._mutation_allowed():
+                return self._deny_control()
             try:
                 if "lr_scale" in qs:
                     mcp_data.set_lr_scale(float(qs["lr_scale"][0]))
