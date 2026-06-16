@@ -214,6 +214,14 @@ _KO = {
     "LR decay steps": "LR decay 스텝",
     "Min LR ratio": "최소 LR 비율",
     "Scheduler timescale": "스케줄러 timescale",
+    "Caching / memory": "캐싱 / 메모리",
+    "Cache VAE latents": "VAE latent 캐시",
+    "Cache text-encoder outputs": "텍스트 인코더 출력 캐시",
+    "Gradient checkpointing": "그래디언트 체크포인팅",
+    "Qwen image VAE (2D)": "Qwen 이미지 VAE (2D)",
+    "Qwen3 max token length": "Qwen3 최대 토큰 길이",
+    "Attention": "어텐션",
+    "Attention mode": "어텐션 방식",
     "↳ optimizer args help": "↳ 옵티마이저 인자 도움말",
     "↳ scheduler args help": "↳ 스케줄러 인자 도움말",
     "▸ Show usable args": "▸ 사용 가능한 인자 보기",
@@ -294,6 +302,18 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                         "Dataset-tab-inserted separator)",
                         "bool",
                     ),
+                ],
+            ),
+            (
+                # Image management = subset; caches are tied to the images, so the
+                # VAE/TE caches + memory knobs live here (user's grouping).
+                "Caching / memory",
+                [
+                    ("use_vae_cache", "Cache VAE latents", "tristate"),
+                    ("use_text_cache", "Cache text-encoder outputs", "tristate"),
+                    ("gradient_checkpointing", "Gradient checkpointing", "bool"),
+                    ("qwen_image_vae_2d", "Qwen image VAE (2D)", "bool"),
+                    ("qwen3_max_token_length", "Qwen3 max token length", "text"),
                 ],
             ),
         ],
@@ -423,7 +443,16 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             ),
         ],
     ),
-    ("anima_lora", []),  # consolidated advanced flags (was each tab's "More flags")
+    (
+        # consolidated anima-specific flags; attention knobs pinned at the top.
+        "anima_lora",
+        [
+            (
+                "Attention",
+                [("attn_mode", "Attention mode", "combo:torch,flash,sageattn,flex,sdpa")],
+            ),
+        ],
+    ),
     ("Metadata", []),
     ("Extra", []),
 ]
