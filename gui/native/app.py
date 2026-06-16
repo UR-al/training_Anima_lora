@@ -1,20 +1,30 @@
 # -*- coding: utf-8 -*-
 """PySide6 desktop UI for the Anima LoRA trainer.
 
-Tabbed form (Training / Dataset / Advanced) over the shared, torch-free
+Two parent tabs — **Training** and **Utils** — over the shared, torch-free
 :mod:`gui.backend`, so this panel emits the same ``train.py`` commands as the
-Gradio one — only the UI differs (native dialogs, real tables, no localhost).
+Gradio one; only the UI differs (native dialogs, real tables, no localhost).
 
-- **Training**: curated fields built from a small declarative spec, dropdowns
-  sourced from ``backend.options()``.
-- **Dataset**: a real subset table → ``form['subsets']`` (the backend normalizes
-  it into a precached ``--dataset_config``), plus a single-folder fallback.
-- **Advanced**: every other ``train.py`` flag, schema-driven from
-  ``backend.list_arg_groups()`` → ``form['adv']`` (per-flag widgets with help),
-  plus a raw ``extra_flags`` escape hatch.
+Training child tabs (curated fields + schema args routed in by keyword):
+- **Folder**: every path/folder picker + the subset table; sample / validation /
+  save / logging / resume args land here.
+- **Network**: adapter selection — method (LoRA type), network module/dim/alpha/
+  args, LyCORIS preset + algo.
+- **Optimizer**: the training-settings mega-tab — optimizer/scheduler (+args),
+  loss/SNR/prior, the LR family + train-scope, norms/dropout, noise, and the
+  core/hardware knobs (epochs/steps/batch/precision/swap/compile/seed) +
+  flow-matching/timestep params.
+- **Monitoring**: web-monitor flags.
+- **Metadata**: metadata_* + no_metadata.
+- **Extra**: everything uncaught (inference stacks: dcw/spectrum/spd/… ) + a raw
+  ``extra_flags`` box.
 
-Command preview / Start / Stop / live log + config TOML load/save (config_io)
-live in the right-hand run panel. Utils + saved-run queue are later milestones.
+Utils child tabs drive the backend util launchers: Update (git pull + uv sync),
+Auto-batch search, Masking (SAM3 + MIT). Right panel: command preview, Start/Stop,
+live log, config TOML load/save.
+
+Schema args come from ``backend.list_arg_groups()`` (needs torch to populate);
+without it the curated fields still render and the structure is intact.
 """
 
 from __future__ import annotations
@@ -51,84 +61,246 @@ from PySide6.QtWidgets import (
 from gui import backend
 from gui.modules.config_io import load_toml_to_form, save_form_to_toml
 
-# Curated field spec: (dest, label, kind). kind ∈ text | combo:<src> | tristate |
-# bool | file | dir. combo src is an options() key or a literal comma list.
-_TRAINING_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
+# --------------------------------------------------------------------------- #
+# Curated layout — (tab, [(group_title, [(dest, label, kind), …]), …]).
+# kind ∈ text | combo:<src> | tristate | bool | file | dir | scope | opthelp.
+# Schema args (list_arg_groups) are routed in on top via _ROUTE_RULES; any dest
+# placed here is excluded from that routing (no double-render).
+# --------------------------------------------------------------------------- #
+_TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] = [
     (
-        "Model files",
+        "Folder",
         [
-            ("dit_path", "DiT checkpoint", "file"),
-            ("te_path", "Text encoder (Qwen3)", "file"),
-            ("vae_path", "VAE", "file"),
+            (
+                "Model paths",
+                [
+                    ("dit_path", "DiT checkpoint", "file"),
+                    ("te_path", "Text encoder (Qwen3)", "file"),
+                    ("vae_path", "VAE", "file"),
+                    ("t5_tokenizer_path", "Tokenizer path", "file"),
+                ],
+            ),
+            (
+                "Output / resume / logs",
+                [
+                    ("output_name", "Output name", "text"),
+                    ("output_dir", "Output dir", "dir"),
+                    ("resume", "Resume (state dir)", "dir"),
+                    ("logging_dir", "Logging dir", "dir"),
+                    ("network_weights", "Warm-start weights", "file"),
+                ],
+            ),
+            (
+                "Dataset / samples",
+                [
+                    ("dataset_config", "Dataset config TOML", "file"),
+                    ("sample_prompts", "Sample prompts file", "file"),
+                ],
+            ),
         ],
     ),
     (
-        "Output",
+        "Network",
         [
-            ("output_name", "Output name", "text"),
-            ("output_dir", "Output dir", "dir"),
+            (
+                "Adapter",
+                [
+                    ("method", "LoRA type (method)", "combo:methods"),
+                    ("network_module", "Network module", "combo:network_modules"),
+                    ("network_dim", "Network dim (rank)", "text"),
+                    ("network_alpha", "Network alpha", "text"),
+                    ("network_args", "network_args (k=v …)", "text"),
+                ],
+            ),
+            (
+                "LyCORIS",
+                [
+                    ("lycoris_preset", "LyCORIS preset", "combo:lycoris_presets"),
+                    ("algo", "LyCORIS algo (loha/lokr/…)", "combo:lycoris_algos"),
+                ],
+            ),
         ],
     ),
     (
-        "Method / Network",
+        "Optimizer",
         [
-            ("method", "Method", "combo:methods"),
-            ("preset", "Preset", "combo:presets"),
-            ("network_module", "Network module", "combo:network_modules"),
-            ("network_dim", "Network dim (rank)", "text"),
-            ("network_alpha", "Network alpha", "text"),
-            ("network_weights", "Warm-start weights", "file"),
-            ("network_args", "network_args (k=v …)", "text"),
+            (
+                "Optimizer",
+                [
+                    ("optimizer_type", "Optimizer", "combo:optimizers"),
+                    ("optimizer_args", "optimizer_args (k=v …)", "text"),
+                    ("optimizer_args", "↳ args help", "opthelp"),
+                ],
+            ),
+            (
+                "Scheduler",
+                [
+                    ("lr_scheduler", "LR scheduler (builtin)", "text"),
+                    (
+                        "lr_scheduler_type",
+                        "LR scheduler (custom dotted path)",
+                        "combo:schedulers",
+                    ),
+                    ("lr_scheduler_args", "lr_scheduler_args", "text"),
+                    ("lr_warmup_steps", "Warmup steps", "text"),
+                ],
+            ),
+            (
+                "Learning rates / scope",
+                [
+                    ("learning_rate", "Learning rate", "text"),
+                    ("unet_lr", "UNet / DiT LR", "text"),
+                    ("text_encoder_lr", "Text-encoder LR", "text"),
+                    ("llm_adapter_lr", "LLM-adapter LR", "text"),
+                    ("__scope__", "Train scope", "scope"),
+                ],
+            ),
+            (
+                "Loss / regularization",
+                [
+                    ("loss_type", "Loss type", "text"),
+                    ("network_dropout", "Network dropout", "text"),
+                    ("scale_weight_norms", "Scale weight norms", "text"),
+                    ("max_grad_norm", "Max grad norm", "text"),
+                ],
+            ),
+            (
+                "Core / hardware",
+                [
+                    ("preset", "Hardware preset", "combo:presets"),
+                    ("max_train_epochs", "Max epochs", "text"),
+                    ("max_train_steps", "Max steps", "text"),
+                    ("train_batch_size", "Batch size", "text"),
+                    ("gradient_accumulation_steps", "Grad accumulation", "text"),
+                    ("blocks_to_swap", "Blocks to swap", "text"),
+                    ("seed", "Seed", "text"),
+                    ("mixed_precision", "Mixed precision", "combo:bf16,fp16,no"),
+                    ("torch_compile", "torch.compile", "tristate"),
+                ],
+            ),
         ],
     ),
     (
-        "Optimizer / Schedule",
+        "Monitoring",
         [
-            ("optimizer_type", "Optimizer", "combo:optimizers"),
-            ("learning_rate", "Learning rate", "text"),
-            ("unet_lr", "DiT / unet LR", "text"),
-            ("optimizer_args", "optimizer_args (k=v …)", "text"),
-            ("lr_scheduler_type", "LR scheduler (custom)", "combo:schedulers"),
-            ("lr_scheduler", "LR scheduler (builtin)", "text"),
-            ("lr_scheduler_args", "lr_scheduler_args", "text"),
-            ("lr_warmup_steps", "Warmup steps", "text"),
+            (
+                "Web monitor",
+                [
+                    ("monitor", "Enable (--monitor)", "bool"),
+                    ("monitor_host", "Host", "text"),
+                    ("monitor_port", "Port", "text"),
+                ],
+            ),
         ],
     ),
-    (
-        "Training",
-        [
-            ("max_train_epochs", "Max epochs", "text"),
-            ("max_train_steps", "Max steps", "text"),
-            ("train_batch_size", "Batch size", "text"),
-            ("gradient_accumulation_steps", "Grad accumulation", "text"),
-            ("blocks_to_swap", "Blocks to swap", "text"),
-            ("mixed_precision", "Mixed precision", "combo:bf16,fp16,no"),
-            ("seed", "Seed", "text"),
-            ("torch_compile", "torch.compile", "tristate"),
-            ("resume", "Resume (state dir)", "dir"),
-        ],
-    ),
-    (
-        "Samples / Monitor",
-        [
-            ("sample_prompts", "Sample prompts file", "file"),
-            ("sample_every_n_epochs", "Sample every N epochs", "text"),
-            ("monitor", "Web monitor (--monitor)", "bool"),
-            ("monitor_port", "Monitor port", "text"),
-        ],
-    ),
+    ("Metadata", []),
+    ("Extra", []),
 ]
-_DATASET_SECTION = (
-    "Dataset (single-folder fallback)",
-    [
-        ("dataset_config", "Dataset config TOML", "file"),
-        ("raw_image_dir", "…or a single image folder", "dir"),
-    ],
-)
 
-# Subset table columns → keys consumed by backend._dataset_subsets. Strings are
-# fine (the backend casts num_repeats/keep_tokens/… itself); the two aug columns
-# are checkboxes.
+# Schema-arg → tab routing (ordered; first include-match wins, exclude vetoes).
+# Mirrors the user's spec: Folder = paths/sample/valid/save/log; Optimizer = the
+# training mega-tab; Network ≈ curated only; Metadata/Monitoring narrow; rest →
+# Extra. Adjust the keyword lists to re-group.
+_ROUTE_RULES: list[tuple[str, list[str], list[str]]] = [
+    (
+        "Folder",
+        [
+            "_dir",
+            "_path",
+            "sample",
+            "valid",
+            "cmmd",
+            "save",
+            "output",
+            "huggingface",
+            "hub_",
+            "resume",
+            "logging",
+            "log_tracker",
+            "console_log",
+            "log_with",
+            "log_prefix",
+            "log_every",
+            "in_json",
+            "wandb",
+        ],
+        ["logit", "sample_ratio"],
+    ),
+    ("Monitoring", ["monitor"], []),
+    ("Metadata", ["metadata"], []),
+    (
+        "Optimizer",
+        [
+            "optimizer",
+            "scheduler",
+            "lr_",
+            "_lr",
+            "loss",
+            "huber",
+            "snr",
+            "prior",
+            "noise",
+            "warmup",
+            "decay",
+            "debiased",
+            "grad_norm",
+            "scale_weight",
+            "dropout",
+            "unet_only",
+            "text_encoder_only",
+            "train_text_encoder",
+            "timestep",
+            "sigmoid",
+            "weighting",
+            "logit",
+            "t_min",
+            "t_max",
+            "discrete_flow",
+            "mode_scale",
+            "qwen3_max_token",
+            "batch",
+            "blocks_to_swap",
+            "block_swap",
+            "checkpointing",
+            "compile",
+            "dynamo",
+            "cudagraph",
+            "mixed_precision",
+            "full_bf16",
+            "full_fp16",
+            "fp8",
+            "seed",
+            "dataloader",
+            "pin_memory",
+            "prefetch",
+            "num_workers",
+            "cache",
+            "accumulation",
+            "max_train",
+            "initial_",
+            "lowram",
+            "highvram",
+            "offload",
+            "fused",
+            "activation_memory",
+            "persistent",
+            "unsloth",
+            "channel_scal",
+        ],
+        ["caption", "sample_decode"],
+    ),
+    ("Network", ["network", "lycoris", "conv_dim", "conv_alpha"], []),
+]
+
+
+def _route_tab(dest: str) -> str:
+    for tab, inc, exc in _ROUTE_RULES:
+        if any(k in dest for k in inc) and not any(k in dest for k in exc):
+            return tab
+    return "Extra"
+
+
+# Subset table columns → keys consumed by backend._dataset_subsets.
 _SUBSET_COLS = [
     ("image_dir", "image_dir"),
     ("cache_dir", "cache_dir"),
@@ -142,20 +314,38 @@ _SUBSET_COLS = [
     ("random_crop", "random_crop"),
 ]
 _SUBSET_BOOL_COLS = {"flip_aug", "random_crop"}
+# Flags handled by the curated train-scope combo (kept out of schema routing).
+_SCOPE_FLAGS = {"network_train_unet_only", "network_train_text_encoder_only"}
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Anima LoRA — native trainer")
-        self.resize(1180, 840)
+        self.resize(1280, 880)
         self._options = backend.options()
         self._getters: dict[str, object] = {}
         self._setters: dict[str, object] = {}
         self._adv: list[tuple[dict, object]] = []
+        self._scope: QComboBox | None = None
+        # Dests placed explicitly → excluded from schema routing (no double render).
+        self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
+        for _tab, groups in _TRAINING_TABS:
+            for _title, fields in groups:
+                for dest, _label, kind in fields:
+                    if kind not in ("opthelp", "scope"):
+                        self._curated.add(dest)
+        # Partition schema args (arg_groups) into Training tabs by route.
+        self._tab_schema: dict[str, list[dict]] = {}
+        for group in self._options.get("arg_groups") or []:
+            for arg in group.get("args") or []:
+                d = arg.get("dest") or ""
+                if d in self._curated:
+                    continue
+                self._tab_schema.setdefault(_route_tab(d), []).append(arg)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_tabs())
+        splitter.addWidget(self._build_parent_tabs())
         splitter.addWidget(self._build_run_panel())
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -167,13 +357,42 @@ class MainWindow(QMainWindow):
         self._timer.start()
         self._poll()
 
-    # ----- tabs ----------------------------------------------------------- #
-    def _build_tabs(self) -> QTabWidget:
-        tabs = QTabWidget()
-        tabs.addTab(self._scroll(self._sections_widget(_TRAINING_SECTIONS)), "Training")
-        tabs.addTab(self._scroll(self._build_dataset_tab()), "Dataset")
-        tabs.addTab(self._scroll(self._build_advanced_tab()), "Advanced")
-        return tabs
+    # ----- parent tabs ---------------------------------------------------- #
+    def _build_parent_tabs(self) -> QTabWidget:
+        parent = QTabWidget()
+        parent.addTab(self._build_training_parent(), "Training")
+        parent.addTab(self._build_utils_parent(), "Utils")
+        return parent
+
+    def _build_training_parent(self) -> QTabWidget:
+        inner = QTabWidget()
+        for tab_name, groups in _TRAINING_TABS:
+            inner.addTab(
+                self._scroll(self._build_training_tab(tab_name, groups)), tab_name
+            )
+        return inner
+
+    def _build_training_tab(self, tab_name: str, groups: list) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        for title, fields in groups:
+            vbox.addWidget(self._build_group(title, fields))
+        if tab_name == "Folder":
+            vbox.addWidget(self._build_subset_box())
+        # Schema args routed into this tab (populated only when torch is present).
+        schema = self._tab_schema.get(tab_name) or []
+        if schema:
+            box = QGroupBox("More flags")
+            form = QFormLayout(box)
+            for arg in sorted(schema, key=lambda a: a.get("dest") or ""):
+                form.addRow(
+                    arg.get("dest") or arg.get("flag"), self._build_adv_field(arg)
+                )
+            vbox.addWidget(box)
+        if tab_name == "Extra":
+            vbox.addWidget(self._build_extra_flags_box())
+        vbox.addStretch(1)
+        return w
 
     def _scroll(self, inner: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -181,14 +400,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(inner)
         return scroll
 
-    def _sections_widget(self, sections) -> QWidget:
-        w = QWidget()
-        vbox = QVBoxLayout(w)
-        for title, fields in sections:
-            vbox.addWidget(self._build_group(title, fields))
-        vbox.addStretch(1)
-        return w
-
+    # ----- curated field widgets ------------------------------------------ #
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
         gb = QGroupBox(title)
         form = QFormLayout(gb)
@@ -197,6 +409,15 @@ class MainWindow(QMainWindow):
         return gb
 
     def _build_field(self, dest: str, kind: str) -> QWidget:
+        if kind == "scope":
+            combo = QComboBox()
+            combo.addItems(["both (UNet + TE)", "UNet only", "TE only"])
+            self._scope = combo
+            return combo
+        if kind == "opthelp":
+            btn = QPushButton("show")
+            btn.clicked.connect(self._show_optimizer_help)
+            return btn
         if kind == "bool":
             cb = QCheckBox()
             self._getters[dest] = lambda c=cb: c.isChecked()
@@ -220,7 +441,6 @@ class MainWindow(QMainWindow):
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
             return combo
-        # text / file / dir → a line edit, with a Browse button for paths.
         edit = QLineEdit()
         self._getters[dest] = lambda e=edit: e.text().strip()
         self._setters[dest] = lambda v, e=edit: e.setText(str(v or ""))
@@ -245,116 +465,28 @@ class MainWindow(QMainWindow):
         if path:
             edit.setText(path)
 
-    # ----- dataset tab (subset table) ------------------------------------- #
-    def _build_dataset_tab(self) -> QWidget:
-        w = QWidget()
-        vbox = QVBoxLayout(w)
-        vbox.addWidget(
-            QLabel(
-                "Subsets drive training (each row → one [[datasets.subsets]]). Leave the "
-                "table empty to use the single-folder fallback below."
+    def _show_optimizer_help(self) -> None:
+        name = ""
+        getter = self._getters.get("optimizer_type")
+        if getter:
+            name = str(getter() or "")
+        if not name:
+            QMessageBox.information(self, "Optimizer args", "Pick an optimizer first.")
+            return
+        try:
+            info = backend.optimizer_arg_help(name)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Optimizer args", str(exc))
+            return
+        if not info:
+            QMessageBox.information(
+                self, "Optimizer args", f"No arg help for {name!r}."
             )
-        )
-        self._subset_table = QTableWidget(0, len(_SUBSET_COLS))
-        self._subset_table.setHorizontalHeaderLabels([h for _, h in _SUBSET_COLS])
-        self._subset_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.Stretch
-        )
-        self._subset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        vbox.addWidget(self._subset_table)
+            return
+        lines = [f"• {k}: {v}" for k, v in info.items()]
+        QMessageBox.information(self, f"{name} — optimizer_args", "\n".join(lines))
 
-        btns = QHBoxLayout()
-        add_folder = QPushButton("➕ Add subset (folder…)")
-        add_row = QPushButton("➕ Add empty row")
-        rm_row = QPushButton("➖ Remove selected")
-        add_folder.clicked.connect(self._subset_add_folder)
-        add_row.clicked.connect(lambda: self._subset_add_row())
-        rm_row.clicked.connect(self._subset_remove)
-        for b in (add_folder, add_row, rm_row):
-            btns.addWidget(b)
-        btns.addStretch(1)
-        vbox.addLayout(btns)
-
-        vbox.addWidget(self._build_group(*_DATASET_SECTION))
-        vbox.addStretch(1)
-        return w
-
-    def _subset_add_row(self, values: dict | None = None) -> None:
-        values = values or {}
-        r = self._subset_table.rowCount()
-        self._subset_table.insertRow(r)
-        for c, (key, _) in enumerate(_SUBSET_COLS):
-            if key in _SUBSET_BOOL_COLS:
-                item = QTableWidgetItem()
-                item.setFlags(
-                    Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
-                )
-                checked = bool(values.get(key)) and str(
-                    values.get(key)
-                ).lower() not in ("false", "0", "")
-                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-            else:
-                item = QTableWidgetItem(str(values.get(key, "") or ""))
-            self._subset_table.setItem(r, c, item)
-
-    def _subset_add_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "Select image folder", str(backend.ROOT)
-        )
-        if path:
-            self._subset_add_row({"image_dir": path})
-
-    def _subset_remove(self) -> None:
-        rows = sorted(
-            {i.row() for i in self._subset_table.selectedIndexes()}, reverse=True
-        )
-        for r in rows:
-            self._subset_table.removeRow(r)
-
-    def _collect_subsets(self) -> list[dict]:
-        out: list[dict] = []
-        for r in range(self._subset_table.rowCount()):
-            row: dict = {}
-            for c, (key, _) in enumerate(_SUBSET_COLS):
-                item = self._subset_table.item(r, c)
-                if item is None:
-                    continue
-                if key in _SUBSET_BOOL_COLS:
-                    if item.checkState() == Qt.Checked:
-                        row[key] = True
-                else:
-                    val = item.text().strip()
-                    if val:
-                        row[key] = val
-            if row.get("image_dir"):
-                out.append(row)
-        return out
-
-    # ----- advanced tab (schema-driven, all flags) ------------------------ #
-    def _build_advanced_tab(self) -> QWidget:
-        w = QWidget()
-        vbox = QVBoxLayout(w)
-
-        gb = QGroupBox("Raw extra flags")
-        form = QFormLayout(gb)
-        edit = QPlainTextEdit()
-        edit.setMaximumHeight(60)
-        edit.setPlaceholderText("--highvram\n--guidance_scale 1.0")
-        self._getters["extra_flags"] = lambda e=edit: e.toPlainText().strip()
-        self._setters["extra_flags"] = lambda v, e=edit: e.setPlainText(str(v or ""))
-        form.addRow("Anything else", edit)
-        vbox.addWidget(gb)
-
-        for group in self._options.get("arg_groups") or []:
-            box = QGroupBox(str(group.get("role") or "args"))
-            gform = QFormLayout(box)
-            for arg in group.get("args") or []:
-                widget = self._build_adv_field(arg)
-                gform.addRow(arg.get("dest") or arg.get("flag"), widget)
-            vbox.addWidget(box)
-        vbox.addStretch(1)
-        return w
-
+    # ----- schema (auto) field widgets ------------------------------------ #
     def _build_adv_field(self, arg: dict) -> QWidget:
         flag = arg.get("flag")
         help_txt = arg.get("help") or ""
@@ -428,19 +560,202 @@ class MainWindow(QMainWindow):
         )
         return edit
 
-    def _collect_adv(self) -> list[dict]:
-        out = []
-        for _arg, getter in self._adv:
-            item = getter()
-            if item:
-                out.append(item)
+    def _build_extra_flags_box(self) -> QGroupBox:
+        gb = QGroupBox("Raw extra flags")
+        form = QFormLayout(gb)
+        edit = QPlainTextEdit()
+        edit.setMaximumHeight(70)
+        edit.setPlaceholderText("--highvram\n--guidance_scale 1.0")
+        self._getters["extra_flags"] = lambda e=edit: e.toPlainText().strip()
+        self._setters["extra_flags"] = lambda v, e=edit: e.setPlainText(str(v or ""))
+        form.addRow("Anything else", edit)
+        return gb
+
+    # ----- subset table --------------------------------------------------- #
+    def _build_subset_box(self) -> QGroupBox:
+        gb = QGroupBox(
+            "Subsets (each row → one [[datasets.subsets]]; empty = fallback above)"
+        )
+        vbox = QVBoxLayout(gb)
+        self._subset_table = QTableWidget(0, len(_SUBSET_COLS))
+        self._subset_table.setHorizontalHeaderLabels([h for _, h in _SUBSET_COLS])
+        self._subset_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self._subset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        vbox.addWidget(self._subset_table)
+        btns = QHBoxLayout()
+        add_folder = QPushButton("➕ Add subset (folder…)")
+        add_row = QPushButton("➕ Add empty row")
+        rm_row = QPushButton("➖ Remove selected")
+        add_folder.clicked.connect(self._subset_add_folder)
+        add_row.clicked.connect(lambda: self._subset_add_row())
+        rm_row.clicked.connect(self._subset_remove)
+        for b in (add_folder, add_row, rm_row):
+            btns.addWidget(b)
+        btns.addStretch(1)
+        vbox.addLayout(btns)
+        return gb
+
+    def _subset_add_row(self, values: dict | None = None) -> None:
+        values = values or {}
+        r = self._subset_table.rowCount()
+        self._subset_table.insertRow(r)
+        for c, (key, _) in enumerate(_SUBSET_COLS):
+            if key in _SUBSET_BOOL_COLS:
+                item = QTableWidgetItem()
+                item.setFlags(
+                    Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                )
+                on = bool(values.get(key)) and str(values.get(key)).lower() not in (
+                    "false",
+                    "0",
+                    "",
+                )
+                item.setCheckState(Qt.Checked if on else Qt.Unchecked)
+            else:
+                item = QTableWidgetItem(str(values.get(key, "") or ""))
+            self._subset_table.setItem(r, c, item)
+
+    def _subset_add_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select image folder", str(backend.ROOT)
+        )
+        if path:
+            self._subset_add_row({"image_dir": path})
+
+    def _subset_remove(self) -> None:
+        rows = sorted(
+            {i.row() for i in self._subset_table.selectedIndexes()}, reverse=True
+        )
+        for r in rows:
+            self._subset_table.removeRow(r)
+
+    def _collect_subsets(self) -> list[dict]:
+        out: list[dict] = []
+        for r in range(self._subset_table.rowCount()):
+            row: dict = {}
+            for c, (key, _) in enumerate(_SUBSET_COLS):
+                item = self._subset_table.item(r, c)
+                if item is None:
+                    continue
+                if key in _SUBSET_BOOL_COLS:
+                    if item.checkState() == Qt.Checked:
+                        row[key] = True
+                elif item.text().strip():
+                    row[key] = item.text().strip()
+            if row.get("image_dir"):
+                out.append(row)
         return out
+
+    # ----- utils parent --------------------------------------------------- #
+    def _build_utils_parent(self) -> QTabWidget:
+        inner = QTabWidget()
+        inner.addTab(self._scroll(self._build_update_tab()), "Update")
+        inner.addTab(self._scroll(self._build_autobatch_tab()), "Auto-batch")
+        inner.addTab(self._scroll(self._build_masking_tab()), "Masking")
+        return inner
+
+    def _build_update_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "Update the tool (git pull + uv sync) — datasets/models are gitignored."
+            )
+        )
+        self._update_info = QLabel("—")
+        self._update_info.setWordWrap(True)
+        vbox.addWidget(self._update_info)
+        row = QHBoxLayout()
+        check = QPushButton("Check for updates")
+        do = QPushButton("Update now")
+        check.clicked.connect(self._do_check_update)
+        do.clicked.connect(self._do_update)
+        row.addWidget(check)
+        row.addWidget(do)
+        row.addStretch(1)
+        vbox.addLayout(row)
+        vbox.addStretch(1)
+        return w
+
+    def _do_check_update(self) -> None:
+        try:
+            v = backend.tool_version(fetch=True)
+        except Exception as exc:  # noqa: BLE001
+            self._update_info.setText(f"error: {exc}")
+            return
+        self._update_info.setText(
+            f"branch {v.get('branch')} · sha {v.get('sha')} · ahead {v.get('ahead')} "
+            f"behind {v.get('behind')} · {'up to date' if v.get('up_to_date') else 'update available'}"
+            + (f"\n{v.get('note')}" if v.get("note") else "")
+        )
+
+    def _do_update(self) -> None:
+        try:
+            res = backend.update_tool()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Update", str(exc))
+            return
+        QMessageBox.information(self, "Update", str(res.get("note") or res))
+
+    def _build_autobatch_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "Max-batch search (tasks.py bench-autobatch) using the current Training "
+                "fields. Mutually exclusive with a run; output streams to the log."
+            )
+        )
+        btn = QPushButton("Run auto-batch search")
+        btn.clicked.connect(self._do_autobatch)
+        vbox.addWidget(btn)
+        vbox.addStretch(1)
+        return w
+
+    def _do_autobatch(self) -> None:
+        res = backend.bench_autobatch(self._collect())
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Auto-batch", str(res.get("error") or res))
+
+    def _build_masking_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        gb = QGroupBox("Masking (SAM3 + MIT → merged masks)")
+        form = QFormLayout(gb)
+        self._mask_sam = QCheckBox()
+        self._mask_sam.setChecked(True)
+        self._mask_mit = QCheckBox()
+        self._mask_mit.setChecked(True)
+        self._mit_tt = QLineEdit()
+        self._mit_dilate = QLineEdit()
+        form.addRow("SAM3", self._mask_sam)
+        form.addRow("MIT (text removal)", self._mask_mit)
+        form.addRow("MIT text threshold", self._mit_tt)
+        form.addRow("MIT dilate", self._mit_dilate)
+        vbox.addWidget(gb)
+        btn = QPushButton("Run masking")
+        btn.clicked.connect(self._do_masking)
+        vbox.addWidget(btn)
+        vbox.addStretch(1)
+        return w
+
+    def _do_masking(self) -> None:
+        form = {
+            "mask_sam": self._mask_sam.isChecked(),
+            "mask_mit": self._mask_mit.isChecked(),
+            "mit_text_threshold": self._mit_tt.text().strip(),
+            "mit_dilate": self._mit_dilate.text().strip(),
+        }
+        res = backend.run_masking(form)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Masking", str(res.get("error") or res))
 
     # ----- run panel ------------------------------------------------------ #
     def _build_run_panel(self) -> QWidget:
         panel = QWidget()
         vbox = QVBoxLayout(panel)
-
         cfg_row = QHBoxLayout()
         btn_load = QPushButton("Load config…")
         btn_save = QPushButton("Save config…")
@@ -479,8 +794,7 @@ class MainWindow(QMainWindow):
 
         self._status = QLabel("idle")
         vbox.addWidget(self._status)
-
-        vbox.addWidget(QLabel("Training log"))
+        vbox.addWidget(QLabel("Log"))
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setFont(QFont("monospace"))
@@ -493,7 +807,27 @@ class MainWindow(QMainWindow):
         subsets = self._collect_subsets()
         if subsets:
             form["subsets"] = subsets
-        adv = self._collect_adv()
+        adv = [item for _a, g in self._adv if (item := g())]
+        if self._scope is not None:
+            idx = self._scope.currentIndex()
+            if idx == 1:
+                adv.append(
+                    {
+                        "flag": "--network_train_unet_only",
+                        "is_bool": True,
+                        "value": True,
+                        "on": True,
+                    }
+                )
+            elif idx == 2:
+                adv.append(
+                    {
+                        "flag": "--network_train_text_encoder_only",
+                        "is_bool": True,
+                        "value": True,
+                        "on": True,
+                    }
+                )
         if adv:
             form["adv"] = adv
         return form
