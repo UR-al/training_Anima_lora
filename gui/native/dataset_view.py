@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -159,7 +159,11 @@ class ImageMaskView(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), Qt.darkGray)
+        # Smooth (bilinear) scaling so the preview isn't pixelated/degraded when the
+        # image is fit to the view — the default fast transform looks aliased.
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor("#0A0A0A"))
         if self._pix is None:
             return
         target = self._fit_rect(self._pix.size())
@@ -185,7 +189,8 @@ class DatasetView(QWidget):
         top = QHBoxLayout()
         self._folder = QLineEdit(str(Path(backend.ROOT) / "image_dataset"))
         browse = QPushButton("📁")
-        browse.setFixedWidth(36)
+        browse.setObjectName("icon")  # tight padding so the glyph isn't clipped
+        browse.setFixedWidth(40)
         load = QPushButton("Load")
         browse.clicked.connect(self._choose_folder)
         load.clicked.connect(self._load_folder)

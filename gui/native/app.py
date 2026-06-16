@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGraphicsOpacityEffect,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -800,9 +801,33 @@ class MainWindow(QMainWindow):
     # ----- curated field widgets ------------------------------------------ #
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
         gb = QGroupBox(tr(title))
-        form = QFormLayout(gb)
+        grid = QGridLayout(gb)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        r = 0
+        c = 0  # 0 = left pair (cols 0-1), 2 = right pair (cols 2-3)
         for dest, label, kind in fields:
-            form.addRow(tr(label), self._build_field(dest, kind))
+            w = self._build_field(dest, kind)
+            # Path pickers / the args-help panel / scope span the full width; the
+            # compact fields (text/combo/bool/tristate) — which carry no per-field
+            # description — pack TWO per row instead of one-per-line.
+            if kind in ("file", "dir", "opthelp", "scope"):
+                if c != 0:
+                    r += 1
+                    c = 0
+                grid.addWidget(QLabel(tr(label)), r, 0)
+                grid.addWidget(w, r, 1, 1, 3)
+                r += 1
+            else:
+                grid.addWidget(QLabel(tr(label)), r, c)
+                grid.addWidget(w, r, c + 1)
+                if c == 0:
+                    c = 2
+                else:
+                    c = 0
+                    r += 1
         return gb
 
     def _set_combo(self, combo: QComboBox, value) -> None:
@@ -821,9 +846,33 @@ class MainWindow(QMainWindow):
             self._scope = combo
             return combo
         if kind == "opthelp":
-            btn = QPushButton("show")
-            btn.clicked.connect(self._show_optimizer_help)
-            return btn
+            # Inline, expands DOWNWARD (not a popup): lists the selected optimizer's
+            # accepted args. Re-reads the current optimizer each time it's opened.
+            box = QWidget()
+            v = QVBoxLayout(box)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(4)
+            btn = QPushButton(tr("▸ Show usable args"))
+            btn.setObjectName("subOpt")
+            btn.setCheckable(True)
+            body = QLabel()
+            body.setObjectName("optHelpBody")
+            body.setWordWrap(True)
+            body.setVisible(False)
+            body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+            def _toggle(on, b=btn, lb=body):
+                if on:
+                    lb.setText(self._optimizer_help_text())
+                    b.setText(tr("▾ Hide args"))
+                else:
+                    b.setText(tr("▸ Show usable args"))
+                lb.setVisible(on)
+
+            btn.toggled.connect(_toggle)
+            v.addWidget(btn)
+            v.addWidget(body)
+            return box
         if kind == "bool":
             cb = QCheckBox()
             self._getters[dest] = lambda c=cb: c.isChecked()
@@ -873,26 +922,28 @@ class MainWindow(QMainWindow):
         if path:
             edit.setText(path)
 
-    def _show_optimizer_help(self) -> None:
-        name = ""
-        getter = self._getters.get("optimizer_type")
-        if getter:
-            name = str(getter() or "")
+    def _optimizer_help_text(self) -> str:
+        """Formatted list of the currently-selected optimizer's accepted args (shown
+        inline by the opthelp panel). Uses backend.optimizer_arg_help (torch-free cache)."""
+        g = self._getters.get("optimizer_type")
+        name = str((g() if g else "") or "").strip()
         if not name:
-            QMessageBox.information(self, "Optimizer args", "Pick an optimizer first.")
-            return
+            return tr("Pick an optimizer first.")
         try:
             info = backend.optimizer_arg_help(name)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Optimizer args", str(exc))
-            return
-        if not info:
-            QMessageBox.information(
-                self, "Optimizer args", f"No arg help for {name!r}."
-            )
-            return
-        lines = [f"• {k}: {v}" for k, v in info.items()]
-        QMessageBox.information(self, f"{name} — optimizer_args", "\n".join(lines))
+            return str(exc)
+        if not info or not info.get("ok"):
+            return (info or {}).get("note") or f"{name}: no introspectable args"
+        lines = []
+        if info.get("note"):
+            lines.append(info["note"])
+        for a in info.get("args", []):
+            dv = a.get("default")
+            dv = "" if dv is None else f" = {dv}"
+            req = "  (required)" if a.get("required") else ""
+            lines.append(f"• {a.get('name')}{dv}{req} — {a.get('desc', '')}")
+        return "\n".join(lines) or f"{name}: no extra args"
 
     # ----- schema (auto) field widgets ------------------------------------ #
     def _build_adv_field(self, arg: dict) -> QWidget:
@@ -1850,6 +1901,8 @@ QPushButton#subOpt {{ background: transparent; border: 1px solid {border}; borde
                      color: {muted}; text-align: left; padding: 6px 10px; font-weight: 600; }}
 QPushButton#subOpt:hover {{ color: {text}; border-color: {faint}; }}
 QPushButton#subOpt:checked {{ background: transparent; color: {text}; border-color: {faint}; }}
+QLabel#optHelpBody {{ background: {input}; color: {text}; border: 1px solid {border};
+                     border-radius: 8px; padding: 8px 10px; }}
 
 /* Inputs */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
