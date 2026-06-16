@@ -35,20 +35,20 @@ without it the curated fields still render and the structure is intact.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPropertyAnimation, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -60,8 +60,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -190,6 +188,23 @@ _KO = {
     "Log": "로그",
     "▲ Queue": "▲ 대기열",
     "idle": "대기 중",
+    # subset cards
+    "Subsets": "서브셋",
+    "SUBSET": "서브셋",
+    "➕ Add all subfolders from a folder…": "➕ 폴더의 모든 하위폴더 추가…",
+    "➕ Add subset": "➕ 서브셋 추가",
+    "Input image dir": "입력 이미지 폴더",
+    "Cache dir": "캐시 폴더",
+    "Number of repeats": "반복 횟수",
+    "Keep tokens": "Keep tokens 수",
+    "Caption extension": "캡션 확장자",
+    "Caption dropout rate": "캡션 드롭아웃 비율",
+    "Flip augment": "좌우 반전",
+    "Random crop": "랜덤 크롭",
+    "Grad checkpointing": "그래디언트 체크포인팅",
+    "▸ Optional args": "▸ 선택 인자",
+    "▾ Optional args": "▾ 선택 인자",
+    "Tiers (multi-scale)": "타일 (멀티스케일)",
 }
 
 
@@ -598,6 +613,10 @@ class MainWindow(QMainWindow):
             saved = {d: g() for d, g in self._getters.items()}
         except Exception:
             saved = {}
+        try:
+            saved_subsets = self._collect_subsets()
+        except Exception:
+            saved_subsets = []
         if getattr(self, "_timer", None) is not None:
             self._timer.stop()
         # Reset the per-build registries (repopulated by _build_central → builders).
@@ -615,6 +634,11 @@ class MainWindow(QMainWindow):
                     setter(v)
                 except Exception:
                     pass
+        for s in saved_subsets:  # subset cards aren't in the getter registry
+            try:
+                self._add_subset_card(s)
+            except Exception:
+                pass
         if getattr(self, "_timer", None) is not None:
             self._timer.start()
 
@@ -972,25 +996,12 @@ class MainWindow(QMainWindow):
             w = self._widgets.get(target)
             if w is not None:
                 w.setEnabled(bool(pred(vals)))
-        cols = {k: i for i, (k, _) in enumerate(_SUBSET_COLS)}
-        for col_key, driver in _SUBSET_GREY:
-            enabled = not _truthy(vals.get(driver))
-            ci = cols[col_key]
-            for r in range(self._subset_table.rowCount()):
-                self._set_cell_enabled(r, ci, enabled, col_key in _SUBSET_BOOL_COLS)
-
-    def _set_cell_enabled(
-        self, row: int, col: int, enabled: bool, checkable: bool
-    ) -> None:
-        item = self._subset_table.item(row, col)
-        if item is None:
-            return
-        flags = Qt.ItemIsSelectable
-        if enabled:
-            flags |= Qt.ItemIsEnabled | (
-                Qt.ItemIsUserCheckable if checkable else Qt.ItemIsEditable
-            )
-        item.setFlags(flags)
+        for card in getattr(self, "_subset_cards", []):
+            fields = card.get("fields", {})
+            for col_key, driver in _SUBSET_GREY:
+                w = fields.get(col_key)
+                if w is not None:
+                    w.setEnabled(not _truthy(vals.get(driver)))
 
     def _build_extra_flags_box(self) -> QGroupBox:
         gb = QGroupBox("Raw extra flags")
@@ -1003,83 +1014,215 @@ class MainWindow(QMainWindow):
         form.addRow("Anything else", edit)
         return gb
 
-    # ----- subset table --------------------------------------------------- #
+    # ----- subset cards (reference-style collapsible blocks) -------------- #
     def _build_subset_box(self) -> QGroupBox:
-        gb = QGroupBox(
-            "Subsets (each row → one [[datasets.subsets]]; empty = fallback above)"
-        )
-        vbox = QVBoxLayout(gb)
-        self._subset_table = QTableWidget(0, len(_SUBSET_COLS))
-        self._subset_table.setHorizontalHeaderLabels([h for _, h in _SUBSET_COLS])
-        self._subset_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.Stretch
-        )
-        self._subset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        vbox.addWidget(self._subset_table)
-        btns = QHBoxLayout()
-        add_folder = QPushButton("➕ Add subset (folder…)")
-        add_row = QPushButton("➕ Add empty row")
-        rm_row = QPushButton("➖ Remove selected")
-        add_folder.clicked.connect(self._subset_add_folder)
-        add_row.clicked.connect(lambda: self._subset_add_row())
-        rm_row.clicked.connect(self._subset_remove)
-        for b in (add_folder, add_row, rm_row):
-            btns.addWidget(b)
-        btns.addStretch(1)
-        vbox.addLayout(btns)
+        gb = QGroupBox(tr("Subsets"))
+        outer = QVBoxLayout(gb)
+        add_all = QPushButton(tr("➕ Add all subfolders from a folder…"))
+        add_all.clicked.connect(self._subset_add_all_subfolders)
+        outer.addWidget(add_all)
+        row = QHBoxLayout()
+        add_one = QPushButton(tr("➕ Add subset"))
+        add_one.clicked.connect(lambda: self._add_subset_card())
+        row.addWidget(add_one)
+        row.addStretch(1)
+        outer.addLayout(row)
+        self._subset_cards = []
+        self._subset_holder = QWidget()
+        self._subset_layout = QVBoxLayout(self._subset_holder)
+        self._subset_layout.setContentsMargins(0, 0, 0, 0)
+        self._subset_layout.setSpacing(8)
+        outer.addWidget(self._subset_holder)
         return gb
 
-    def _subset_add_row(self, values: dict | None = None) -> None:
+    def _add_subset_card(self, values: dict | None = None) -> None:
+        """One [[datasets.subsets]] as a collapsible card (reference-style)."""
         values = values or {}
-        r = self._subset_table.rowCount()
-        self._subset_table.insertRow(r)
-        for c, (key, _) in enumerate(_SUBSET_COLS):
-            if key in _SUBSET_BOOL_COLS:
-                item = QTableWidgetItem()
-                item.setFlags(
-                    Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
-                )
-                on = bool(values.get(key)) and str(values.get(key)).lower() not in (
-                    "false",
-                    "0",
-                    "",
-                )
-                item.setCheckState(Qt.Checked if on else Qt.Unchecked)
-            else:
-                item = QTableWidgetItem(str(values.get(key, "") or ""))
-            self._subset_table.setItem(r, c, item)
+        fields: dict[str, QWidget] = {}
+        card = QFrame()
+        card.setObjectName("subsetCard")
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
+
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(6)
+        toggle = QPushButton()
+        toggle.setObjectName("subsetHead")
+        toggle.setCheckable(True)
+        toggle.setChecked(True)
+        delete = QPushButton("🗑")
+        delete.setObjectName("icon")
+        delete.setFixedWidth(40)
+        head.addWidget(toggle, 1)
+        head.addWidget(delete)
+        cv.addLayout(head)
+
+        body = QWidget()
+        body.setObjectName("subsetBody")
+        fl = QFormLayout(body)
+        fl.setContentsMargins(12, 10, 12, 10)
+
+        def _dir(key, label, kind="dir", placeholder=""):
+            edit = QLineEdit(str(values.get(key, "") or ""))
+            if placeholder:
+                edit.setPlaceholderText(placeholder)
+            b = QPushButton("📁")
+            b.setObjectName("icon")
+            b.setFixedWidth(40)
+            b.clicked.connect(lambda _=False, e=edit, k=kind: self._browse(e, k))
+            rw = QWidget()
+            rl = QHBoxLayout(rw)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.addWidget(edit)
+            rl.addWidget(b)
+            fields[key] = edit
+            fl.addRow(tr(label), rw)
+            if key == "image_dir":
+                edit.textChanged.connect(lambda *_: self._renumber_subsets())
+
+        def _text(key, label, placeholder=""):
+            edit = QLineEdit(str(values.get(key, "") or ""))
+            if placeholder:
+                edit.setPlaceholderText(placeholder)
+            fields[key] = edit
+            fl.addRow(tr(label), edit)
+
+        _dir("image_dir", "Input image dir", placeholder="Image folder")
+        _dir("cache_dir", "Cache dir", placeholder="(auto — shared with primary)")
+        _text("num_repeats", "Number of repeats", "1")
+        _text("keep_tokens", "Keep tokens", "0")
+        cext = QComboBox()
+        cext.setEditable(True)
+        cext.lineEdit().installEventFilter(self._combo_open_filter)
+        cext.addItems([".txt", ".caption"])
+        cext.setCurrentText(str(values.get("caption_extension", "") or ".txt"))
+        fields["caption_extension"] = cext
+        fl.addRow(tr("Caption extension"), cext)
+        _text("caption_dropout_rate", "Caption dropout rate", "0.0")
+
+        checks = QHBoxLayout()
+        for key, label in (
+            ("flip_aug", "Flip augment"),
+            ("random_crop", "Random crop"),
+            ("gradient_checkpointing", "Grad checkpointing"),
+        ):
+            cb = QCheckBox(tr(label))
+            cb.setChecked(_truthy(values.get(key)))
+            fields[key] = cb
+            checks.addWidget(cb)
+        checks.addStretch(1)
+        fl.addRow(checks)
+
+        # OPTIONAL ARGS — collapsible (batch_size + multi-scale tiers)
+        opt_toggle = QPushButton(tr("▸ Optional args"))
+        opt_toggle.setObjectName("subOpt")
+        opt_toggle.setCheckable(True)
+        opt_body = QWidget()
+        ofl = QFormLayout(opt_body)
+        ofl.setContentsMargins(0, 6, 0, 0)
+        bs = QLineEdit(str(values.get("batch_size", "") or ""))
+        bs.setPlaceholderText("(dataset default)")
+        fields["batch_size"] = bs
+        ofl.addRow(tr("Batch size"), bs)
+        ti = QLineEdit(str(values.get("tiers", "") or ""))
+        ti.setPlaceholderText("e.g. 512,1024")
+        fields["tiers"] = ti
+        ofl.addRow(tr("Tiers (multi-scale)"), ti)
+        opt_body.setVisible(False)
+        opt_toggle.toggled.connect(
+            lambda on, w=opt_body, b=opt_toggle: (
+                w.setVisible(on),
+                b.setText(tr("▾ Optional args") if on else tr("▸ Optional args")),
+            )
+        )
+        fl.addRow(opt_toggle)
+        fl.addRow(opt_body)
+
+        cv.addWidget(body)
+        toggle.toggled.connect(lambda on, w=body: w.setVisible(on))
+        toggle.toggled.connect(lambda *_: self._renumber_subsets())
+
+        entry = {"frame": card, "fields": fields, "head": toggle}
+        delete.clicked.connect(lambda _=False, e=entry: self._remove_subset_card(e))
+        self._subset_cards.append(entry)
+        self._subset_layout.addWidget(card)
+        self._renumber_subsets()
         if hasattr(self, "_widgets"):
-            self._apply_greying()  # grey the new row's cache-gated cells
+            self._apply_greying()
 
-    def _subset_add_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "Select image folder", str(backend.ROOT)
-        )
-        if path:
-            self._subset_add_row({"image_dir": path})
+    def _renumber_subsets(self) -> None:
+        for i, e in enumerate(self._subset_cards, 1):
+            img = e["fields"]["image_dir"].text().strip()
+            name = f"  ·  {Path(img).name}" if img else ""
+            arrow = "▾" if e["head"].isChecked() else "▸"
+            e["head"].setText(f"{arrow}  {tr('SUBSET')} {i}{name}")
 
-    def _subset_remove(self) -> None:
-        rows = sorted(
-            {i.row() for i in self._subset_table.selectedIndexes()}, reverse=True
+    def _remove_subset_card(self, entry: dict) -> None:
+        try:
+            self._subset_cards.remove(entry)
+        except ValueError:
+            return
+        entry["frame"].setParent(None)
+        entry["frame"].deleteLater()
+        self._renumber_subsets()
+
+    def _clear_subset_cards(self) -> None:
+        for e in list(self._subset_cards):
+            e["frame"].setParent(None)
+            e["frame"].deleteLater()
+        self._subset_cards = []
+
+    def _subset_add_all_subfolders(self) -> None:
+        import os
+
+        parent = QFileDialog.getExistingDirectory(
+            self, "Select a parent folder", str(backend.ROOT)
         )
-        for r in rows:
-            self._subset_table.removeRow(r)
+        if not parent:
+            return
+        subs = sorted(
+            os.path.join(parent, d)
+            for d in os.listdir(parent)
+            if os.path.isdir(os.path.join(parent, d))
+        )
+        if subs:
+            for d in subs:
+                self._add_subset_card({"image_dir": d})
+        else:
+            self._add_subset_card({"image_dir": parent})
 
     def _collect_subsets(self) -> list[dict]:
         out: list[dict] = []
-        for r in range(self._subset_table.rowCount()):
-            row: dict = {}
-            for c, (key, _) in enumerate(_SUBSET_COLS):
-                item = self._subset_table.item(r, c)
-                if item is None or not (item.flags() & Qt.ItemIsEnabled):
-                    continue  # greyed cell (cache-gated) → inert
-                if key in _SUBSET_BOOL_COLS:
-                    if item.checkState() == Qt.Checked:
-                        row[key] = True
-                elif item.text().strip():
-                    row[key] = item.text().strip()
-            if row.get("image_dir"):
-                out.append(row)
+        for e in self._subset_cards:
+            f = e["fields"]
+            img = f["image_dir"].text().strip()
+            if not img:
+                continue
+            row: dict = {"image_dir": img}
+            for k in (
+                "cache_dir",
+                "num_repeats",
+                "keep_tokens",
+                "caption_dropout_rate",
+                "batch_size",
+                "tiers",
+            ):
+                w = f.get(k)
+                if w is None or not w.isEnabled():
+                    continue  # greyed (cache-gated) → inert
+                v = w.text().strip()
+                if v:
+                    row[k] = v
+            cext = f.get("caption_extension")
+            if cext is not None and cext.currentText().strip():
+                row["caption_extension"] = cext.currentText().strip()
+            for k in ("flip_aug", "random_crop", "gradient_checkpointing"):
+                w = f.get(k)
+                if w is not None and w.isEnabled() and w.isChecked():
+                    row[k] = True
+            out.append(row)
         return out
 
     # ----- utils parent --------------------------------------------------- #
@@ -1552,10 +1695,10 @@ class MainWindow(QMainWindow):
                 setter(val)
         subsets = form.get("subsets")
         if isinstance(subsets, list):
-            self._subset_table.setRowCount(0)
+            self._clear_subset_cards()
             for s in subsets:
                 if isinstance(s, dict):
-                    self._subset_add_row(s)
+                    self._add_subset_card(s)
         self._apply_greying()  # re-evaluate after a config load changes drivers
 
     # ----- actions -------------------------------------------------------- #
@@ -1696,6 +1839,17 @@ QPushButton#primary:disabled {{ background: #3a3413; color: #777; }}
 /* Compact icon buttons (📁 pickers): tight padding so the glyph isn't clipped by
    the default button padding inside their fixed width. */
 QPushButton#icon {{ padding: 4px 0; font-size: 15px; }}
+/* Subset cards (reference-style collapsible blocks) */
+QFrame#subsetCard {{ background: {card}; border: 1px solid {border}; border-radius: 10px; }}
+QWidget#subsetBody {{ background: transparent; }}
+QPushButton#subsetHead {{ background: {accent}; color: #000; border: none; border-radius: 9px;
+                         text-align: left; padding: 9px 14px; font-weight: 800; }}
+QPushButton#subsetHead:hover {{ background: {accent_hi}; }}
+QPushButton#subsetHead:checked {{ background: {accent}; color: #000; }}
+QPushButton#subOpt {{ background: transparent; border: 1px solid {border}; border-radius: 7px;
+                     color: {muted}; text-align: left; padding: 6px 10px; font-weight: 600; }}
+QPushButton#subOpt:hover {{ color: {text}; border-color: {faint}; }}
+QPushButton#subOpt:checked {{ background: transparent; color: {text}; border-color: {faint}; }}
 
 /* Inputs */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
@@ -1841,6 +1995,18 @@ def _apply_theme(app: QApplication) -> None:
     app.setPalette(pal)
     app.setStyle("Fusion")  # consistent base across OSes; QSS refines it
     app.setStyleSheet(_QSS)
+    # Kill the inconsistent open animations (some combos slid open, some didn't) — the
+    # user prefers none. Unifies every dropdown to instant open.
+    for _eff in (
+        Qt.UIEffect.UI_AnimateCombo,
+        Qt.UIEffect.UI_AnimateMenu,
+        Qt.UIEffect.UI_AnimateTooltip,
+        Qt.UIEffect.UI_FadeTooltip,
+    ):
+        try:
+            QApplication.setEffectEnabled(_eff, False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def run() -> None:
