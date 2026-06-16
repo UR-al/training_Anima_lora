@@ -417,6 +417,7 @@ class MainWindow(QMainWindow):
         self._adv: list[tuple[dict, object]] = []
         self._scope: QComboBox | None = None
         self._widgets: dict[str, QWidget] = {}  # dest → editable widget (for greying)
+        self._watch: dict[str, QWidget] = {}  # watch-party fields (NOT saved to config)
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -553,8 +554,51 @@ class MainWindow(QMainWindow):
             vbox.addWidget(box)
         if tab_name == "Extra":
             vbox.addWidget(self._build_extra_flags_box())
+        if tab_name == "Monitoring":
+            vbox.addWidget(self._build_watch_party_box())
         vbox.addStretch(1)
         return w
+
+    # ----- AI watch party (Claude + GPT) ---------------------------------- #
+    def _build_watch_party_box(self) -> QGroupBox:
+        gb = QGroupBox("AI watch party (Claude + GPT) — needs --monitor running")
+        form = QFormLayout(gb)
+        ak = QLineEdit()
+        ak.setEchoMode(QLineEdit.Password)
+        ak.setPlaceholderText("ANTHROPIC_API_KEY (not saved to config)")
+        ok = QLineEdit()
+        ok.setEchoMode(QLineEdit.Password)
+        ok.setPlaceholderText("OPENAI_API_KEY (not saved to config)")
+        self._watch["ANTHROPIC_API_KEY"] = ak
+        self._watch["OPENAI_API_KEY"] = ok
+        form.addRow("Anthropic key", ak)
+        form.addRow("OpenAI key", ok)
+        for label, key, default in (
+            ("Interval (s)", "watch_interval", "30"),
+            ("Turns per round", "watch_turns", "1"),
+            ("Max rounds (0=∞)", "watch_rounds", "0"),
+        ):
+            e = QLineEdit(default)
+            self._watch[key] = e
+            form.addRow(label, e)
+        no_img = QCheckBox("Don't send sample images (cheaper)")
+        self._watch["watch_no_images"] = no_img
+        form.addRow(no_img)
+        btn = QPushButton("▶ Start watch party")
+        btn.clicked.connect(self._do_watch_party)
+        form.addRow(btn)
+        return gb
+
+    def _do_watch_party(self) -> None:
+        form = {}
+        for key, w in self._watch.items():
+            if isinstance(w, QCheckBox):
+                form[key] = w.isChecked()
+            else:
+                form[key] = w.text().strip()
+        res = backend.run_watch_party(form)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Watch party", str(res.get("error") or res))
 
     def _scroll(self, inner: QWidget) -> QScrollArea:
         scroll = QScrollArea()

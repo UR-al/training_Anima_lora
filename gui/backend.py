@@ -1787,6 +1787,34 @@ def run_tool(argv: list[str], name: str) -> dict:
     return _spawn_util(argv, name)
 
 
+def run_watch_party(form: dict) -> dict:
+    """Launch the two-AI watch party (``tools/ai_watch_party.py``) with the API keys
+    in the child env (NOT persisted to config). Both keys required; the turn-limit /
+    progress-gating flags guard against runaway API cost."""
+    env: dict = {}
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        v = str(form.get(k) or "").strip()
+        if v:
+            env[k] = v
+    if not (env.get("ANTHROPIC_API_KEY") and env.get("OPENAI_API_KEY")):
+        return {
+            "ok": False,
+            "error": "ANTHROPIC_API_KEY와 OPENAI_API_KEY 둘 다 필요합니다.",
+        }
+    argv = ["tools/ai_watch_party.py"]
+    for flag, key in (
+        ("--interval", "watch_interval"),
+        ("--turns-per-round", "watch_turns"),
+        ("--rounds", "watch_rounds"),
+    ):
+        v = str(form.get(key) or "").strip()
+        if v:
+            argv += [flag, v]
+    if form.get("watch_no_images"):
+        argv.append("--no-images")
+    return _spawn_util(argv, "watch_party", env)
+
+
 def run_preprocess(step: str) -> dict:
     """Run a ``tasks.py preprocess[-<step>]`` subcommand as a direct subprocess
     (mirrors :func:`run_masking` / :func:`bench_autobatch` — training-exclusive,

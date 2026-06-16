@@ -170,6 +170,12 @@ def main() -> int:
         default=os.environ.get("ANIMA_OUTPUT_DIR") or str(_ROOT / "output"),
     )
     ap.add_argument("--no-images", action="store_true", help="don't send sample images")
+    ap.add_argument(
+        "--turns-per-round",
+        type=int,
+        default=1,
+        help="how many times EACH AI speaks per round (2-3 for back-and-forth)",
+    )
     args = ap.parse_args()
 
     try:
@@ -180,26 +186,37 @@ def main() -> int:
 
     transcript: list[tuple[str, str]] = []
     rounds = 0
+    last_step = None
+    turns = max(1, args.turns_per_round)
     print(
         "[watch] starting — posting to the dashboard AI Analysis panel. Ctrl-C to stop."
     )
     try:
         while args.rounds == 0 or rounds < args.rounds:
             state = D.read_state()
+            step = D.status(state).get("step")
+            # Credit guard: only spend tokens when training actually advanced since
+            # the last round (a stalled/finished run won't keep burning API calls).
+            if last_step is not None and step == last_step:
+                time.sleep(args.interval)
+                continue
+            last_step = step
             ctx = "Live metrics: " + metrics_summary(state)
             img = None if args.no_images else _latest_sample_b64(args.output_dir, state)
-            for agent in agents:
-                other = next(a.name for a in agents if a is not agent)
-                system = _SYSTEM.format(me=agent.name, other=other)
-                msgs = to_messages(transcript, agent.name, ctx)
-                try:
-                    reply = agent.respond(system, msgs, img).strip()
-                except Exception as exc:  # noqa: BLE001
-                    reply = f"(error: {exc})"
-                transcript.append((agent.name, reply))
-                transcript[:] = transcript[-20:]  # bound context
-                D.add_note(reply, author=agent.name)
-                print(f"\n[{agent.name}] {reply}")
+            # Each AI speaks `turns` times per round (bounded back-and-forth).
+            for _turn in range(turns):
+                for agent in agents:
+                    other = next(a.name for a in agents if a is not agent)
+                    system = _SYSTEM.format(me=agent.name, other=other)
+                    msgs = to_messages(transcript, agent.name, ctx)
+                    try:
+                        reply = agent.respond(system, msgs, img).strip()
+                    except Exception as exc:  # noqa: BLE001
+                        reply = f"(error: {exc})"
+                    transcript.append((agent.name, reply))
+                    transcript[:] = transcript[-20:]  # bound context
+                    D.add_note(reply, author=agent.name)
+                    print(f"\n[{agent.name}] {reply}")
             rounds += 1
             time.sleep(args.interval)
     except KeyboardInterrupt:
