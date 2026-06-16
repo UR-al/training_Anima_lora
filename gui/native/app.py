@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QPropertyAnimation, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -544,6 +545,9 @@ class MainWindow(QMainWindow):
         self._scope: QComboBox | None = None
         self._widgets: dict[str, QWidget] = {}  # dest → editable widget (for greying)
         self._watch: dict[str, QWidget] = {}  # watch-party fields (NOT saved to config)
+        # Shared filter: click anywhere on an editable combo (not just the arrow) →
+        # open its list. Persists across language rebuilds (not reset in _set_language).
+        self._combo_open_filter = _ComboPopupFilter(self)
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -808,6 +812,7 @@ class MainWindow(QMainWindow):
             items = self._options.get(src) if src in self._options else src.split(",")
             combo = QComboBox()
             combo.setEditable(True)
+            combo.lineEdit().installEventFilter(self._combo_open_filter)
             combo.addItem("")
             combo.addItems([str(x) for x in (items or [])])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
@@ -899,6 +904,7 @@ class MainWindow(QMainWindow):
         if arg.get("choices"):
             combo = QComboBox()
             combo.setEditable(True)
+            combo.lineEdit().installEventFilter(self._combo_open_filter)
             combo.addItem("")
             combo.addItems([str(x) for x in arg["choices"]])
             combo.setToolTip(help_txt)
@@ -1652,6 +1658,8 @@ _QSS = """
 QMainWindow, QDialog {{ background: {bg}; }}
 QToolTip {{ background: {input}; color: {text}; border: 1px solid {border};
            padding: 5px 8px; border-radius: 6px; }}
+QLabel#fadeTip {{ background: {input}; color: {text}; border: 1px solid {border};
+                 border-radius: 8px; padding: 7px 10px; font-size: 12px; }}
 
 QSplitter::handle {{ background: {bg}; }}
 QSplitter::handle:horizontal {{ width: 6px; }}
@@ -1743,6 +1751,75 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 """.format(**_C)
 
 
+class _FadeTooltip(QObject):
+    """App-wide event filter that replaces the default abrupt QToolTip with a small
+    frameless label that *fades in* near the cursor (스르륵), instead of snapping
+    open. Fully guarded — any failure falls back to no tooltip, never a crash."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._label = QLabel(None)
+        self._label.setObjectName("fadeTip")
+        self._label.setWindowFlags(
+            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowTransparentForInput
+        )
+        self._label.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self._label.setWordWrap(True)
+        self._label.setMaximumWidth(420)
+        self._eff = QGraphicsOpacityEffect(self._label)
+        self._label.setGraphicsEffect(self._eff)
+        self._anim = QPropertyAnimation(self._eff, b"opacity", self)
+        self._anim.setDuration(150)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._hide = QTimer(self)
+        self._hide.setSingleShot(True)
+        self._hide.timeout.connect(self._label.hide)
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt signature)
+        try:
+            et = event.type()
+            if et == QEvent.Type.ToolTip:
+                text = obj.toolTip() if hasattr(obj, "toolTip") else ""
+                if text:
+                    self._label.setText(text)
+                    self._label.adjustSize()
+                    gp = event.globalPos()
+                    self._label.move(gp.x() + 14, gp.y() + 18)
+                    self._eff.setOpacity(0.0)
+                    self._label.show()
+                    self._anim.stop()
+                    self._anim.start()
+                    self._hide.start(8000)
+                    return True  # suppress the default snap-open tooltip
+                self._label.hide()
+            elif et in (QEvent.Type.Leave, QEvent.Type.WindowDeactivate):
+                self._label.hide()
+        except Exception:
+            return False
+        return False
+
+
+class _ComboPopupFilter(QObject):
+    """Make an EDITABLE combo open its list when the field is clicked anywhere — not
+    only the little arrow. Installed on the combo's line-edit; a click toggles the
+    popup (the box itself is the trigger). Typing a custom value still works."""
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        try:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                combo = obj.parent()
+                if isinstance(combo, QComboBox) and combo.isEnabled():
+                    if combo.view().isVisible():
+                        combo.hidePopup()
+                    else:
+                        combo.showPopup()
+                    return True
+        except Exception:
+            return False
+        return False
+
+
 def _apply_theme(app: QApplication) -> None:
     """Dark 'Gemini' palette + QSS. Palette covers default surfaces (so nothing flashes
     OS-grey); QSS does rounding / gold accent / inputs / scrollbars."""
@@ -1770,6 +1847,10 @@ def run() -> None:
     """Create the QApplication and show the main window (blocking)."""
     app = QApplication.instance() or QApplication(sys.argv)
     _apply_theme(app)
+    # Smooth fade-in tooltips (스르륵) instead of the default snap-open. Kept on the
+    # app so it lives as long as the app (a local would be GC'd).
+    app._fade_tip = _FadeTooltip(app)
+    app.installEventFilter(app._fade_tip)
     win = MainWindow()
     win.show()
     app.exec()
