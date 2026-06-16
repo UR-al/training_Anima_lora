@@ -68,6 +68,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Native PySide6 desktop control panel (`python tasks.py native-gui`).
 gui = ["PySide6>=6.7"]
 # Gradio control panel (`python tasks.py gradio-gui`) — opt-in so the core
 # install stays lean. Same major as the kohya_ss GUI this layout is modelled on.

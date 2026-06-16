@@ -30,6 +30,7 @@ from scripts.tasks import (
     gradio_gui,
     inference,
     masking,
+    native_gui,
     preprocess,
     tagger,
     training,
@@ -52,6 +53,12 @@ COMMANDS = {
         "Gradio control panel (kohya-style UI) driving this repo's train.py. "
         "Needs the optional `gradio` extra. python tasks.py gradio-gui "
         "[--port 7860] [--no-browser].",
+    ),
+    "native-gui": (
+        native_gui.cmd_native_gui,
+        "Native PySide6 desktop control panel driving this repo's train.py. "
+        "Needs the optional `gui` extra (uv sync --extra gui). "
+        "python tasks.py native-gui.",
     ),
     "easycontrol": (
         training.cmd_easycontrol,
