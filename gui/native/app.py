@@ -210,6 +210,11 @@ _KO = {
     "LR scheduler": "LR 스케줄러",
     "Constant→cosine (one-shot)": "Constant→cosine (원샷)",
     "↳ cosine tail (epochs)": "↳ cosine tail (epoch)",
+    "↳ optimizer args help": "↳ 옵티마이저 인자 도움말",
+    "↳ scheduler args help": "↳ 스케줄러 인자 도움말",
+    "▸ Show usable args": "▸ 사용 가능한 인자 보기",
+    "▾ Hide args": "▾ 인자 숨기기",
+    "Pick an optimizer / scheduler first.": "옵티마이저 / 스케줄러를 먼저 선택하세요.",
     "Loss / timestep / weighting": "손실 / 타임스텝 / 가중치",
     "Huber c": "Huber c",
     "Huber schedule": "Huber 스케줄",
@@ -318,7 +323,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 [
                     ("optimizer_type", "Optimizer", "combo:optimizers"),
                     ("optimizer_args", "optimizer_args (k=v …)", "text"),
-                    ("optimizer_args", "↳ args help", "opthelp"),
+                    ("optimizer_args", "↳ optimizer args help", "opthelp:optimizer_type"),
                 ],
             ),
             (
@@ -332,6 +337,11 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("use_constantcosine", "Constant→cosine (one-shot)", "bool"),
                     ("constantcosine_tail_epochs", "↳ cosine tail (epochs)", "text"),
                     ("lr_scheduler_args", "lr_scheduler_args", "text"),
+                    (
+                        "lr_scheduler_args",
+                        "↳ scheduler args help",
+                        "opthelp:lr_scheduler_type",
+                    ),
                     ("lr_warmup_steps", "Warmup steps", "text"),
                 ],
             ),
@@ -596,10 +606,9 @@ _SUBSET_GREY = [
     ("caption_dropout_rate", "use_text_cache"),
 ]
 
-# Tabs that keep their own routed schema args (focused, self-contained). Every other
-# tab's uncurated "More flags" are consolidated into the single "anima_lora" tab so
-# related advanced flags live in one place instead of scattered across tabs.
-_SCHEMA_KEEP_TABS = {"Metadata", "Monitoring"}
+# Only anima_lora's OWN flags (from its DiT/Anima arg-adders, detected in the backend
+# as options()["anima_dests"]) go to the dedicated "anima_lora" tab; the inherited base
+# args keep their normal per-tab "More flags" placement.
 _ANIMA_TAB = "anima_lora"
 
 
@@ -620,18 +629,20 @@ class MainWindow(QMainWindow):
         for _tab, groups in _TRAINING_TABS:
             for _title, fields in groups:
                 for dest, _label, kind in fields:
-                    if kind not in ("opthelp", "scope"):
+                    if not (kind.startswith("opthelp") or kind == "scope"):
                         self._curated.add(dest)
         # Partition schema args (arg_groups) into Training tabs by route.
         self._tab_schema: dict[str, list[dict]] = {}
+        anima_dests = set(self._options.get("anima_dests") or [])
         for group in self._options.get("arg_groups") or []:
             for arg in group.get("args") or []:
                 d = arg.get("dest") or ""
                 if d in self._curated:
                     continue
-                tab = _route_tab(d)
-                if tab not in _SCHEMA_KEEP_TABS:
-                    tab = _ANIMA_TAB  # consolidate scattered "More flags" into one tab
+                # ONLY anima_lora's own flags (DiT + Anima arg-adders) go to the
+                # anima_lora tab; inherited sd-scripts/kohya base args stay on their
+                # normally-routed tab's "More flags".
+                tab = _ANIMA_TAB if d in anima_dests else _route_tab(d)
                 self._tab_schema.setdefault(tab, []).append(arg)
 
         self._build_central()
@@ -646,6 +657,7 @@ class MainWindow(QMainWindow):
     def _build_central(self) -> None:
         """(Re)build the tabs + run panel into the central widget. Re-callable so a
         language switch can rebuild the whole UI in the new language."""
+        self._opthelp_panels: list[tuple[str, QWidget, QWidget]] = []
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._build_parent_tabs())
         splitter.addWidget(self._build_run_panel())
@@ -887,7 +899,7 @@ class MainWindow(QMainWindow):
             w = self._build_field(dest, kind)
             # Path pickers / args-help / scope span the full width; the compact fields
             # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
-            if kind in ("file", "dir", "opthelp", "scope"):
+            if kind in ("file", "dir", "scope") or kind.startswith("opthelp"):
                 if c != 0:
                     r += 1
                     c = 0
@@ -919,9 +931,11 @@ class MainWindow(QMainWindow):
             combo.addItems(["both (UNet + TE)", "UNet only", "TE only"])
             self._scope = combo
             return combo
-        if kind == "opthelp":
-            # Inline, expands DOWNWARD (not a popup): lists the selected optimizer's
-            # accepted args. Re-reads the current optimizer each time it's opened.
+        if kind.startswith("opthelp"):
+            # Inline, expands DOWNWARD (not a popup): lists the accepted args of the
+            # selected optimizer OR scheduler. Source dest after the colon:
+            # "opthelp:optimizer_type" or "opthelp:lr_scheduler_type" (default optimizer).
+            source = kind.split(":", 1)[1] if ":" in kind else "optimizer_type"
             box = QWidget()
             v = QVBoxLayout(box)
             v.setContentsMargins(0, 0, 0, 0)
@@ -935,9 +949,9 @@ class MainWindow(QMainWindow):
             body.setVisible(False)
             body.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-            def _toggle(on, b=btn, lb=body):
+            def _toggle(on, b=btn, lb=body, src=source):
                 if on:
-                    lb.setText(self._optimizer_help_text())
+                    lb.setText(self._arg_help_text(src))
                     b.setText(tr("▾ Hide args"))
                 else:
                     b.setText(tr("▸ Show usable args"))
@@ -946,10 +960,9 @@ class MainWindow(QMainWindow):
             btn.toggled.connect(_toggle)
             v.addWidget(btn)
             v.addWidget(body)
-            # Remember it so changing the optimizer auto-refreshes the open panel
-            # (no need to collapse + re-expand).
-            self._opthelp_btn = btn
-            self._opthelp_body = body
+            # Register so changing the source optimizer/scheduler auto-refreshes the
+            # open panel (no collapse + re-expand needed).
+            self._opthelp_panels.append((source, btn, body))
             return box
         if kind == "bool":
             cb = QCheckBox()
@@ -1006,13 +1019,15 @@ class MainWindow(QMainWindow):
         if path:
             edit.setText(path)
 
-    def _optimizer_help_text(self) -> str:
-        """Formatted list of the currently-selected optimizer's accepted args (shown
-        inline by the opthelp panel). Uses backend.optimizer_arg_help (torch-free cache)."""
-        g = self._getters.get("optimizer_type")
+    def _arg_help_text(self, source_dest: str = "optimizer_type") -> str:
+        """Formatted list of the accepted args of the optimizer/scheduler currently
+        selected in ``source_dest`` (shown inline by an opthelp panel). Uses
+        backend.optimizer_arg_help, which handles both optimizers and schedulers
+        (builtin names + dotted paths), torch-free from the cache."""
+        g = self._getters.get(source_dest)
         name = str((g() if g else "") or "").strip()
         if not name:
-            return tr("Pick an optimizer first.")
+            return tr("Pick an optimizer / scheduler first.")
         try:
             info = backend.optimizer_arg_help(name)
         except Exception as exc:  # noqa: BLE001
@@ -1128,16 +1143,17 @@ class MainWindow(QMainWindow):
                 w.textChanged.connect(lambda *_: self._apply_greying())
             elif isinstance(w, QCheckBox):
                 w.toggled.connect(lambda *_: self._apply_greying())
-        # Auto-refresh the (open) optimizer args-help panel when the optimizer changes.
-        opt = self._widgets.get("optimizer_type")
-        if isinstance(opt, QComboBox):
-            opt.currentTextChanged.connect(lambda *_: self._refresh_opthelp())
+        # Auto-refresh any OPEN args-help panel when its source optimizer/scheduler
+        # changes (no collapse + re-expand needed).
+        for source in {src for src, _b, _body in getattr(self, "_opthelp_panels", [])}:
+            w = self._widgets.get(source)
+            if isinstance(w, QComboBox):
+                w.currentTextChanged.connect(lambda *_: self._refresh_opthelp())
 
     def _refresh_opthelp(self) -> None:
-        btn = getattr(self, "_opthelp_btn", None)
-        body = getattr(self, "_opthelp_body", None)
-        if btn is not None and body is not None and btn.isChecked():
-            body.setText(self._optimizer_help_text())
+        for source, btn, body in getattr(self, "_opthelp_panels", []):
+            if btn.isChecked():
+                body.setText(self._arg_help_text(source))
 
     def _apply_greying(self) -> None:
         vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}

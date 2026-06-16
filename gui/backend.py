@@ -956,7 +956,7 @@ _OPTIONS_CACHE = None
 # combined and dominate GUI startup. Their output is plain data, so we persist it to
 # disk keyed on the source-file signature and read it back torch-free on every later
 # launch — only regenerating (the slow ~5s path) after an update changes the sources.
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2  # bumped when the cached shape changes (added anima_dests)
 _SLOW_CACHE = None  # in-memory mirror of the on-disk cache (once loaded this session)
 
 
@@ -972,6 +972,7 @@ def _slow_options_sig() -> str:
     paths = [
         ROOT / "train.py",
         ROOT / "library" / "config" / "cli_args.py",
+        ROOT / "library" / "anima" / "training.py",  # owns add_anima_training_arguments
         Path(__file__).resolve(),  # this module owns list_arg_groups / optimizer_arg_help
         ROOT / "custom_scheduler" / "LoraEasyCustomOptimizer",
     ]
@@ -1007,6 +1008,30 @@ def _load_slow_cache():
     return None
 
 
+def _anima_specific_dests() -> list[str]:
+    """The dests defined by anima_lora's OWN arg-adders (DiT + Anima training) — as
+    opposed to the inherited sd-scripts/kohya base args. The GUI routes ONLY these to
+    the dedicated 'anima_lora' tab; everything else stays on its normally-routed tab."""
+    import argparse
+
+    try:
+        from library.anima.training import add_anima_training_arguments
+        from library.config.cli_args import add_dit_training_arguments
+    except Exception:  # noqa: BLE001
+        return []
+    p = argparse.ArgumentParser()
+    try:
+        add_dit_training_arguments(p)
+        add_anima_training_arguments(p)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for a in p._actions:
+        if a.dest and a.dest != "help" and a.option_strings:
+            out.append(a.dest)
+    return sorted(set(out))
+
+
 def build_options_cache() -> dict:
     """Compute the torch-importing option data ONCE (~5s: imports train + the optimizer
     zoo + introspects every optimizer's help) and persist it. Subsequent launches read
@@ -1027,6 +1052,7 @@ def build_options_cache() -> dict:
         "optimizers": opts,
         "arg_groups": list_arg_groups(),
         "opt_help": helps,
+        "anima_dests": _anima_specific_dests(),
     }
     try:
         STORE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1057,6 +1083,7 @@ def options() -> dict:
             "lycoris_algos": list_lycoris_algos(),
             "lycoris_presets": list_lycoris_presets(),
             "arg_groups": slow.get("arg_groups") or [],
+            "anima_dests": slow.get("anima_dests") or [],
             "target_res_tiers": list_target_res_tiers(),
             "sam3_available": _sam3_available(),
             "mit_available": _mit_available(),
