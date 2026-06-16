@@ -2196,12 +2196,57 @@ def status() -> dict:
     }
 
 
+def _kill_proc_tree(proc, timeout: float = 6.0) -> None:
+    """Terminate ``proc`` AND all its descendants. A bare ``proc.terminate()`` only
+    signals the immediate child — but with auto-preprocess ON the spawned process is
+    the ``gui_chain_preprocess_train.py`` WRAPPER, whose ``train.py`` child (and its
+    dataloader workers) would keep training after Stop. Kill the whole tree."""
+    pid = proc.pid
+    try:
+        import psutil
+
+        try:
+            parent = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+        victims = parent.children(recursive=True)
+        victims.append(parent)
+        for p in victims:
+            try:
+                p.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _gone, alive = psutil.wait_procs(victims, timeout=timeout)
+        for p in alive:  # escalate to SIGKILL/TerminateProcess for stragglers
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
+        return
+    except ImportError:
+        pass
+    # Fallback without psutil: tree-kill on Windows, terminate→kill elsewhere.
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+        )
+    else:
+        proc.terminate()
+        try:
+            proc.wait(timeout)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+
+
 def stop() -> dict:
-    # Direct-Popen path (the only path): terminate the spawned process.
+    # Direct-Popen path (the only path): kill the spawned process AND its children
+    # (the auto-preprocess wrapper spawns train.py as a grandchild — terminating only
+    # the wrapper left training running).
     proc = _STATE.get("proc")
     if proc is not None and proc.poll() is None:
         try:
-            proc.terminate()
+            _kill_proc_tree(proc)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         _clear_lock()
