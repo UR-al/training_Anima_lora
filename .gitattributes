@@ -1,0 +1,9 @@
+# Line-ending policy. Windows batch / PowerShell scripts MUST be CRLF — cmd.exe
+# mis-parses LF-only .bat files (it drops the leading characters of each line, so
+# `cd /d` becomes `/d`, `setlocal` becomes `tlocal`, etc., and the launcher breaks).
+# Shell scripts MUST stay LF. git stores these normalized and checks them out with
+# the right endings per-platform, so a clone on Windows always gets working .bat files.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+*.sh    text eol=lf
