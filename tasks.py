@@ -255,6 +255,11 @@ COMMANDS = {
         "Standalone web monitor — browse/replay saved run snapshots & compare losses "
         "offline (no training). [--output_dir output] [--port 8766] [--no-browser]",
     ),
+    "watch-party": (
+        utilities.cmd_watch_party,
+        "Two AIs (Claude + GPT) watch the live run & discuss it in the dashboard's AI "
+        "Analysis panel. Needs the `watch` extra + ANTHROPIC_API_KEY/OPENAI_API_KEY.",
+    ),
     "print-config": (
         utilities.cmd_print_config,
         "Dump merged config (METHOD=<name> PRESET=<name>) with provenance",

@@ -76,6 +76,9 @@ gradio = ["gradio>=5.34.1"]
 # Training-monitor MCP server (`tools/anima_monitor_mcp.py`) — lets an AI agent
 # watch the run (status/loss/samples/log) and post analysis to the dashboard.
 mcp = ["mcp>=1.2.0"]
+# AI watch party (`tools/ai_watch_party.py`) — two AIs (Claude + GPT) discuss the
+# live run; needs ANTHROPIC_API_KEY + OPENAI_API_KEY.
+watch = ["anthropic>=0.40", "openai>=1.50"]
 dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.6",

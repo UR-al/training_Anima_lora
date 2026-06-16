@@ -69,6 +69,9 @@ gradio>=5.34.1
 # Training-monitor MCP server (tools/anima_monitor_mcp.py) — optional in pyproject
 # ([project.optional-dependencies].mcp); listed here so the pip "full install" view matches.
 mcp>=1.2.0
+# AI watch party (tools/ai_watch_party.py) — optional in pyproject ([…].watch).
+anthropic>=0.40
+openai>=1.50
 ruff>=0.15.9
 matplotlib
 torchsde>=0.2.6

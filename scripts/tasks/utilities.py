@@ -120,6 +120,13 @@ def cmd_monitor(extra):
     run([PY, "tools/run_monitor.py", *(extra or [])])
 
 
+def cmd_watch_party(extra):
+    """Two AIs (Claude + GPT) watch the live run and discuss it in the dashboard's
+    AI Analysis panel. Needs the `watch` extra + ANTHROPIC_API_KEY/OPENAI_API_KEY.
+    python tasks.py watch-party [--rounds N] [--interval 30] [--no-images]."""
+    run([PY, "tools/ai_watch_party.py", *(extra or [])])
+
+
 def cmd_export_logs(extra):
     """Dump TB scalar logs to JSON. RUN=<dir> (default output/logs), ALL=1, JSONL=1."""
     run_path = os.environ.get("RUN", "output/logs")
