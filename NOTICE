@@ -1,8 +1,16 @@
-anima_lora
+anima_lora — merged Anima LoRA trainer
 Copyright (c) 2026 Seunghyun Ji
 
-This repository (training pipeline, inference code, GUI, and utilities) is
-licensed under the MIT License. See LICENSE for the full text.
+The combined work distributed in this repository (training pipeline, inference
+code, GUI, and utilities) is licensed under the GNU General Public License,
+version 3 (GPL-3.0). See LICENSE for the full text.
+
+The copyleft is load-bearing: this repository vendors GPL-3.0 code (see the
+"Third-party source code (GPL-3.0)" section below), so the distribution as a
+whole is GPL-3.0. The original anima_lora toolkit code authored by Seunghyun Ji
+is itself available under the MIT License, preserved here as LICENSE-MIT; the
+permissive MIT/Apache portions retain their original licenses where separable,
+but the combined distribution is GPL-3.0.
 
 --------------------------------------------------------------------------------
 Third-party model weights
@@ -12,7 +20,7 @@ This repository is a training and inference toolkit for the Anima diffusion
 model, which is built on base weights published by CircleStone Labs LLC under
 the CircleStone Labs Non-Commercial License v1.0 ("CircleStone NCL").
 
-The MIT license above covers only the source code in this repository. It does
+The code license(s) above cover only the source code in this repository. They do
 NOT relicense the CircleStone model weights or anything that qualifies as a
 "Derivative" of those weights under the CircleStone NCL. In particular:
 
@@ -32,9 +40,10 @@ NOT relicense the CircleStone model weights or anything that qualifies as a
     in them, subject to the restrictions in that section.
 
 If you train adapters with a DIFFERENT base model that you have the rights to
-use commercially, the toolkit code (MIT) does not impose any non-commercial
+use commercially, the toolkit code does not impose any non-commercial
 restriction on those adapters — the CircleStone NCL only attaches to
-Derivatives of CircleStone's own weights.
+Derivatives of CircleStone's own weights. (The code's own GPL-3.0 terms still
+apply to the code itself; GPL-3.0 permits commercial use.)
 
 For a commercial license to the CircleStone / Anima base weights, contact
 CircleStone Labs LLC directly. See:
@@ -60,8 +69,9 @@ file LICENSE-APACHE. You may also obtain it at:
 
     http://www.apache.org/licenses/LICENSE-2.0
 
-Code derived from sd-scripts remains governed by the Apache License 2.0. The MIT
-license on the rest of the toolkit does not relicense those portions.
+Code derived from sd-scripts remains governed by the Apache License 2.0. The
+licensing of the rest of the toolkit does not relicense those portions; Apache
+2.0 is one-directionally compatible with the GPL-3.0 of the combined work.
 
 Statement of modifications (Apache License 2.0, Section 4(b)):
 
@@ -79,3 +89,25 @@ are not limited to:
     accelerators (Spectrum, SPD, DCW, SMC-CFG, modulation guidance).
   * Restructuring the codebase into the library/, networks/, and anima_lora/
     packages with a new configuration system and task runner.
+
+--------------------------------------------------------------------------------
+Third-party source code (GPL-3.0)
+--------------------------------------------------------------------------------
+
+This repository vendors two GPL-3.0 components. Because GPL-3.0 is a copyleft
+license, bundling them makes the combined distribution GPL-3.0 (see LICENSE):
+
+  * The optimizer / scheduler suite under
+    custom_scheduler/LoraEasyCustomOptimizer/ is vendored from
+    LoRA_Easy_Training_Scripts (https://github.com/67372a/LoRA_Easy_Training_Scripts),
+    which is licensed under GPL-3.0. Individual optimizer files retain their
+    original author headers (Apache-2.0 / MIT / BSD-3-Clause from various
+    authors, including Meta Platforms); those per-file licenses are preserved
+    and are GPL-compatible.
+
+  * The web monitor under library/monitoring/ is vendored from AnimaLoraToolkit
+    (https://github.com/Moeblack/AnimaLoraToolkit), which is GPL-3.0 (it
+    derives from ComfyUI's GPL-3.0 code).
+
+If you need the toolkit under a more permissive license, these GPL-3.0
+components would have to be removed or installed separately rather than bundled.

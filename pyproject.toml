@@ -2,6 +2,15 @@
 name = "anima-lora"
 version = "0.1.0"
 description = "Standalone Anima LoRA training pipeline"
+# Combined work is GPL-3.0 (it vendors GPL-3.0 code: the LoRA_Easy optimizer zoo
+# + the AnimaLoraToolkit monitor). The MIT base + Apache-2.0 sd-scripts portions
+# keep their notices in LICENSE-MIT / LICENSE-APACHE / NOTICE. See README. Declared
+# via a classifier (universally supported); the SPDX `license =` string form is
+# avoided because it errors on setuptools < 77 (build floor is 68). setuptools
+# already auto-discovers LICENSE* / NOTICE as License-File metadata.
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+]
 requires-python = "==3.13.*"
 dependencies = [
     # Core ML.
