@@ -560,9 +560,6 @@ class MainWindow(QMainWindow):
         self._scope: QComboBox | None = None
         self._widgets: dict[str, QWidget] = {}  # dest → editable widget (for greying)
         self._watch: dict[str, QWidget] = {}  # watch-party fields (NOT saved to config)
-        # Shared filter: click anywhere on an editable combo (not just the arrow) →
-        # open its list. Persists across language rebuilds (not reset in _set_language).
-        self._combo_open_filter = _ComboPopupFilter(self)
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -808,6 +805,15 @@ class MainWindow(QMainWindow):
             form.addRow(tr(label), self._build_field(dest, kind))
         return gb
 
+    def _set_combo(self, combo: QComboBox, value) -> None:
+        """Select a value on a non-editable combo, adding it as an item first if it's
+        not in the predefined list — so loading a config with a custom value (e.g. a
+        dotted-path optimizer not in the zoo list) preserves it instead of losing it."""
+        v = str(value or "")
+        if v and combo.findText(v) < 0:
+            combo.addItem(v)
+        combo.setCurrentText(v)
+
     def _build_field(self, dest: str, kind: str) -> QWidget:
         if kind == "scope":
             combo = _Combo()
@@ -834,13 +840,11 @@ class MainWindow(QMainWindow):
         if kind.startswith("combo:"):
             src = kind.split(":", 1)[1]
             items = self._options.get(src) if src in self._options else src.split(",")
-            combo = _Combo()
-            combo.setEditable(True)
-            combo.lineEdit().installEventFilter(self._combo_open_filter)
+            combo = _Combo()  # non-editable (use_cmmd style)
             combo.addItem("")
             combo.addItems([str(x) for x in (items or [])])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
-            self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
+            self._setters[dest] = lambda v, c=combo: self._set_combo(c, v)
             self._widgets[dest] = combo
             return combo
         edit = QLineEdit()
@@ -1093,11 +1097,9 @@ class MainWindow(QMainWindow):
         _dir("cache_dir", "Cache dir", placeholder="(auto — shared with primary)")
         _text("num_repeats", "Number of repeats", "1")
         _text("keep_tokens", "Keep tokens", "0")
-        cext = _Combo()
-        cext.setEditable(True)
-        cext.lineEdit().installEventFilter(self._combo_open_filter)
+        cext = _Combo()  # non-editable (use_cmmd style)
         cext.addItems([".txt", ".caption"])
-        cext.setCurrentText(str(values.get("caption_extension", "") or ".txt"))
+        self._set_combo(cext, values.get("caption_extension") or ".txt")
         fields["caption_extension"] = cext
         fl.addRow(tr("Caption extension"), cext)
         _text("caption_dropout_rate", "Caption dropout rate", "0.0")
@@ -1473,19 +1475,17 @@ class MainWindow(QMainWindow):
         self._ab["ab_compile"] = self._ab_compile
         form.addRow("Compile", self._ab_compile)
 
-        nm = _Combo()
-        nm.setEditable(True)
+        nm = _Combo()  # non-editable (use_cmmd style)
         nm.addItems([str(x) for x in (self._options.get("network_modules") or [])])
-        nm.setCurrentText("networks.lora_anima")
+        self._set_combo(nm, "networks.lora_anima")
         self._ab["ab_network_module"] = nm
         form.addRow("Network module", nm)
         form.addRow("Network dim", _line("ab_network_dim", "16"))
         form.addRow("Network alpha", _line("ab_network_alpha", "8"))
         form.addRow("network_args", _line("ab_network_args"))
-        opt = _Combo()
-        opt.setEditable(True)
+        opt = _Combo()  # non-editable (use_cmmd style)
         opt.addItems([str(x) for x in (self._options.get("optimizers") or [])])
-        opt.setCurrentText("AdamW")
+        self._set_combo(opt, "AdamW")
         self._ab["ab_optimizer_type"] = opt
         form.addRow("Optimizer", opt)
         ab_dit = QLineEdit()
@@ -1959,26 +1959,6 @@ class _FadeTooltip(QObject):
                 self._label.hide()
             elif et in (QEvent.Type.Leave, QEvent.Type.WindowDeactivate):
                 self._label.hide()
-        except Exception:
-            return False
-        return False
-
-
-class _ComboPopupFilter(QObject):
-    """Make an EDITABLE combo open its list when the field is clicked anywhere — not
-    only the little arrow. Installed on the combo's line-edit; a click toggles the
-    popup (the box itself is the trigger). Typing a custom value still works."""
-
-    def eventFilter(self, obj, event):  # noqa: N802
-        try:
-            if event.type() == QEvent.Type.MouseButtonPress:
-                combo = obj.parent()
-                if isinstance(combo, QComboBox) and combo.isEnabled():
-                    if combo.view().isVisible():
-                        combo.hidePopup()
-                    else:
-                        combo.showPopup()
-                    return True
         except Exception:
             return False
         return False
