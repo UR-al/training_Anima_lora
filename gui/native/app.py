@@ -1267,11 +1267,15 @@ class MainWindow(QMainWindow):
                 w.currentTextChanged.connect(lambda *_: self._refresh_opthelp())
 
     def _refresh_opthelp(self) -> None:
+        if getattr(self, "_loading", False):
+            return  # bulk config-load in progress; refreshed once at the end
         for source, btn, body in getattr(self, "_opthelp_panels", []):
             if btn.isChecked():
                 body.setText(self._arg_help_text(source))
 
     def _apply_greying(self) -> None:
+        if getattr(self, "_loading", False):
+            return  # bulk config-load in progress; greying runs once at the end
         vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}
         for target, pred, reason in _GREY_RULES:
             w = self._widgets.get(target)
@@ -1969,17 +1973,26 @@ class MainWindow(QMainWindow):
         return form
 
     def _apply(self, form: dict) -> None:
-        for dest, val in form.items():
-            setter = self._setters.get(dest)
-            if setter:
-                setter(val)
-        subsets = form.get("subsets")
-        if isinstance(subsets, list):
-            self._clear_subset_cards()
-            for s in subsets:
-                if isinstance(s, dict):
-                    self._add_subset_card(s)
-        self._apply_greying()  # re-evaluate after a config load changes drivers
+        # Suppress the per-field greying / args-help refresh while bulk-setting (each
+        # setter fires signals; doing the cascade N× — and possibly a torch-importing
+        # optimizer_arg_help if a help panel is open — froze the GUI on config load).
+        # Apply greying ONCE at the end instead.
+        self._loading = True
+        try:
+            for dest, val in form.items():
+                setter = self._setters.get(dest)
+                if setter:
+                    setter(val)
+            subsets = form.get("subsets")
+            if isinstance(subsets, list):
+                self._clear_subset_cards()
+                for s in subsets:
+                    if isinstance(s, dict):
+                        self._add_subset_card(s)
+        finally:
+            self._loading = False
+        self._apply_greying()  # re-evaluate once after the load changes drivers
+        self._refresh_opthelp()  # refresh any open help panel once, now
 
     # ----- actions -------------------------------------------------------- #
     def _do_preview(self) -> None:
