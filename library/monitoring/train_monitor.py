@@ -3,6 +3,9 @@
 实时显示 loss 曲线和采样图片
 """
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -643,9 +646,30 @@ class MonitorHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(f.read())
             else:
                 self.send_error(404)
+        elif self.path.startswith("/open-samples"):
+            # Local dashboard → open the sample dir in the OS file browser.
+            d = self.output_dir / "sample"
+            if not d.exists():
+                d = self.output_dir / "samples"
+            ok = False
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                if sys.platform.startswith("win"):
+                    os.startfile(str(d))  # noqa: S606
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(d)])
+                else:
+                    subprocess.Popen(["xdg-open", str(d)])
+                ok = True
+            except Exception:
+                ok = False
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": ok, "path": str(d)}).encode("utf-8"))
         else:
             self.send_error(404)
-    
+
     def log_message(self, format, *args):
         pass  # 静默日志
 

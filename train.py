@@ -2538,6 +2538,12 @@ class AnimaTrainer:
                         "preset": getattr(args, "preset", None),
                         "optimizer": getattr(args, "optimizer_type", None),
                         "lr": getattr(args, "learning_rate", None),
+                        "sample_every_n_steps": getattr(
+                            args, "sample_every_n_steps", None
+                        ),
+                        "sample_every_n_epochs": getattr(
+                            args, "sample_every_n_epochs", None
+                        ),
                     },
                 )
             else:

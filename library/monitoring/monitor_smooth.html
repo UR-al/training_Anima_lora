@@ -562,7 +562,7 @@
     <!-- HEADER -->
     <header class="header">
         <div class="header-left">
-            <div class="logo">ANIMA<span>//</span>TRAIN</div>
+            <div class="logo" id="logo">ANIMA<span>//</span>TRAIN</div>
             <div class="status-badge">
                 <div class="status-dot"></div>
                 <span id="status-text">STANDBY</span>
@@ -578,7 +578,7 @@
         <div class="stat-cell">
             <div class="stat-label">Epoch</div>
             <div class="stat-value" id="epoch">0</div>
-            <div class="stat-sub">of <span id="total-epochs">--</span></div>
+            <div class="stat-sub">of <span id="total-epochs">--</span> · <span id="steps-per-epoch">--</span>/ep</div>
         </div>
         <div class="stat-cell">
             <div class="stat-label">Step</div>
@@ -629,6 +629,10 @@
                             <input type="checkbox" id="show-raw" checked>
                             <label for="show-raw" style="cursor:pointer">Raw</label>
                         </div>
+                        <div class="control-group">
+                            <label class="control-label" for="loss-color">Color</label>
+                            <input type="color" id="loss-color" value="#39ff14" title="EMA line color">
+                        </div>
                     </div>
                 </div>
                 <div class="chart-legend">
@@ -646,6 +650,7 @@
                 <span class="chart-title">Learning Rate</span>
                 <div class="chart-legend">
                     <div class="legend-item"><div class="legend-dot lr"></div><span>LR</span></div>
+                    <input type="color" id="lr-color" value="#ff6b35" title="LR line color" style="margin-left:8px;">
                 </div>
             </div>
             <div class="chart-container small">
@@ -658,7 +663,10 @@
     <div class="panels-grid">
         <!-- Samples -->
         <div class="panel panel-samples">
-            <div class="panel-header">Samples</div>
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Samples <span id="sample-cadence" style="color:var(--text-dim); font-weight:400; font-size:0.75rem;"></span></span>
+                <button id="open-samples-btn" title="Open the sample folder" style="background:var(--bg-tertiary); color:var(--text-secondary); border:1px solid var(--border); border-radius:5px; padding:2px 8px; cursor:pointer; font-size:0.75rem;">📁 Folder</button>
+            </div>
             <div class="panel-content">
                 <div class="samples-container" id="samples-container">
                     <!-- 缩略图网格 -->
@@ -711,6 +719,11 @@
         <div class="footer-item">Refresh: 1s</div>
         <div class="footer-item" id="connection-status">Connecting...</div>
     </footer>
+
+    <!-- Lightbox: full-res sample on click -->
+    <div id="lightbox" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; cursor:zoom-out;">
+        <img id="lightbox-img" src="" alt="" style="max-width:95vw; max-height:95vh; object-fit:contain; box-shadow:0 0 40px rgba(0,0,0,0.8);">
+    </div>
 
     <script>
         // 自动检测 API 地址：支持本地和云端训练
@@ -920,6 +933,19 @@
                 }
                 if (data.total_steps) document.getElementById('total-steps').textContent = data.total_steps;
 
+                // Title = run name; steps/epoch (sub-line) + sample cadence (Samples header)
+                const cfg = data.config || {};
+                if (cfg.run) document.getElementById('logo').textContent = cfg.run;
+                const tEpochs = cfg.total_epochs || 0;
+                if (data.total_steps && tEpochs) {
+                    document.getElementById('steps-per-epoch').textContent =
+                        Math.round(data.total_steps / tEpochs);
+                }
+                const cad = cfg.sample_every_n_steps
+                    ? `every ${cfg.sample_every_n_steps} steps`
+                    : (cfg.sample_every_n_epochs ? `every ${cfg.sample_every_n_epochs} ep` : '');
+                document.getElementById('sample-cadence').textContent = cad ? `(${cad})` : '';
+
                 // Charts
                 updateCharts(data);
 
@@ -968,6 +994,40 @@
 
         setInterval(updateData, 1000);
         updateData();
+
+        // ==================== Chart color pickers (persisted) ====================
+        function applyChartColor(chart, dsIndex, color) {
+            chart.data.datasets[dsIndex].borderColor = color;
+            chart.update('none');
+        }
+        const lossColor = document.getElementById('loss-color');
+        const lrColor = document.getElementById('lr-color');
+        const savedLoss = localStorage.getItem('animaLossColor');
+        const savedLr = localStorage.getItem('animaLrColor');
+        if (savedLoss) { lossColor.value = savedLoss; applyChartColor(lossChart, 1, savedLoss); }
+        if (savedLr) { lrColor.value = savedLr; applyChartColor(lrChart, 0, savedLr); }
+        lossColor.addEventListener('input', e => {
+            applyChartColor(lossChart, 1, e.target.value);
+            localStorage.setItem('animaLossColor', e.target.value);
+        });
+        lrColor.addEventListener('input', e => {
+            applyChartColor(lrChart, 0, e.target.value);
+            localStorage.setItem('animaLrColor', e.target.value);
+        });
+
+        // ==================== Open sample folder (local server) ====================
+        document.getElementById('open-samples-btn').addEventListener('click', async () => {
+            try { await fetch(`${API_BASE}/open-samples`); } catch (e) {}
+        });
+
+        // ==================== Sample lightbox (click → full-res) ====================
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        function openLightbox(src) { lightboxImg.src = src; lightbox.style.display = 'flex'; }
+        lightbox.addEventListener('click', () => { lightbox.style.display = 'none'; lightboxImg.src = ''; });
+        document.getElementById('sample-preview').addEventListener('click', (e) => {
+            if (e.target.tagName === 'IMG') openLightbox(e.target.src);
+        });
 
         // ==================== 缩略图网格 ====================
         let currentSamples = [];
@@ -1039,7 +1099,7 @@
             const imgUrl = `${API_BASE}/samples/${sample.path.split(/[\\\\/]/).pop()}`;
             
             preview.innerHTML = `
-                <img src="${imgUrl}" alt="Step ${sample.step}">
+                <img src="${imgUrl}" alt="Step ${sample.step}" style="cursor:zoom-in" title="Click to enlarge">
                 <div class="sample-preview-label">
                     Step <strong>${sample.step}</strong>
                 </div>
