@@ -208,6 +208,8 @@ _KO = {
     "Tiers (multi-scale)": "타일 (멀티스케일)",
     # loss / timestep / weighting group + scheduler
     "LR scheduler": "LR 스케줄러",
+    "Constant→cosine (one-shot)": "Constant→cosine (원샷)",
+    "↳ cosine tail (epochs)": "↳ cosine tail (epoch)",
     "Loss / timestep / weighting": "손실 / 타임스텝 / 가중치",
     "Huber c": "Huber c",
     "Huber schedule": "Huber 스케줄",
@@ -326,6 +328,9 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     # same list — the backend emits --lr_scheduler vs --lr_scheduler_type
                     # by the "." heuristic, so no separate "(builtin)" box is needed.
                     ("lr_scheduler_type", "LR scheduler", "combo:schedulers"),
+                    # constant→cosine one-shot lives WITH the scheduler (it replaces it).
+                    ("use_constantcosine", "Constant→cosine (one-shot)", "bool"),
+                    ("constantcosine_tail_epochs", "↳ cosine tail (epochs)", "text"),
                     ("lr_scheduler_args", "lr_scheduler_args", "text"),
                     ("lr_warmup_steps", "Warmup steps", "text"),
                 ],
@@ -399,6 +404,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             ),
         ],
     ),
+    ("anima_lora", []),  # consolidated advanced flags (was each tab's "More flags")
     ("Metadata", []),
     ("Extra", []),
 ]
@@ -590,6 +596,12 @@ _SUBSET_GREY = [
     ("caption_dropout_rate", "use_text_cache"),
 ]
 
+# Tabs that keep their own routed schema args (focused, self-contained). Every other
+# tab's uncurated "More flags" are consolidated into the single "anima_lora" tab so
+# related advanced flags live in one place instead of scattered across tabs.
+_SCHEMA_KEEP_TABS = {"Metadata", "Monitoring"}
+_ANIMA_TAB = "anima_lora"
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -617,7 +629,10 @@ class MainWindow(QMainWindow):
                 d = arg.get("dest") or ""
                 if d in self._curated:
                     continue
-                self._tab_schema.setdefault(_route_tab(d), []).append(arg)
+                tab = _route_tab(d)
+                if tab not in _SCHEMA_KEEP_TABS:
+                    tab = _ANIMA_TAB  # consolidate scattered "More flags" into one tab
+                self._tab_schema.setdefault(tab, []).append(arg)
 
         self._build_central()
 
@@ -773,30 +788,31 @@ class MainWindow(QMainWindow):
             vbox.addWidget(self._build_group(title, fields))
         if tab_name == "Subset":
             vbox.addWidget(self._build_subset_box())
-        # Schema args routed into this tab (populated only when torch is present).
+        # Schema args routed into this tab — grouped into a box PER CLUSTER so related
+        # flags sit together (label | short value field | help text beside it).
         schema = self._tab_schema.get(tab_name) or []
         if schema:
-            box = QGroupBox(tr("More flags"))
-            grid = QGridLayout(box)
-            grid.setHorizontalSpacing(14)
-            grid.setVerticalSpacing(8)
-            grid.setColumnStretch(2, 1)  # the description column absorbs the width
-            # Cluster related flags together (then by name), and put each flag's help
-            # text beside a SHORT value field instead of one stretched field per line.
-            ordered = sorted(
-                schema, key=lambda a: (a.get("cluster") or "~", a.get("dest") or "")
-            )
-            for r, arg in enumerate(ordered):
-                lbl = QLabel(arg.get("dest") or arg.get("flag"))
-                fw = self._build_adv_field(arg)
-                fw.setMaximumWidth(200)
-                desc = QLabel((arg.get("help") or "").strip())
-                desc.setObjectName("argDesc")
-                desc.setWordWrap(True)
-                grid.addWidget(lbl, r, 0)
-                grid.addWidget(fw, r, 1)
-                grid.addWidget(desc, r, 2)
-            vbox.addWidget(box)
+            by_cluster: dict[str, list[dict]] = {}
+            for arg in schema:
+                by_cluster.setdefault(arg.get("cluster") or "misc", []).append(arg)
+            for cluster in sorted(by_cluster):
+                box = QGroupBox(tr(str(cluster)))
+                grid = QGridLayout(box)
+                grid.setHorizontalSpacing(14)
+                grid.setVerticalSpacing(8)
+                grid.setColumnStretch(2, 1)  # description column absorbs the width
+                rows = sorted(by_cluster[cluster], key=lambda a: a.get("dest") or "")
+                for r, arg in enumerate(rows):
+                    lbl = QLabel(arg.get("dest") or arg.get("flag"))
+                    fw = self._build_adv_field(arg)
+                    fw.setMaximumWidth(200)
+                    desc = QLabel((arg.get("help") or "").strip())
+                    desc.setObjectName("argDesc")
+                    desc.setWordWrap(True)
+                    grid.addWidget(lbl, r, 0)
+                    grid.addWidget(fw, r, 1)
+                    grid.addWidget(desc, r, 2)
+                vbox.addWidget(box)
         if tab_name == "Extra":
             vbox.addWidget(self._build_extra_flags_box())
         if tab_name == "Monitoring":
@@ -930,6 +946,10 @@ class MainWindow(QMainWindow):
             btn.toggled.connect(_toggle)
             v.addWidget(btn)
             v.addWidget(body)
+            # Remember it so changing the optimizer auto-refreshes the open panel
+            # (no need to collapse + re-expand).
+            self._opthelp_btn = btn
+            self._opthelp_body = body
             return box
         if kind == "bool":
             cb = QCheckBox()
@@ -1108,6 +1128,16 @@ class MainWindow(QMainWindow):
                 w.textChanged.connect(lambda *_: self._apply_greying())
             elif isinstance(w, QCheckBox):
                 w.toggled.connect(lambda *_: self._apply_greying())
+        # Auto-refresh the (open) optimizer args-help panel when the optimizer changes.
+        opt = self._widgets.get("optimizer_type")
+        if isinstance(opt, QComboBox):
+            opt.currentTextChanged.connect(lambda *_: self._refresh_opthelp())
+
+    def _refresh_opthelp(self) -> None:
+        btn = getattr(self, "_opthelp_btn", None)
+        body = getattr(self, "_opthelp_body", None)
+        if btn is not None and body is not None and btn.isChecked():
+            body.setText(self._optimizer_help_text())
 
     def _apply_greying(self) -> None:
         vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}
@@ -1978,7 +2008,8 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
     padding: 6px 10px; selection-background-color: {accent}; selection-color: #000; }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {accent}; background: {card}; }}
-QLineEdit:disabled, QPlainTextEdit:disabled {{ color: {faint}; background: #131313; }}
+QLineEdit:disabled, QPlainTextEdit:disabled {{ color: #3f3f3f; background: #0d0d0d;
+    border: 1px dashed #2c2c2c; }}
 QLineEdit::placeholder {{ color: {faint}; }}
 
 /* Combo */
@@ -1992,6 +2023,10 @@ QComboBox::down-arrow {{ width: 0; height: 0; border-left: 4px solid transparent
 QComboBox QAbstractItemView {{ background: {input}; color: {text}; border: 1px solid {border};
     border-radius: 8px; selection-background-color: {accent}; selection-color: #000;
     outline: none; padding: 4px; }}
+/* Clearly-disabled look (a dashed, dimmed, darker field) so a greyed-out control is
+   obviously inactive — hover shows the reason. */
+QComboBox:disabled {{ background: #0d0d0d; color: #3f3f3f; border: 1px dashed #2c2c2c; }}
+QComboBox::down-arrow:disabled {{ border-top-color: #3a3a3a; }}
 
 /* Checkboxes */
 QCheckBox, QRadioButton {{ color: {text}; spacing: 8px; background: transparent; }}
@@ -2002,6 +2037,8 @@ QRadioButton::indicator {{ border-radius: 8px; }}
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {accent}; }}
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
     background: {accent}; border-color: {accent}; }}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    background: #0d0d0d; border: 1px dashed #2c2c2c; }}
 
 /* Tables / lists */
 QTableWidget, QListWidget {{ background: {bg}; alternate-background-color: {card};
