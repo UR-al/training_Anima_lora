@@ -12,6 +12,7 @@ captured logs / saved run snapshots under ``<output_dir>/``. ``add_note`` /
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from pathlib import Path
 MONITOR_DIR = Path(__file__).resolve().parent / "monitor_data"
 STATE_PATH = MONITOR_DIR / "state.json"
 NOTES_PATH = MONITOR_DIR / "ai_notes.json"
+CONTROL_PATH = MONITOR_DIR / "control.json"
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -155,3 +157,73 @@ def read_notes(notes_path: str | Path | None = None) -> list[dict]:
         return data if isinstance(data, list) else []
     except (OSError, ValueError):
         return []
+
+
+# --------------------------------------------------------------------------- #
+# Runtime LR control — a tiny control.json the training loop polls (gated on
+# --monitor). ``lr_scale`` is a live multiplier on the *scheduled* LR (the
+# scheduler resets lr every step, so multiplying never compounds). ``decay`` is an
+# on-demand cosine ramp from ``from`` → ``floor`` over ``k_steps`` starting at
+# ``start_step`` (the "constantcosine, but I pick the moment" feel).
+# --------------------------------------------------------------------------- #
+def read_control(control_path: str | Path | None = None) -> dict:
+    p = Path(control_path) if control_path else CONTROL_PATH
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_control(control: dict, control_path: str | Path | None = None) -> dict:
+    p = Path(control_path) if control_path else CONTROL_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(control), encoding="utf-8")
+    return control
+
+
+def set_lr_scale(scale: float, control_path: str | Path | None = None) -> dict:
+    """Set the live LR multiplier (1.0 = scheduled, 0.5 = half, 2.0 = double).
+    Clears any active decay."""
+    ctrl = read_control(control_path)
+    ctrl["lr_scale"] = max(0.0, float(scale))
+    ctrl["decay"] = None
+    return write_control(ctrl, control_path)
+
+
+def start_lr_decay(
+    start_step: int,
+    k_steps: int,
+    floor: float = 0.0,
+    control_path: str | Path | None = None,
+) -> dict:
+    """Begin an on-demand cosine decay from the current scale → ``floor`` over
+    ``k_steps`` starting at ``start_step``."""
+    ctrl = read_control(control_path)
+    frm = float(ctrl.get("lr_scale", 1.0) or 1.0)
+    ctrl["decay"] = {
+        "start_step": int(start_step),
+        "k_steps": max(1, int(k_steps)),
+        "from": frm,
+        "floor": max(0.0, float(floor)),
+    }
+    return write_control(ctrl, control_path)
+
+
+def reset_control(control_path: str | Path | None = None) -> dict:
+    """Back to the scheduled LR (scale 1.0, no decay)."""
+    return write_control({"lr_scale": 1.0, "decay": None}, control_path)
+
+
+def effective_lr_scale(control: dict, step: int) -> float:
+    """The multiplier to apply to the scheduled LR at ``step`` given the control."""
+    scale = float(control.get("lr_scale", 1.0) or 1.0)
+    d = control.get("decay")
+    if isinstance(d, dict):
+        k = max(1, int(d.get("k_steps", 1)))
+        p = (step - int(d.get("start_step", step))) / k
+        p = min(1.0, max(0.0, p))
+        frm = float(d.get("from", scale))
+        floor = float(d.get("floor", 0.0))
+        return floor + (frm - floor) * 0.5 * (1 + math.cos(math.pi * p))
+    return scale

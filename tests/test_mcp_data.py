@@ -71,6 +71,26 @@ def test_list_runs(tmp_path):
     assert runs[0]["final_loss"] == 0.4
 
 
+def test_lr_scale_control(tmp_path):
+    cp = tmp_path / "control.json"
+    assert m.read_control(cp) == {}
+    m.set_lr_scale(0.5, cp)
+    assert m.effective_lr_scale(m.read_control(cp), step=100) == 0.5
+    m.reset_control(cp)
+    assert m.effective_lr_scale(m.read_control(cp), step=100) == 1.0
+
+
+def test_lr_cosine_decay(tmp_path):
+    cp = tmp_path / "control.json"
+    m.set_lr_scale(1.0, cp)
+    m.start_lr_decay(start_step=100, k_steps=200, floor=0.0, control_path=cp)
+    ctrl = m.read_control(cp)
+    assert abs(m.effective_lr_scale(ctrl, 100) - 1.0) < 1e-9  # start
+    assert abs(m.effective_lr_scale(ctrl, 200) - 0.5) < 1e-9  # halfway (cos 90°)
+    assert abs(m.effective_lr_scale(ctrl, 300) - 0.0) < 1e-9  # end → floor
+    assert abs(m.effective_lr_scale(ctrl, 999) - 0.0) < 1e-9  # clamped past end
+
+
 def test_notes_roundtrip(tmp_path):
     np = tmp_path / "ai_notes.json"
     assert m.read_notes(np) == []

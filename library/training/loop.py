@@ -223,8 +223,13 @@ def build_loop_state(
         _ts_parts.append(f"sigmoid_bias={getattr(args, 'sigmoid_bias', 0.0)}")
     if args.timestep_sampling in ("shift", "flux_shift"):
         _ts_parts.append(f"discrete_flow_shift={args.discrete_flow_shift}")
-    if getattr(args, "t_min", None) is not None or getattr(args, "t_max", None) is not None:
-        _ts_parts.append(f"σ∈[{getattr(args, 't_min', None)}, {getattr(args, 't_max', None)}]")
+    if (
+        getattr(args, "t_min", None) is not None
+        or getattr(args, "t_max", None) is not None
+    ):
+        _ts_parts.append(
+            f"σ∈[{getattr(args, 't_min', None)}, {getattr(args, 't_max', None)}]"
+        )
     logger.info("sigma sampling: " + ", ".join(_ts_parts))
     for i, t_enc in enumerate(text_encoders):
         params_itr = t_enc.parameters()
@@ -500,11 +505,43 @@ def _run_step(trainer, state: LoopState, batch) -> torch.Tensor:
             torch.cuda.nvtx.range_push("optimizer")
         state.optimizer.step()
         state.lr_scheduler.step()
+        _apply_runtime_lr(args, state)
         state.optimizer.zero_grad(set_to_none=True)
         if state.profile_started:
             torch.cuda.nvtx.range_pop()
 
     return loss
+
+
+# Runtime LR control cache (single training process). The control file is re-read
+# at most every 10 steps; the effective multiplier is recomputed every step from
+# the cached control + current step (so an on-demand cosine decay still ramps).
+_LR_CTRL = {"cache": {}, "read_step": -10_000}
+
+
+def _apply_runtime_lr(args, state: LoopState) -> None:
+    """Apply the live LR multiplier from ``monitor_data/control.json`` to the
+    just-scheduled optimizer LR (gated on ``--monitor``). The scheduler resets each
+    param-group's lr every step, so multiplying here never compounds. Fully
+    guarded — a control-file glitch can never perturb the run."""
+    if not getattr(args, "monitor", False):
+        return
+    try:
+        from library.monitoring import mcp_data
+
+        gs = state.global_step
+        if gs - _LR_CTRL["read_step"] >= 10:
+            _LR_CTRL["cache"] = mcp_data.read_control()
+            _LR_CTRL["read_step"] = gs
+        ctrl = _LR_CTRL["cache"]
+        if not ctrl:
+            return
+        scale = mcp_data.effective_lr_scale(ctrl, gs)
+        if scale != 1.0:
+            for pg in state.optimizer.param_groups:
+                pg["lr"] *= scale
+    except Exception:
+        pass
 
 
 def _profiler_step_begin(state: LoopState) -> None:
