@@ -206,6 +206,21 @@ _KO = {
     "▸ Optional args": "▸ 선택 인자",
     "▾ Optional args": "▾ 선택 인자",
     "Tiers (multi-scale)": "타일 (멀티스케일)",
+    # loss / timestep / weighting group + scheduler
+    "LR scheduler": "LR 스케줄러",
+    "Loss / timestep / weighting": "손실 / 타임스텝 / 가중치",
+    "Huber c": "Huber c",
+    "Huber schedule": "Huber 스케줄",
+    "Timestep sampling": "타임스텝 샘플링",
+    "Sigmoid scale": "시그모이드 스케일",
+    "Weighting scheme": "가중치 스킴",
+    "Logit mean": "Logit 평균",
+    "Logit std": "Logit 표준편차",
+    # greying reasons (shown as the disabled field's tooltip)
+    "active only when loss_type is huber / smooth_l1": "loss_type이 huber / smooth_l1일 때만 사용됩니다",
+    "active only when timestep_sampling is sigmoid (or blank)": "timestep_sampling이 sigmoid(또는 미지정)일 때만 사용됩니다",
+    "active only when weighting_scheme is logit_normal": "weighting_scheme이 logit_normal일 때만 사용됩니다",
+    "disabled while use_constantcosine is on (it replaces the scheduler)": "use_constantcosine을 켜면 비활성화됩니다(스케줄러를 대체)",
 }
 
 
@@ -307,12 +322,10 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             (
                 "Scheduler",
                 [
-                    ("lr_scheduler", "LR scheduler (builtin)", "text"),
-                    (
-                        "lr_scheduler_type",
-                        "LR scheduler (custom dotted path)",
-                        "combo:schedulers",
-                    ),
+                    # One field: builtin names (cosine, …) AND custom dotted paths in the
+                    # same list — the backend emits --lr_scheduler vs --lr_scheduler_type
+                    # by the "." heuristic, so no separate "(builtin)" box is needed.
+                    ("lr_scheduler_type", "LR scheduler", "combo:schedulers"),
                     ("lr_scheduler_args", "lr_scheduler_args", "text"),
                     ("lr_warmup_steps", "Warmup steps", "text"),
                 ],
@@ -328,12 +341,33 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 ],
             ),
             (
-                "Loss / regularization",
+                # Loss + the timestep/weighting knobs that belong WITH it (huber_c /
+                # huber_schedule gate off loss_type; sigmoid_scale off timestep_sampling;
+                # logit_mean/std off weighting_scheme) — grouped here instead of leaking
+                # to the catch-all "More flags".
+                "Loss / timestep / weighting",
                 [
-                    ("loss_type", "Loss type", "text"),
+                    ("loss_type", "Loss type", "combo:l2,huber,smooth_l1"),
+                    ("huber_c", "Huber c", "text"),
+                    ("huber_schedule", "Huber schedule", "combo:constant,exponential,snr"),
                     ("network_dropout", "Network dropout", "text"),
                     ("scale_weight_norms", "Scale weight norms", "text"),
                     ("max_grad_norm", "Max grad norm", "text"),
+                    (
+                        "timestep_sampling",
+                        "Timestep sampling",
+                        "combo:sigmoid,uniform,logit_normal,shift",
+                    ),
+                    ("sigmoid_scale", "Sigmoid scale", "text"),
+                    (
+                        "weighting_scheme",
+                        "Weighting scheme",
+                        "combo:logit_normal,mode,cosmap,sigma_sqrt,none",
+                    ),
+                    ("logit_mean", "Logit mean", "text"),
+                    ("logit_std", "Logit std", "text"),
+                    ("t_min", "t_min (σ)", "text"),
+                    ("t_max", "t_max (σ)", "text"),
                 ],
             ),
             (
@@ -524,13 +558,21 @@ def _truthy(v: object) -> bool:
 # Conflict / dependency greying — ported from the Gradio panel's _interactive_states.
 # (target dest, predicate(driver values) → enabled). A greyed target is disabled AND
 # excluded from the launch command (its value defers to the config chain).
-_GREY_RULES: list[tuple[str, object]] = [
-    ("huber_c", lambda v: v.get("loss_type") in ("huber", "smooth_l1")),
-    ("huber_schedule", lambda v: v.get("loss_type") in ("huber", "smooth_l1")),
-    ("sigmoid_scale", lambda v: v.get("timestep_sampling") in ("", "sigmoid")),
-    ("logit_mean", lambda v: v.get("weighting_scheme") == "logit_normal"),
-    ("logit_std", lambda v: v.get("weighting_scheme") == "logit_normal"),
-    ("lr_scheduler_type", lambda v: not _truthy(v.get("use_constantcosine"))),
+# (target dest, predicate(driver values) → enabled, reason-when-disabled). The reason
+# is tr()'d and shown as the disabled field's tooltip so the user sees WHY it's greyed.
+_GREY_RULES: list[tuple[str, object, str]] = [
+    ("huber_c", lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
+     "active only when loss_type is huber / smooth_l1"),
+    ("huber_schedule", lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
+     "active only when loss_type is huber / smooth_l1"),
+    ("sigmoid_scale", lambda v: v.get("timestep_sampling") in ("", "sigmoid"),
+     "active only when timestep_sampling is sigmoid (or blank)"),
+    ("logit_mean", lambda v: v.get("weighting_scheme") == "logit_normal",
+     "active only when weighting_scheme is logit_normal"),
+    ("logit_std", lambda v: v.get("weighting_scheme") == "logit_normal",
+     "active only when weighting_scheme is logit_normal"),
+    ("lr_scheduler_type", lambda v: not _truthy(v.get("use_constantcosine")),
+     "disabled while use_constantcosine is on (it replaces the scheduler)"),
 ]
 # Driver dests whose change re-evaluates the rules above + the subset-column greying.
 _GREY_DRIVERS = [
@@ -735,11 +777,25 @@ class MainWindow(QMainWindow):
         schema = self._tab_schema.get(tab_name) or []
         if schema:
             box = QGroupBox(tr("More flags"))
-            form = QFormLayout(box)
-            for arg in sorted(schema, key=lambda a: a.get("dest") or ""):
-                form.addRow(
-                    arg.get("dest") or arg.get("flag"), self._build_adv_field(arg)
-                )
+            grid = QGridLayout(box)
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(8)
+            grid.setColumnStretch(2, 1)  # the description column absorbs the width
+            # Cluster related flags together (then by name), and put each flag's help
+            # text beside a SHORT value field instead of one stretched field per line.
+            ordered = sorted(
+                schema, key=lambda a: (a.get("cluster") or "~", a.get("dest") or "")
+            )
+            for r, arg in enumerate(ordered):
+                lbl = QLabel(arg.get("dest") or arg.get("flag"))
+                fw = self._build_adv_field(arg)
+                fw.setMaximumWidth(200)
+                desc = QLabel((arg.get("help") or "").strip())
+                desc.setObjectName("argDesc")
+                desc.setWordWrap(True)
+                grid.addWidget(lbl, r, 0)
+                grid.addWidget(fw, r, 1)
+                grid.addWidget(desc, r, 2)
             vbox.addWidget(box)
         if tab_name == "Extra":
             vbox.addWidget(self._build_extra_flags_box())
@@ -802,23 +858,25 @@ class MainWindow(QMainWindow):
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
         gb = QGroupBox(tr(title))
         grid = QGridLayout(gb)
-        grid.setHorizontalSpacing(18)
+        grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(8)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
+        # Trailing spacer column absorbs slack so the capped value fields stay tight
+        # and the label/field pairs sit left-packed (no over-wide fields). Labels take
+        # their natural width, so a long label just makes that pair a bit wider — the
+        # proportions adapt instead of forcing a rigid 50/50.
+        grid.setColumnStretch(4, 1)
         r = 0
         c = 0  # 0 = left pair (cols 0-1), 2 = right pair (cols 2-3)
         for dest, label, kind in fields:
             w = self._build_field(dest, kind)
-            # Path pickers / the args-help panel / scope span the full width; the
-            # compact fields (text/combo/bool/tristate) — which carry no per-field
-            # description — pack TWO per row instead of one-per-line.
+            # Path pickers / args-help / scope span the full width; the compact fields
+            # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
             if kind in ("file", "dir", "opthelp", "scope"):
                 if c != 0:
                     r += 1
                     c = 0
                 grid.addWidget(QLabel(tr(label)), r, 0)
-                grid.addWidget(w, r, 1, 1, 3)
+                grid.addWidget(w, r, 1, 1, 4)
                 r += 1
             else:
                 grid.addWidget(QLabel(tr(label)), r, c)
@@ -882,6 +940,7 @@ class MainWindow(QMainWindow):
         if kind == "tristate":
             combo = _Combo()
             combo.addItems(["", "on", "off"])
+            combo.setMaximumWidth(150)
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: c.setCurrentText(str(v or ""))
             self._widgets[dest] = combo
@@ -890,6 +949,7 @@ class MainWindow(QMainWindow):
             src = kind.split(":", 1)[1]
             items = self._options.get(src) if src in self._options else src.split(",")
             combo = _Combo()  # non-editable (use_cmmd style)
+            combo.setMaximumWidth(360)  # don't stretch to the longest dotted-path item
             combo.addItem("")
             combo.addItems([str(x) for x in (items or [])])
             self._getters[dest] = lambda c=combo: c.currentText().strip()
@@ -911,6 +971,10 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _=False, e=edit, k=kind: self._browse(e, k))
             hb.addWidget(btn)
             return row
+        # Plain value field — keep it compact (not stretched across the panel). Path
+        # fields are the file/dir rows above, which stay full-width.
+        edit.setMinimumWidth(200)
+        edit.setMaximumWidth(360)
         return edit
 
     def _browse(self, edit: QLineEdit, kind: str) -> None:
@@ -1047,10 +1111,13 @@ class MainWindow(QMainWindow):
 
     def _apply_greying(self) -> None:
         vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}
-        for target, pred in _GREY_RULES:
+        for target, pred, reason in _GREY_RULES:
             w = self._widgets.get(target)
             if w is not None:
-                w.setEnabled(bool(pred(vals)))
+                enabled = bool(pred(vals))
+                w.setEnabled(enabled)
+                # Show WHY it's greyed (hover) — cleared again once enabled.
+                w.setToolTip("" if enabled else tr(reason))
         for card in getattr(self, "_subset_cards", []):
             fields = card.get("fields", {})
             for col_key, driver in _SUBSET_GREY:
@@ -1903,6 +1970,7 @@ QPushButton#subOpt:hover {{ color: {text}; border-color: {faint}; }}
 QPushButton#subOpt:checked {{ background: transparent; color: {text}; border-color: {faint}; }}
 QLabel#optHelpBody {{ background: {input}; color: {text}; border: 1px solid {border};
                      border-radius: 8px; padding: 8px 10px; }}
+QLabel#argDesc {{ color: {muted}; background: transparent; font-size: 12px; }}
 
 /* Inputs */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
