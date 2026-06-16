@@ -869,7 +869,122 @@ class MainWindow(QMainWindow):
         inner.addTab(self._scroll(self._build_update_tab()), "Update")
         inner.addTab(self._scroll(self._build_autobatch_tab()), "Auto-batch")
         inner.addTab(self._scroll(self._build_masking_tab()), "Masking")
+        inner.addTab(self._scroll(self._build_tools_tab()), "Tools")
         return inner
+
+    # ----- diffusion-pipe tools ------------------------------------------- #
+    def _tool_path_row(self, store: dict, key: str, kind: str = "file") -> QWidget:
+        edit = QLineEdit()
+        store[key] = edit
+        row = QWidget()
+        hb = QHBoxLayout(row)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.addWidget(edit)
+        btn = QPushButton("📁")
+        btn.setFixedWidth(36)
+        btn.clicked.connect(lambda _=False, e=edit, k=kind: self._browse(e, k))
+        hb.addWidget(btn)
+        return row
+
+    def _build_tools_tab(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.addWidget(
+            QLabel(
+                "diffusion-pipe interop tools (tools/*.py). Output streams to the log."
+            )
+        )
+
+        # strip-lora-layers
+        self._strip: dict[str, object] = {}
+        gb1 = QGroupBox("Strip LoRA layers (tools/strip_lora_layers.py)")
+        f1 = QFormLayout(gb1)
+        f1.addRow("Input LoRA", self._tool_path_row(self._strip, "input"))
+        f1.addRow(
+            "Output (blank = list only)", self._tool_path_row(self._strip, "output")
+        )
+        self._strip["strip"] = QLineEdit()
+        self._strip["strip"].setPlaceholderText("mlp self_attn llm_adapter")
+        f1.addRow("Strip substrings", self._strip["strip"])
+        self._strip["dry"] = QCheckBox("dry-run")
+        self._strip["force"] = QCheckBox("force overwrite")
+        f1.addRow(self._strip["dry"], self._strip["force"])
+        b1 = QPushButton("Run strip")
+        b1.clicked.connect(self._do_strip_lora)
+        f1.addRow(b1)
+        vbox.addWidget(gb1)
+
+        # llm-adapter surgery
+        self._surg: dict[str, object] = {}
+        gb2 = QGroupBox("LLM-adapter surgery (tools/llm_adapter_surgery.py)")
+        f2 = QFormLayout(gb2)
+        mode = QComboBox()
+        mode.addItems(["strip", "attach"])
+        self._surg["mode"] = mode
+        f2.addRow("Mode", mode)
+        f2.addRow("Input checkpoint", self._tool_path_row(self._surg, "input"))
+        f2.addRow("Donor (attach only)", self._tool_path_row(self._surg, "donor"))
+        f2.addRow("Output (blank = default)", self._tool_path_row(self._surg, "out"))
+        self._surg["dry"] = QCheckBox("dry-run")
+        self._surg["force"] = QCheckBox("force")
+        self._surg["extra"] = QCheckBox("allow-empty / replace-existing")
+        f2.addRow(self._surg["dry"], self._surg["force"])
+        f2.addRow(self._surg["extra"])
+        b2 = QPushButton("Run surgery")
+        b2.clicked.connect(self._do_llm_surgery)
+        f2.addRow(b2)
+        vbox.addWidget(gb2)
+        vbox.addStretch(1)
+        return w
+
+    def _do_strip_lora(self) -> None:
+        inp = self._strip["input"].text().strip()
+        if not inp:
+            QMessageBox.warning(self, "Strip", "Input LoRA is required.")
+            return
+        argv = ["tools/strip_lora_layers.py", inp]
+        out = self._strip["output"].text().strip()
+        if out:
+            argv.append(out)
+        subs = self._strip["strip"].text().split()
+        if subs:
+            argv += ["--strip", *subs]
+        if not out and not subs:
+            argv.append("--list-types")
+        if self._strip["dry"].isChecked():
+            argv.append("--dry-run")
+        if self._strip["force"].isChecked():
+            argv.append("--force")
+        self._run_tool(argv, "strip_lora")
+
+    def _do_llm_surgery(self) -> None:
+        mode = self._surg["mode"].currentText()
+        inp = self._surg["input"].text().strip()
+        if not inp:
+            QMessageBox.warning(self, "Surgery", "Input checkpoint is required.")
+            return
+        argv = ["tools/llm_adapter_surgery.py", mode, inp]
+        if mode == "attach":
+            donor = self._surg["donor"].text().strip()
+            if not donor:
+                QMessageBox.warning(self, "Surgery", "Attach needs a donor checkpoint.")
+                return
+            argv += ["--donor", donor]
+        out = self._surg["out"].text().strip()
+        if out:
+            argv += ["--out", out]
+        if self._surg["dry"].isChecked():
+            argv.append("--dry-run")
+        if self._surg["force"].isChecked():
+            argv.append("--force")
+        if self._surg["extra"].isChecked():
+            argv.append("--replace-existing" if mode == "attach" else "--allow-empty")
+        self._run_tool(argv, "llm_adapter")
+
+    def _run_tool(self, argv: list[str], name: str) -> None:
+        res = backend.run_tool(argv, name)
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Tool", str(res.get("error") or res))
 
     def _build_preprocess_tab(self) -> QWidget:
         w = QWidget()

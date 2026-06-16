@@ -1780,6 +1780,13 @@ _PREPROCESS_STEPS = {
 }
 
 
+def run_tool(argv: list[str], name: str) -> dict:
+    """Run a repo ``tools/<x>.py`` (or any program) argv as a direct subprocess —
+    public wrapper over :func:`_spawn_util` for the GUI's diffusion-pipe tools
+    (strip-lora-layers, llm-adapter surgery). ``argv[0]`` is repo-relative."""
+    return _spawn_util(argv, name)
+
+
 def run_preprocess(step: str) -> dict:
     """Run a ``tasks.py preprocess[-<step>]`` subcommand as a direct subprocess
     (mirrors :func:`run_masking` / :func:`bench_autobatch` — training-exclusive,
