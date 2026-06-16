@@ -66,6 +66,9 @@ pyside6>=6.11.0
 # ([project.optional-dependencies].gradio); listed here so the pip "full install"
 # view matches. Same major as the kohya_ss GUI this layout is modelled on.
 gradio>=5.34.1
+# Training-monitor MCP server (tools/anima_monitor_mcp.py) — optional in pyproject
+# ([project.optional-dependencies].mcp); listed here so the pip "full install" view matches.
+mcp>=1.2.0
 ruff>=0.15.9
 matplotlib
 torchsde>=0.2.6

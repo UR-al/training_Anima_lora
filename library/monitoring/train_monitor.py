@@ -796,6 +796,19 @@ class MonitorHandler(SimpleHTTPRequestHandler):
                         served = True
             if not served:
                 self.send_error(404)
+        elif self.path.startswith("/api/notes"):
+            # AI-Analysis notes (written by the MCP server's post_analysis tool).
+            try:
+                from . import mcp_data
+
+                notes = mcp_data.read_notes()
+            except Exception:
+                notes = []
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(notes).encode("utf-8"))
         else:
             self.send_error(404)
 

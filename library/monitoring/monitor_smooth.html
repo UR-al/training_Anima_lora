@@ -698,6 +698,19 @@
             </div>
         </div>
 
+        <!-- AI Analysis (MCP agent notes, written via post_analysis) -->
+        <div class="panel">
+            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>🤖 AI Analysis</span>
+                <span id="ai-status" style="color:var(--text-dim); font-weight:400; font-size:0.72rem;">MCP</span>
+            </div>
+            <div class="panel-content">
+                <div id="ai-notes" style="font-size:0.8rem; display:flex; flex-direction:column; gap:6px;">
+                    <div style="color:var(--text-dim);">No AI notes yet — connect the MCP server (tools/anima_monitor_mcp.py) and ask your agent to analyze the run.</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Analysis -->
         <div class="panel">
             <div class="panel-header">Analysis</div>
@@ -1129,6 +1142,25 @@
         // ==================== Runs browser / compare ====================
         document.getElementById('refresh-runs').addEventListener('click', loadRuns);
         loadRuns();
+
+        // ==================== AI Analysis notes (MCP write-back) ====================
+        async function loadNotes() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/notes?_=${Date.now()}`);
+                const notes = await resp.json();
+                const el = document.getElementById('ai-notes');
+                const st = document.getElementById('ai-status');
+                if (!notes.length) { if (st) st.textContent = 'MCP · idle'; return; }
+                if (st) st.textContent = `MCP · ${notes.length}`;
+                el.innerHTML = notes.slice().reverse().map(n =>
+                    `<div style="border-left:2px solid var(--accent); padding-left:8px;">
+                        <div style="color:var(--text-dim); font-size:0.7rem;">${n.ts || ''} · ${n.author || 'ai'}</div>
+                        <div>${String(n.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>
+                    </div>`).join('');
+            } catch (e) { /* offline */ }
+        }
+        setInterval(loadNotes, 3000);
+        loadNotes();
 
         // ==================== Log scale + export ====================
         document.getElementById('log-scale').addEventListener('change', e => {
