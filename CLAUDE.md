@@ -2,6 +2,10 @@
 
 Guidance for Claude Code (claude.ai/code) working in this repository.
 
+## Working preferences (user)
+
+- **Ask, don't assume.** When a decision is genuinely ambiguous, ask the user (via a question) rather than deciding alone — keep progressing by asking and acting on the answers. Following explicit user instructions is not "deciding alone"; silently picking between real alternatives is.
+
 ## Project Overview
 
 Anima — LoRA/T-LoRA training and inference pipeline for the Anima diffusion model (DiT-based, flow-matching). Supports several adapter families (LoRA / OrthoLoRA / T-LoRA / HydraLoRA / FeRA / ChimeraHydra / EasyControl) selectable via method config + hardware preset. The LoRA family is routed via a three-axis surface — `use_moe_style` / `route_per_layer` / `router_source` — see `configs/methods/lora.toml`.
