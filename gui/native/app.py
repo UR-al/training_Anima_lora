@@ -2016,7 +2016,9 @@ class MainWindow(QMainWindow):
         else:
             self._add_subset_card({"image_dir": parent})
 
-    def _collect_subsets(self) -> list[dict]:
+    def _collect_subsets(self, *, for_save: bool = False) -> list[dict]:
+        # for_save keeps greyed (cache-gated) per-subset fields the user set, so a
+        # subset round-trips losslessly on save→load (same policy as _collect).
         out: list[dict] = []
         for e in self._subset_cards:
             f = e["fields"]
@@ -2033,8 +2035,8 @@ class MainWindow(QMainWindow):
                 "tiers",
             ):
                 w = f.get(k)
-                if w is None or not w.isEnabled():
-                    continue  # greyed (cache-gated) → inert
+                if w is None or (not w.isEnabled() and not for_save):
+                    continue  # greyed (cache-gated) → inert at Start; kept on save
                 v = w.text().strip()
                 if v:
                     row[k] = v
@@ -2043,7 +2045,7 @@ class MainWindow(QMainWindow):
                 row["caption_extension"] = cext.currentText().strip()
             for k in ("flip_aug", "random_crop", "gradient_checkpointing", "is_val"):
                 w = f.get(k)
-                if w is not None and w.isEnabled() and w.isChecked():
+                if w is not None and (w.isEnabled() or for_save) and w.isChecked():
                     row[k] = True
             out.append(row)
         return out
@@ -2459,17 +2461,32 @@ class MainWindow(QMainWindow):
         w = self._widgets.get(dest)
         return w is None or w.isEnabled()
 
-    def _collect(self) -> dict:
-        form = {
-            dest: get() for dest, get in self._getters.items() if self._enabled(dest)
-        }
-        subsets = self._collect_subsets()
+    @staticmethod
+    def _meaningful(val) -> bool:
+        """A value the user actually set — worth persisting on save even when the
+        field is currently greyed. Bools: only True counts; blanks/empties don't."""
+        if isinstance(val, bool):
+            return val
+        return val not in (None, "", [], {})
+
+    def _collect(self, *, for_save: bool = False) -> dict:
+        # Start passes only enabled (non-greyed) fields, so a greyed value defers to
+        # the config chain. Save (for_save) ALSO keeps greyed fields the user set
+        # (ON / non-empty) so save→load round-trips losslessly — greyed values are
+        # harmless: re-greyed on load and re-filtered out at Start.
+        form: dict = {}
+        for dest, get in self._getters.items():
+            if self._enabled(dest):
+                form[dest] = get()
+            elif for_save and self._meaningful(val := get()):
+                form[dest] = val
+        subsets = self._collect_subsets(for_save=for_save)
         if subsets:
             form["subsets"] = subsets
         adv = [
             item
             for a, g in self._adv
-            if self._enabled(a.get("dest") or "") and (item := g())
+            if (for_save or self._enabled(a.get("dest") or "")) and (item := g())
         ]
         if self._scope is not None:
             idx = self._scope.currentIndex()
@@ -2656,7 +2673,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            text = save_form_to_toml(self._collect())
+            text = save_form_to_toml(self._collect(for_save=True))
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         except Exception as exc:  # noqa: BLE001
