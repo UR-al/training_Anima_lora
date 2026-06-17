@@ -750,11 +750,45 @@ _GREY_RULES: list[tuple[str, object, str]] = [
     ),
     (
         "lr_scheduler_type",
-        lambda v: not _truthy(v.get("use_constantcosine")),
-        "disabled while use_constantcosine is on (it replaces the scheduler)",
+        lambda v: (
+            not _truthy(v.get("use_constantcosine"))
+            and "schedulefree" not in str(v.get("optimizer_type") or "").lower()
+        ),
+        "disabled by use_constantcosine (replaces the scheduler) or a schedule-free "
+        "optimizer (it ignores the LR scheduler)",
+    ),
+    # schedule-free optimizers run their own LR schedule → warmup is ignored.
+    (
+        "lr_warmup_steps",
+        lambda v: "schedulefree" not in str(v.get("optimizer_type") or "").lower(),
+        "ignored by a schedule-free optimizer",
+    ),
+    # Auto-preprocess builds + reads the VAE/TE caches (and rewrites dataset_config),
+    # so it manages these toggles — locked while it's on.
+    (
+        "use_vae_cache",
+        lambda v: not _truthy(v.get("auto_preprocess")),
+        "managed by Auto-preprocess (it builds + reads the VAE cache)",
+    ),
+    (
+        "use_text_cache",
+        lambda v: not _truthy(v.get("auto_preprocess")),
+        "managed by Auto-preprocess (it builds + reads the TE cache)",
+    ),
+    # Train scope (combo 0=both, 1=UNet only, 2=TE only): the other side's LR is unused.
+    (
+        "unet_lr",
+        lambda v: v.get("__scope__") != 2,
+        "training text-encoder only — the UNet/DiT LR is unused",
+    ),
+    (
+        "text_encoder_lr",
+        lambda v: v.get("__scope__") != 1,
+        "training UNet only — the text-encoder LR is unused",
     ),
 ]
 # Driver dests whose change re-evaluates the rules above + the subset-column greying.
+# (__scope__ is the curated train-scope combo, injected by _apply_greying.)
 _GREY_DRIVERS = [
     "loss_type",
     "timestep_sampling",
@@ -762,6 +796,8 @@ _GREY_DRIVERS = [
     "use_constantcosine",
     "use_vae_cache",
     "use_text_cache",
+    "auto_preprocess",
+    "optimizer_type",
 ]
 # Subset table columns greyed by a cache driver (live-encoding-only knobs are inert
 # once the cache is on): (col_key, driver_dest).
@@ -1579,6 +1615,24 @@ class MainWindow(QMainWindow):
             )
             self._widgets[arg.get("dest") or ""] = cb
             return cb
+        choices = arg.get("choices") or []
+        if choices and {str(x).lower() for x in choices} <= {"true", "false"}:
+            # A bare true/false dropdown is just a toggle — render one checkbox
+            # (checked → --flag true; unchecked → defer to the config default).
+            cb = QCheckBox()
+            cb.setToolTip(help_txt)
+            self._adv.append(
+                (
+                    arg,
+                    lambda c=cb, f=flag: (
+                        {"flag": f, "value": "true", "on": True}
+                        if c.isChecked()
+                        else None
+                    ),
+                )
+            )
+            self._widgets[arg.get("dest") or ""] = cb
+            return cb
         if arg.get("choices"):
             # Non-editable (like the negatable/use_cmmd combos) — choices are a fixed
             # argparse set, so no free-text entry; cleaner, matches the other dropdowns.
@@ -1643,6 +1697,9 @@ class MainWindow(QMainWindow):
                 w.textChanged.connect(lambda *_: self._apply_greying())
             elif isinstance(w, QCheckBox):
                 w.toggled.connect(lambda *_: self._apply_greying())
+        # The train-scope combo gates unet_lr / text_encoder_lr greying.
+        if self._scope is not None:
+            self._scope.currentIndexChanged.connect(lambda *_: self._apply_greying())
         # Auto-refresh any OPEN args-help panel when its source optimizer/scheduler
         # changes (no collapse + re-expand needed).
         for source in {src for src, _b, _body in getattr(self, "_opthelp_panels", [])}:
@@ -1661,6 +1718,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "_loading", False):
             return  # bulk config-load in progress; greying runs once at the end
         vals = {d: self._widget_value(d) for d in _GREY_DRIVERS}
+        if self._scope is not None:
+            vals["__scope__"] = self._scope.currentIndex()
         for target, pred, reason in _GREY_RULES:
             w = self._widgets.get(target)
             if w is not None:
