@@ -68,6 +68,40 @@ def test_insert_keep_tokens_separator():
     )
 
 
+def test_name_lists_override_vocab_and_sort():
+    chars = {"shimarin"}
+    series = {"yuru camp"}
+    # vocab wrongly calls shimarin general; the user character list wins.
+    vocab = {"shimarin": "general", "smile": "general"}
+    cap = "smile, yuru camp, shimarin, 1girl, @kagamihara"
+    out = tag_sort.sort_caption(cap, vocab, characters=chars, series=series)
+    tags = [t.strip() for t in out.split(",")]
+    # count → character → series → artist → general
+    assert tags == ["1girl", "shimarin", "yuru camp", "@kagamihara", "smile"]
+
+
+def test_classify_name_lists_underscore_insensitive():
+    chars = {"hatsune miku"}
+    assert tag_sort.classify("hatsune_miku", characters=chars) == "character"
+    assert tag_sort.classify("Hatsune Miku", characters=chars) == "character"
+
+
+def test_hard_metadata_beats_name_list():
+    # a name list can't hijack a hard booru-metadata tag
+    assert tag_sort.classify("1girl", characters={"1girl"}) == "count"
+    assert tag_sort.classify("safe", series={"safe"}) == "safety"
+
+
+def test_load_name_set(tmp_path):
+    p = tmp_path / "characters.txt"
+    p.write_text(
+        "# a comment\nHatsune_Miku\n\n  Oomuro Sakurako  # trailing\n",
+        encoding="utf-8",
+    )
+    assert tag_sort.load_name_set(p) == {"hatsune miku", "oomuro sakurako"}
+    assert tag_sort.load_name_set(tmp_path / "missing.txt") == set()
+
+
 def test_missing_vocab_returns_none(tmp_path):
     assert tag_sort.load_vocab_categories(tmp_path / "nope.json") is None
 

@@ -3,8 +3,17 @@
 
 Browse an image folder (default ``image_dataset/``), see each image with its
 ``.txt`` caption side-by-side, edit + save the caption, sort the tags into the
-Anima canonical order (``gui.native.tag_sort``), and view **and paint** the
-SAM3/MIT mask (``post_image_dataset/masks/…/{stem}_mask.png``).
+Anima canonical keep-tokens order (``gui.native.tag_sort``) — for the open image OR
+the **whole dataset** at once — and view **and paint** the SAM3/MIT mask
+(``post_image_dataset/masks/…/{stem}_mask.png``).
+
+Tag order (the kept head, before the ``|||`` separator) is::
+
+    metadata → count (1girl…) → character → series → @artist → general
+
+character / series classification is driven by the user-owned, swappable name lists
+``dataset_tags/{characters,series}.txt`` (authoritative, override the vocab) plus the
+anima-tagger ``vocab.json`` fallback.
 
 The mask layer is held as a white-on-black ``QImage`` at image resolution — the
 exact on-disk format — so loading an existing mask is a single ``drawPixmap`` and
@@ -24,12 +33,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
     QSpinBox,
     QSplitter,
@@ -182,6 +193,11 @@ class DatasetView(QWidget):
         self._vocab = tag_sort.load_vocab_categories(
             Path(backend.ROOT) / tag_sort.DEFAULT_VOCAB_REL
         )
+        # User-owned, swappable character / series name lists (authoritative).
+        self._chars_path = Path(backend.ROOT) / tag_sort.DEFAULT_CHARACTERS_REL
+        self._series_path = Path(backend.ROOT) / tag_sort.DEFAULT_SERIES_REL
+        self._characters = tag_sort.load_name_set(self._chars_path)
+        self._series = tag_sort.load_name_set(self._series_path)
         self._build()
 
     def _build(self) -> None:
@@ -265,25 +281,98 @@ class DatasetView(QWidget):
     def _build_caption_panel(self) -> QWidget:
         right = QWidget()
         rv = QVBoxLayout(right)
-        rv.addWidget(QLabel("Caption (.txt)"))
-        self._caption = QPlainTextEdit()
-        rv.addWidget(self._caption, 1)
-        btns = QHBoxLayout()
-        b_sort = QPushButton("Sort tags")
-        b_save = QPushButton("Save caption")
-        b_sort.clicked.connect(self._sort_caption)
+        rv.setSpacing(8)
+        head = QHBoxLayout()
+        head.addWidget(QLabel("<b>Caption</b> (.txt)"))
+        head.addStretch(1)
+        b_save = QPushButton("💾 Save caption")
         b_save.clicked.connect(self._save_caption)
-        btns.addWidget(b_sort)
-        btns.addWidget(b_save)
-        rv.addLayout(btns)
+        head.addWidget(b_save)
+        rv.addLayout(head)
+        self._caption = QPlainTextEdit()
+        self._caption.setPlaceholderText("Select an image to edit its caption…")
+        rv.addWidget(self._caption, 1)
+        rv.addWidget(self._build_tagtools_group())
+        return right
+
+    def _build_tagtools_group(self) -> QGroupBox:
+        box = QGroupBox("Tag order — keep tokens")
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+        order = QLabel(
+            "Head order: <b>metadata → count → character → series → @artist</b> → general"
+        )
+        order.setWordWrap(True)
+        order.setStyleSheet("color:#9aa4b2;")
+        v.addWidget(order)
         self._keep_sep = QCheckBox(
             f"Insert keep-tokens separator ({tag_sort.KEEP_TOKENS_SEPARATOR}) after @artist"
         )
         self._keep_sep.setChecked(True)
-        rv.addWidget(self._keep_sep)
-        vocab_msg = "vocab.json loaded" if self._vocab else "no vocab.json (rule-based)"
-        rv.addWidget(QLabel(f"tag classifier: {vocab_msg}"))
-        return right
+        v.addWidget(self._keep_sep)
+        btns = QHBoxLayout()
+        b_sort = QPushButton("Sort current")
+        b_sort.setToolTip("Reorder the open image's caption.")
+        b_sort_all = QPushButton("⮃ Sort ALL in dataset")
+        b_sort_all.setToolTip("Reorder every .txt caption in the loaded folder.")
+        b_sort_all.setObjectName("primary")
+        b_sort.clicked.connect(self._sort_caption)
+        b_sort_all.clicked.connect(self._sort_all_captions)
+        btns.addWidget(b_sort)
+        btns.addWidget(b_sort_all, 1)
+        v.addLayout(btns)
+
+        names = QGroupBox("Character / series lists")
+        nv = QVBoxLayout(names)
+        nv.setSpacing(4)
+        self._cls_status = QLabel()
+        self._cls_status.setWordWrap(True)
+        nv.addWidget(self._cls_status)
+        row = QHBoxLayout()
+        b_chars = QPushButton("Characters file…")
+        b_series = QPushButton("Series file…")
+        b_reload = QPushButton("↻ Reload")
+        b_chars.clicked.connect(lambda: self._pick_name_file("characters"))
+        b_series.clicked.connect(lambda: self._pick_name_file("series"))
+        b_reload.clicked.connect(self._reload_name_lists)
+        row.addWidget(b_chars)
+        row.addWidget(b_series)
+        row.addWidget(b_reload)
+        nv.addLayout(row)
+        v.addWidget(names)
+        self._update_cls_status()
+        return box
+
+    # ----- character / series name lists ---------------------------------- #
+    def _update_cls_status(self) -> None:
+        vocab_msg = "vocab.json" if self._vocab else "rule-based"
+        self._cls_status.setText(
+            f"classifier: <b>{vocab_msg}</b> · "
+            f"characters: <b>{len(self._characters)}</b> "
+            f"({self._chars_path.name}) · "
+            f"series: <b>{len(self._series)}</b> ({self._series_path.name})"
+        )
+
+    def _pick_name_file(self, kind: str) -> None:
+        start = self._chars_path if kind == "characters" else self._series_path
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select {kind} list (one name per line)",
+            str(start.parent if start.parent.is_dir() else backend.ROOT),
+            "Text (*.txt);;All files (*)",
+        )
+        if not path:
+            return
+        if kind == "characters":
+            self._chars_path = Path(path)
+        else:
+            self._series_path = Path(path)
+        self._reload_name_lists()
+
+    def _reload_name_lists(self) -> None:
+        self._characters = tag_sort.load_name_set(self._chars_path)
+        self._series = tag_sort.load_name_set(self._series_path)
+        self._update_cls_status()
 
     # ----- folder / list -------------------------------------------------- #
     def _choose_folder(self) -> None:
@@ -358,8 +447,66 @@ class DatasetView(QWidget):
                 self._caption.toPlainText(),
                 self._vocab,
                 insert_sep=self._keep_sep.isChecked(),
+                characters=self._characters,
+                series=self._series,
             )
         )
+
+    def _sort_all_captions(self) -> None:
+        """Reorder every .txt caption in the loaded folder (dataset-wide scope)."""
+        if self._dir is None or self._list.count() == 0:
+            QMessageBox.information(self, "Sort all", "Load an image folder first.")
+            return
+        n = self._list.count()
+        if (
+            QMessageBox.question(
+                self,
+                "Sort ALL captions",
+                f"Reorder tags in all {n} captions in:\n{self._dir}\n\n"
+                "The .txt files are overwritten in place. Continue?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        insert_sep = self._keep_sep.isChecked()
+        prog = QProgressDialog("Sorting captions…", "Cancel", 0, n, self)
+        prog.setWindowModality(Qt.WindowModal)
+        changed = missing = 0
+        for i in range(n):
+            if prog.wasCanceled():
+                break
+            prog.setValue(i)
+            txt = (self._dir / self._list.item(i).text()).with_suffix(".txt")
+            if not txt.exists():
+                missing += 1
+                continue
+            try:
+                orig = txt.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            new = tag_sort.sort_caption(
+                orig,
+                self._vocab,
+                insert_sep=insert_sep,
+                characters=self._characters,
+                series=self._series,
+            )
+            if new.strip() != orig.strip():
+                try:
+                    txt.write_text(new.strip() + "\n", encoding="utf-8")
+                    changed += 1
+                except OSError:
+                    pass
+        prog.setValue(n)
+        # Refresh the open caption (it may have just been rewritten on disk).
+        if self._current is not None:
+            cur = self._current.with_suffix(".txt")
+            if cur.exists():
+                self._caption.setPlainText(cur.read_text(encoding="utf-8"))
+        note = f"Sorted {changed} of {n} caption(s)."
+        if missing:
+            note += f" {missing} image(s) had no .txt."
+        QMessageBox.information(self, "Sort all", note)
 
     def _save_caption(self) -> None:
         if self._current is None:

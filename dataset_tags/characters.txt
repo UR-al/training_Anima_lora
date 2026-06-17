@@ -1,0 +1,15 @@
+# Character names — one per line (booru tag form; underscores or spaces both work).
+#
+# The dataset-view tag sorter treats every tag matching a name here as a CHARACTER and
+# moves it into the keep-tokens head, in this order:
+#     metadata  →  count (1girl…)  →  CHARACTER  →  series  →  @artist  →  general
+# Lines starting with '#' and blank lines are ignored. Matching is case-insensitive and
+# underscore/space-insensitive ("hatsune_miku" == "hatsune miku").
+#
+# ⚠ PLACEHOLDER LIST — replace the entries below with your real character list.
+# Only this file (and series.txt) needs swapping; no code change is required.
+hatsune miku
+oomuro sakurako
+artoria pendragon
+raiden shogun
+nilou

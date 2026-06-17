@@ -1,0 +1,15 @@
+# Series / works (copyright tags) — one per line (booru tag form; underscores or
+# spaces both work).
+#
+# The dataset-view tag sorter treats every tag matching a name here as a SERIES and
+# moves it into the keep-tokens head, right after the character tags:
+#     metadata  →  count (1girl…)  →  character  →  SERIES  →  @artist  →  general
+# Lines starting with '#' and blank lines are ignored. Matching is case-insensitive and
+# underscore/space-insensitive ("yuru_yuri" == "yuru yuri").
+#
+# ⚠ PLACEHOLDER LIST — replace the entries below with your real series list.
+# Only this file (and characters.txt) needs swapping; no code change is required.
+vocaloid
+yuru yuri
+fate/grand order
+genshin impact

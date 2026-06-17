@@ -24,6 +24,14 @@ from pathlib import Path
 # Default location of the anima-tagger vocab (download-models target).
 DEFAULT_VOCAB_REL = "models/captioners/anima-tagger-v1/vocab.json"
 
+# User-owned name lists (one tag per line, '#' comments). These are AUTHORITATIVE for
+# character / series classification — a caption tag matching an entry is forced into
+# that bucket, overriding the vocab. Swap these two files (no code change) to teach the
+# sorter your own characters / works; the head order stays
+# metadata → count → character → series → @artist.
+DEFAULT_CHARACTERS_REL = "dataset_tags/characters.txt"
+DEFAULT_SERIES_REL = "dataset_tags/series.txt"
+
 # Separator inserted right after the @artist tags (everything before it — year …
 # artist — is "kept"). Pair with the subset's --keep_tokens_separator so kohya
 # keeps exactly the non-general head, per image, regardless of its length.
@@ -103,8 +111,36 @@ def load_vocab_categories(
     return out or None
 
 
-def classify(tag: str, vocab: dict[str, str] | None = None) -> str:
-    """Return the bucket name for a single tag."""
+def load_name_set(path: str | Path | None) -> set[str]:
+    """Load a one-name-per-line list (``#`` comments, blank lines ignored) into a set
+    of normalized names (lowercase, underscores → spaces) for character/series
+    matching. Missing/unreadable file → empty set (treated as "no list")."""
+    p = Path(path) if path else None
+    if not p or not p.exists():
+        return set()
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    out: set[str] = set()
+    for line in text.splitlines():
+        name = line.split("#", 1)[0].strip()
+        if name:
+            out.add(_norm(name).replace("_", " "))
+    return out
+
+
+def classify(
+    tag: str,
+    vocab: dict[str, str] | None = None,
+    characters: set[str] | None = None,
+    series: set[str] | None = None,
+) -> str:
+    """Return the bucket name for a single tag.
+
+    ``characters`` / ``series`` (user name lists) are authoritative — they override the
+    vocab — but yield to the hard booru-metadata rules (a real name is never ``1girl``
+    or ``safe``), so they slot in just before the META set / vocab lookup."""
     if tag.strip().startswith("@"):
         return "artist"
     low = _norm(tag)
@@ -118,6 +154,11 @@ def classify(tag: str, vocab: dict[str, str] | None = None) -> str:
         return "safety"
     if _COUNT_RE.match(low):
         return "count"
+    key = low.replace("_", " ")  # match the load_name_set normalization
+    if characters and key in characters:
+        return "character"
+    if series and key in series:
+        return "series"
     if low in META:
         return "meta"
     if vocab:
@@ -134,13 +175,16 @@ def classify(tag: str, vocab: dict[str, str] | None = None) -> str:
 
 
 def _split_sorted(
-    tags: list[str], vocab: dict[str, str] | None
+    tags: list[str],
+    vocab: dict[str, str] | None,
+    characters: set[str] | None = None,
+    series: set[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Reorder and return (head, general) where head = year…artist (the "kept"
     tags) and general = everything else, both in canonical order."""
     buckets: dict[str, list[str]] = {k: [] for k in _ORDER}
     for t in tags:
-        buckets[classify(t, vocab)].append(t)
+        buckets[classify(t, vocab, characters, series)].append(t)
     head: list[str] = []
     for k in _ORDER:
         if k != "general":
@@ -148,8 +192,13 @@ def _split_sorted(
     return head, buckets["general"]
 
 
-def sort_tags(tags: list[str], vocab: dict[str, str] | None = None) -> list[str]:
-    head, general = _split_sorted(tags, vocab)
+def sort_tags(
+    tags: list[str],
+    vocab: dict[str, str] | None = None,
+    characters: set[str] | None = None,
+    series: set[str] | None = None,
+) -> list[str]:
+    head, general = _split_sorted(tags, vocab, characters, series)
     return head + general
 
 
@@ -157,12 +206,14 @@ def sort_caption(
     text: str,
     vocab: dict[str, str] | None = None,
     insert_sep: bool = False,
+    characters: set[str] | None = None,
+    series: set[str] | None = None,
 ) -> str:
     """Split a comma-separated caption, reorder, and re-join. With ``insert_sep``,
     place ``KEEP_TOKENS_SEPARATOR`` between the kept head (year…@artist) and the
     general tags so a per-image keep_tokens boundary is encoded in the caption."""
     tags = [t.strip() for t in text.split(",") if t.strip()]
-    head, general = _split_sorted(tags, vocab)
+    head, general = _split_sorted(tags, vocab, characters, series)
     if insert_sep and head and general:
         return ", ".join(head) + f" {KEEP_TOKENS_SEPARATOR} " + ", ".join(general)
     return ", ".join(head + general)
