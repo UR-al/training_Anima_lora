@@ -358,6 +358,7 @@ class DatasetView(QWidget):
         rv.addWidget(self._caption, 1)
         rv.addWidget(self._build_tagtools_group())
         rv.addWidget(self._build_autocaption_group())
+        rv.addWidget(self._build_bulktags_group())
         return right
 
     def _build_autocaption_group(self) -> QGroupBox:
@@ -384,6 +385,97 @@ class DatasetView(QWidget):
         row.addWidget(b_cap)
         v.addLayout(row)
         return box
+
+    def _build_bulktags_group(self) -> QGroupBox:
+        box = QGroupBox("Bulk tag edit + stats")
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+        hint = QLabel(
+            "Add / remove / replace tags across the <b>selected</b> images' captions. "
+            "Comma-separated; replace uses <tt>old=new</tt> pairs. Case-insensitive."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#9aa4b2;")
+        v.addWidget(hint)
+        self._bt_add = QLineEdit()
+        self._bt_add.setPlaceholderText("add: tag1, tag2")
+        self._bt_remove = QLineEdit()
+        self._bt_remove.setPlaceholderText("remove: tag1, tag2")
+        self._bt_replace = QLineEdit()
+        self._bt_replace.setPlaceholderText("replace: old=new, old2=new2")
+        for w in (self._bt_add, self._bt_remove, self._bt_replace):
+            v.addWidget(w)
+        row = QHBoxLayout()
+        b_stats = QPushButton("📊 Tag stats (folder)")
+        b_stats.clicked.connect(self._show_tag_stats)
+        row.addWidget(b_stats)
+        row.addStretch(1)
+        b_apply = QPushButton("Apply to selected")
+        b_apply.clicked.connect(self._bulk_edit_selected)
+        row.addWidget(b_apply)
+        v.addLayout(row)
+        return box
+
+    @staticmethod
+    def _parse_replace(text: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for chunk in text.split(","):
+            if "=" in chunk:
+                k, val = chunk.split("=", 1)
+                if k.strip() and val.strip():
+                    out[k.strip()] = val.strip()
+        return out
+
+    def _bulk_edit_selected(self) -> None:
+        from library.captioning import tag_stats as ts
+
+        items = self._list.selectedItems()
+        if not items or self._dir is None:
+            QMessageBox.information(
+                self, "Bulk tag edit", "Select one or more images (Ctrl/Shift-click)."
+            )
+            return
+        add = ts.split_tags(self._bt_add.text())
+        remove = ts.split_tags(self._bt_remove.text())
+        replace = self._parse_replace(self._bt_replace.text())
+        if not (add or remove or replace):
+            QMessageBox.information(
+                self, "Bulk tag edit", "Fill add / remove / replace first."
+            )
+            return
+        names = [it.text() for it in items]
+        paths = ts.caption_paths_for(self._dir, names)
+        res = ts.bulk_edit_captions(paths, add=add, remove=remove, replace=replace)
+        for n in names:  # filter cache reads lowercased text — invalidate touched ones
+            self._cap_cache.pop(n, None)
+        self._on_select(self._list.currentItem(), None)  # refresh shown caption
+        QMessageBox.information(
+            self,
+            "Bulk tag edit",
+            f"Changed {res['changed']} / {res['scanned']} caption(s); "
+            f"{res['skipped']} skipped (no .txt).",
+        )
+
+    def _show_tag_stats(self) -> None:
+        from library.captioning import tag_stats as ts
+
+        if self._dir is None or not self._all_names:
+            QMessageBox.information(self, "Tag stats", "Load a folder first.")
+            return
+        counts = ts.tag_frequencies(ts.caption_paths_for(self._dir, self._all_names))
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Tag stats — {self._dir.name}")
+        dlg.resize(380, 540)
+        lay = QVBoxLayout(dlg)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        view.setStyleSheet("font-family: monospace;")
+        view.setPlainText(ts.format_stats(counts))
+        lay.addWidget(view)
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close)
+        dlg.exec()
 
     def _caption_selected(self) -> None:
         items = self._list.selectedItems()
