@@ -59,8 +59,9 @@
 - **flow-matching 부적합 / SD 잔재**: `noise_offset`·`adaptive_noise_scale`·
   `multires_noise_*`(MISSING), `v_parameterization`·`zero_terminal_snr`·
   `scale_v_pred_loss_like_noise_pred`(MISSING), `min_snr_gamma`·`debiased_estimation_loss`
-  (loss 코드엔 존재하나 SNR 기반 — flow-matching에서 권장하지 않음; field-간 강제관계가
-  아니라 "메서드 부적합"이라 greying 모델에 맞지 않음).
+  (인자 선언·메타데이터 기록은 되지만 **손실 계산에서 소비되지 않는 inert 잔재** — repo 전체
+  grep상 적용 지점 없음; SNR 기반이라 flow-matching에 무의미. field-간 강제관계가 아니라
+  "메서드 부적합"이라 greying 모델엔 안 맞아 GUI 도움말에만 "미적용" 명시).
 - **AR 버킷팅**: `enable_bucket`·`bucket_no_upscale`·`min/max_bucket_reso`(MISSING) —
   anima는 constant-token 네이티브 버킷팅 사용.
 - **LyCORIS / LoKr 계열**: `algo`·`factor`·`full_matrix`·`use_tucker`·`decompose_both`
