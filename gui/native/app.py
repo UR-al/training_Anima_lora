@@ -282,10 +282,16 @@ _KO = {
     "Weighting scheme": "가중치 스킴",
     "Logit mean": "Logit 평균",
     "Logit std": "Logit 표준편차",
-    # greying reasons (shown as the disabled field's tooltip)
+    # greying reasons (shown inline on the disabled field's label)
     "needs loss_type = huber / smooth_l1": "loss_type이 huber / smooth_l1일 때만 사용됩니다",
-    "needs timestep_sampling = sigmoid": "timestep_sampling이 sigmoid(또는 미지정)일 때만 사용됩니다",
+    "needs timestep_sampling = sigmoid / shift / flux_shift": "timestep_sampling이 sigmoid / shift / flux_shift일 때만 사용됩니다",
+    "needs timestep_sampling = shift": "timestep_sampling이 shift일 때만 사용됩니다",
     "needs weighting_scheme = logit_normal": "weighting_scheme이 logit_normal일 때만 사용됩니다",
+    "needs weighting_scheme = mode": "weighting_scheme이 mode일 때만 사용됩니다",
+    "needs ip_noise_gamma > 0": "ip_noise_gamma > 0일 때만 사용됩니다",
+    "needs network_weights set": "network_weights를 지정해야 사용됩니다",
+    "needs cosine_with_restarts / cosine_with_min_lr / WSD": "cosine_with_restarts / cosine_with_min_lr / warmup_stable_decay일 때만 사용됩니다",
+    "needs lr_scheduler = polynomial": "lr_scheduler가 polynomial일 때만 사용됩니다",
     "disabled while use_constantcosine is on (it replaces the scheduler)": "use_constantcosine을 켜면 비활성화됩니다(스케줄러를 대체)",
 }
 
@@ -722,6 +728,15 @@ def _truthy(v: object) -> bool:
     return bool(v) and str(v).lower() not in ("false", "0", "")
 
 
+def _pos(v: object) -> bool:
+    """True when v parses to a number > 0 (a blank / 0 / non-numeric → False).
+    Used for ``> 0`` gates where _truthy is wrong (e.g. the string "0.0")."""
+    try:
+        return float(str(v)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 # Conflict / dependency greying — ported from the Gradio panel's _interactive_states.
 # (target dest, predicate(driver values) → enabled). A greyed target is disabled AND
 # excluded from the launch command (its value defers to the config chain).
@@ -739,10 +754,31 @@ _GREY_RULES: list[tuple[str, object, str]] = [
         "needs loss_type = huber / smooth_l1",
     ),
     (
-        "sigmoid_scale",
-        lambda v: v.get("timestep_sampling") in ("", "sigmoid"),
-        "needs timestep_sampling = sigmoid",
+        "huber_scale",
+        lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
+        "needs loss_type = huber / smooth_l1",
     ),
+    # σ sampling: sigmoid_scale / sigmoid_bias feed the sigmoid|shift|flux_shift
+    # branches (noise.py get_noisy_model_input_and_timesteps); "" = default sigmoid.
+    (
+        "sigmoid_scale",
+        lambda v: v.get("timestep_sampling") in ("", "sigmoid", "shift", "flux_shift"),
+        "needs timestep_sampling = sigmoid / shift / flux_shift",
+    ),
+    (
+        "sigmoid_bias",
+        lambda v: v.get("timestep_sampling") in ("", "sigmoid", "shift", "flux_shift"),
+        "needs timestep_sampling = sigmoid / shift / flux_shift",
+    ),
+    # discrete_flow_shift is read ONLY by the `shift` branch (flux_shift uses a
+    # resolution-derived mu instead — noise.py L111-122).
+    (
+        "discrete_flow_shift",
+        lambda v: v.get("timestep_sampling") == "shift",
+        "needs timestep_sampling = shift",
+    ),
+    # logit_mean/std + mode_scale feed the SD3 density path (the "sigma"/weighting
+    # branch); each is live only under its own weighting_scheme.
     (
         "logit_mean",
         lambda v: v.get("weighting_scheme") == "logit_normal",
@@ -752,6 +788,40 @@ _GREY_RULES: list[tuple[str, object, str]] = [
         "logit_std",
         lambda v: v.get("weighting_scheme") == "logit_normal",
         "needs weighting_scheme = logit_normal",
+    ),
+    (
+        "mode_scale",
+        lambda v: v.get("weighting_scheme") == "mode",
+        "needs weighting_scheme = mode",
+    ),
+    # ip_noise_gamma_random_strength only randomises a gamma that must be > 0
+    # (noise.py reads it solely inside `if args.ip_noise_gamma:` L159-166).
+    (
+        "ip_noise_gamma_random_strength",
+        lambda v: _pos(v.get("ip_noise_gamma")),
+        "needs ip_noise_gamma > 0",
+    ),
+    # dim_from_weights infers rank FROM an existing LoRA → needs network_weights.
+    (
+        "dim_from_weights",
+        lambda v: bool(str(v.get("network_weights") or "").strip()),
+        "needs network_weights set",
+    ),
+    # Built-in LR-scheduler shape params: num_cycles only feeds the restart/min-lr/
+    # WSD families, power only feeds polynomial (schedulers.py L210-260). The combo
+    # holds the builtin name (dotted = custom module → these are inert anyway).
+    (
+        "lr_scheduler_num_cycles",
+        lambda v: (
+            v.get("lr_scheduler_type")
+            in ("cosine_with_restarts", "cosine_with_min_lr", "warmup_stable_decay")
+        ),
+        "needs cosine_with_restarts / cosine_with_min_lr / WSD",
+    ),
+    (
+        "lr_scheduler_power",
+        lambda v: v.get("lr_scheduler_type") == "polynomial",
+        "needs lr_scheduler = polynomial",
     ),
     (
         "lr_scheduler_type",
@@ -802,6 +872,9 @@ _GREY_DRIVERS = [
     "use_text_cache",
     "auto_preprocess",
     "optimizer_type",
+    "ip_noise_gamma",
+    "network_weights",
+    "lr_scheduler_type",
 ]
 # Subset table columns greyed by a cache driver (live-encoding-only knobs are inert
 # once the cache is on): (col_key, driver_dest).
