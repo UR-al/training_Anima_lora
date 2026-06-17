@@ -115,22 +115,59 @@ def _caption_one(model, processor, image, prompt: str, cfg: dict) -> str:
     return processor.batch_decode(trimmed, skip_special_tokens=True)[0]
 
 
-def resolve_openai_endpoint(cfg: dict, loader: str) -> tuple[str | None, str | None]:
-    """(base_url, api_key) for an OpenAI-compatible endpoint. Ollama defaults to
-    http://localhost:11434/v1 with a throwaway key (it ignores the key, but the
-    OpenAI client demands a non-empty one). Torch/openai-free → unit-testable."""
+def ollama_base_url(cfg: dict) -> str:
+    """Ollama native-API root. Defaults to http://localhost:11434; tolerates a config
+    value carrying an OpenAI-compat ``/v1`` suffix by trimming it. Torch/net-free."""
+    base = str(cfg.get("base_url") or "").strip() or "http://localhost:11434"
+    base = base.rstrip("/")
+    return base[:-3].rstrip("/") if base.endswith("/v1") else base
+
+
+def ollama_chat_request(
+    base_url: str, model_name: str, image_b64: str, prompt: str, cfg: dict
+) -> tuple[str, dict]:
+    """(url, JSON payload) for Ollama's native /api/chat — vision goes in ``images``
+    (raw base64, no data: prefix). Built separately so it's unit-testable without a
+    running server. ``num_predict`` is Ollama's max-new-tokens knob."""
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+        "stream": False,
+        "options": {"num_predict": int(cfg.get("max_new_tokens") or 256)},
+    }
+    return f"{base_url}/api/chat", payload
+
+
+def _caption_one_ollama(
+    base_url: str, model_name: str, image_b64: str, prompt: str, cfg: dict
+) -> str:
+    """One image via the local Ollama server (stdlib only — no openai package)."""
+    import json
+    import urllib.request
+
+    url, payload = ollama_chat_request(base_url, model_name, image_b64, prompt, cfg)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310 (local server)
+        data = json.loads(resp.read().decode("utf-8"))
+    return (data.get("message") or {}).get("content", "") or ""
+
+
+def resolve_openai_endpoint(cfg: dict) -> tuple[str | None, str | None]:
+    """(base_url, api_key) for a generic OpenAI-compatible server (loader = 'openai').
+    Blank base_url → real api.openai.com; key from cfg else the OPENAI_API_KEY env."""
     base_url = str(cfg.get("base_url") or "").strip()
-    if loader == "ollama":
-        return (base_url or "http://localhost:11434/v1"), "ollama"
-    # openai: blank base_url → real api.openai.com; key from cfg else env OPENAI_API_KEY
     return (base_url or None), (str(cfg.get("api_key") or "").strip() or None)
 
 
-def _build_openai_client(cfg: dict, loader: str):
-    """(client, model_name) for an OpenAI-compatible endpoint (openai / ollama)."""
+def _build_openai_client(cfg: dict):
+    """(client, model_name) for a generic OpenAI-compatible server (loader='openai')."""
     from openai import OpenAI
 
-    base_url, api_key = resolve_openai_endpoint(cfg, loader)
+    base_url, api_key = resolve_openai_endpoint(cfg)
     return OpenAI(base_url=base_url, api_key=api_key), str(
         cfg.get("model_path") or ""
     ).strip()
@@ -178,14 +215,20 @@ def caption_paths(
     max_side = int(cfg.get("max_image_side") or 0)
     loader = str(cfg.get("loader") or "qwen2_5_vl").lower()
 
-    if loader in OPENAI_COMPAT_LOADERS:
+    client = model = processor = base_url = None
+    model_name = ""
+    if loader == "ollama":
         import base64
         import io
 
-        client, model_name = _build_openai_client(cfg, loader)
-        model = processor = None
+        base_url = ollama_base_url(cfg)
+        model_name = str(cfg.get("model_path") or "").strip()
+    elif loader == "openai":
+        import base64
+        import io
+
+        client, model_name = _build_openai_client(cfg)
     else:
-        client = None
         model, processor = _load_model(cfg)
 
     written = skipped = 0
@@ -203,7 +246,12 @@ def caption_paths(
                 buf = io.BytesIO()
                 image.save(buf, format="PNG")
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                raw_cap = _caption_one_openai(client, model_name, b64, prompt, cfg)
+                if loader == "ollama":
+                    raw_cap = _caption_one_ollama(
+                        base_url, model_name, b64, prompt, cfg
+                    )
+                else:
+                    raw_cap = _caption_one_openai(client, model_name, b64, prompt, cfg)
             else:
                 raw_cap = _caption_one(model, processor, image, prompt, cfg)
             txt.write_text(_finalize(raw_cap, trigger) + "\n", encoding="utf-8")

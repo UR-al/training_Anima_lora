@@ -36,18 +36,29 @@ def test_build_prompt_modes_and_trigger(tmp_path):
         qc.build_prompt(cfg, "bogus")
 
 
-def test_resolve_ollama_endpoint_defaults():
-    base, key = qc.resolve_openai_endpoint({}, "ollama")
-    assert base == "http://localhost:11434/v1" and key == "ollama"
-    # explicit base_url wins
-    base, key = qc.resolve_openai_endpoint({"base_url": "http://x:1/v1"}, "ollama")
-    assert base == "http://x:1/v1"
+def test_ollama_base_url_default_and_v1_trim():
+    assert qc.ollama_base_url({}) == "http://localhost:11434"  # native, no /v1
+    assert (
+        qc.ollama_base_url({"base_url": "http://x:1/v1"}) == "http://x:1"
+    )  # /v1 trimmed
+    assert qc.ollama_base_url({"base_url": "http://x:1/"}) == "http://x:1"
+
+
+def test_ollama_chat_request_shape():
+    url, payload = qc.ollama_chat_request(
+        "http://h:11434", "qwen-cap", "BASE64", "describe", {"max_new_tokens": 64}
+    )
+    assert url == "http://h:11434/api/chat"
+    assert payload["model"] == "qwen-cap" and payload["stream"] is False
+    msg = payload["messages"][0]
+    assert msg["content"] == "describe" and msg["images"] == ["BASE64"]
+    assert payload["options"]["num_predict"] == 64
 
 
 def test_resolve_openai_endpoint_blank_falls_to_env():
-    base, key = qc.resolve_openai_endpoint({}, "openai")
+    base, key = qc.resolve_openai_endpoint({})
     assert base is None and key is None  # → real OpenAI + OPENAI_API_KEY env
-    base, key = qc.resolve_openai_endpoint({"api_key": "sk-x"}, "openai")
+    _, key = qc.resolve_openai_endpoint({"api_key": "sk-x"})
     assert key == "sk-x"
 
 

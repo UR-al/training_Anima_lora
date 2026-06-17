@@ -14,7 +14,7 @@ model_path = "Qwen3-VL-8B-NSFW-Caption"   # ← confirm the exact tag with `olla
 #   "qwen2_5_vl" — transformers Qwen2_5_VLForConditionalGeneration (in-process, GPU)
 #   "qwen2_vl"   — transformers Qwen2VLForConditionalGeneration
 loader = "ollama"
-base_url = ""              # blank → Ollama default http://localhost:11434/v1
+base_url = ""              # blank → Ollama default http://localhost:11434 (native API)
 api_key = ""               # only for loader = "openai" (else uses OPENAI_API_KEY env)
 dtype = "bfloat16"         # transformers loaders only: bfloat16 / float16 / auto
 max_new_tokens = 256
