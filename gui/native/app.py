@@ -131,6 +131,11 @@ _KO = {
     "Metadata": "메타데이터",
     "Extra": "추가",
     "Experimental": "실험기능",
+    # required-field validation
+    "Required fields missing": "필수값 누락",
+    "Fill these before starting:": "시작 전에 아래 값을 입력하세요:",
+    "Sample every N steps/epochs": "샘플 N steps/epochs",
+    "Validate every N steps/epochs": "검증 N steps/epochs",
     "Dataset": "데이터셋",
     "Preprocess": "전처리",
     "Update": "업데이트",
@@ -278,9 +283,9 @@ _KO = {
     "Logit mean": "Logit 평균",
     "Logit std": "Logit 표준편차",
     # greying reasons (shown as the disabled field's tooltip)
-    "active only when loss_type is huber / smooth_l1": "loss_type이 huber / smooth_l1일 때만 사용됩니다",
-    "active only when timestep_sampling is sigmoid (or blank)": "timestep_sampling이 sigmoid(또는 미지정)일 때만 사용됩니다",
-    "active only when weighting_scheme is logit_normal": "weighting_scheme이 logit_normal일 때만 사용됩니다",
+    "needs loss_type = huber / smooth_l1": "loss_type이 huber / smooth_l1일 때만 사용됩니다",
+    "needs timestep_sampling = sigmoid": "timestep_sampling이 sigmoid(또는 미지정)일 때만 사용됩니다",
+    "needs weighting_scheme = logit_normal": "weighting_scheme이 logit_normal일 때만 사용됩니다",
     "disabled while use_constantcosine is on (it replaces the scheduler)": "use_constantcosine을 켜면 비활성화됩니다(스케줄러를 대체)",
 }
 
@@ -726,27 +731,27 @@ _GREY_RULES: list[tuple[str, object, str]] = [
     (
         "huber_c",
         lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
-        "active only when loss_type is huber / smooth_l1",
+        "needs loss_type = huber / smooth_l1",
     ),
     (
         "huber_schedule",
         lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
-        "active only when loss_type is huber / smooth_l1",
+        "needs loss_type = huber / smooth_l1",
     ),
     (
         "sigmoid_scale",
         lambda v: v.get("timestep_sampling") in ("", "sigmoid"),
-        "active only when timestep_sampling is sigmoid (or blank)",
+        "needs timestep_sampling = sigmoid",
     ),
     (
         "logit_mean",
         lambda v: v.get("weighting_scheme") == "logit_normal",
-        "active only when weighting_scheme is logit_normal",
+        "needs weighting_scheme = logit_normal",
     ),
     (
         "logit_std",
         lambda v: v.get("weighting_scheme") == "logit_normal",
-        "active only when weighting_scheme is logit_normal",
+        "needs weighting_scheme = logit_normal",
     ),
     (
         "lr_scheduler_type",
@@ -754,37 +759,36 @@ _GREY_RULES: list[tuple[str, object, str]] = [
             not _truthy(v.get("use_constantcosine"))
             and "schedulefree" not in str(v.get("optimizer_type") or "").lower()
         ),
-        "disabled by use_constantcosine (replaces the scheduler) or a schedule-free "
-        "optimizer (it ignores the LR scheduler)",
+        "off (constant→cosine / schedule-free optimizer)",
     ),
     # schedule-free optimizers run their own LR schedule → warmup is ignored.
     (
         "lr_warmup_steps",
         lambda v: "schedulefree" not in str(v.get("optimizer_type") or "").lower(),
-        "ignored by a schedule-free optimizer",
+        "ignored by schedule-free optimizer",
     ),
     # Auto-preprocess builds + reads the VAE/TE caches (and rewrites dataset_config),
     # so it manages these toggles — locked while it's on.
     (
         "use_vae_cache",
         lambda v: not _truthy(v.get("auto_preprocess")),
-        "managed by Auto-preprocess (it builds + reads the VAE cache)",
+        "managed by Auto-preprocess",
     ),
     (
         "use_text_cache",
         lambda v: not _truthy(v.get("auto_preprocess")),
-        "managed by Auto-preprocess (it builds + reads the TE cache)",
+        "managed by Auto-preprocess",
     ),
     # Train scope (combo 0=both, 1=UNet only, 2=TE only): the other side's LR is unused.
     (
         "unet_lr",
         lambda v: v.get("__scope__") != 2,
-        "training text-encoder only — the UNet/DiT LR is unused",
+        "TE-only scope: UNet LR unused",
     ),
     (
         "text_encoder_lr",
         lambda v: v.get("__scope__") != 1,
-        "training UNet only — the text-encoder LR is unused",
+        "UNet-only scope: TE LR unused",
     ),
 ]
 # Driver dests whose change re-evaluates the rules above + the subset-column greying.
@@ -826,6 +830,9 @@ class MainWindow(QMainWindow):
         self._watch: dict[str, QWidget] = {}  # watch-party fields (NOT saved to config)
         # title → (checkable QGroupBox, [dests]) for collapsible optional features.
         self._opt_groups: dict[str, tuple] = {}
+        # dest → (QLabel, base_text) for inline grey-reason display.
+        self._field_labels: dict[str, tuple] = {}
+        self._highlighted: list[str] = []  # dests flagged by required-field validation
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -1354,6 +1361,10 @@ class MainWindow(QMainWindow):
         c = 0  # 0 = left pair (cols 0-1), 2 = right pair (cols 2-3)
         for dest, label, kind in fields:
             w = self._build_field(dest, kind)
+            lbl = QLabel(tr(label))
+            # Register the label so greying can show its reason inline (and so the
+            # base text can be restored when re-enabled). First occurrence wins.
+            self._field_labels.setdefault(dest, (lbl, tr(label)))
             # Path pickers / args-help / scope span the full width; the compact fields
             # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
             if kind in ("file", "dir", "scope", "kvblock") or kind.startswith(
@@ -1362,11 +1373,11 @@ class MainWindow(QMainWindow):
                 if c != 0:
                     r += 1
                     c = 0
-                grid.addWidget(QLabel(tr(label)), r, 0)
+                grid.addWidget(lbl, r, 0)
                 grid.addWidget(w, r, 1, 1, 4)
                 r += 1
             else:
-                grid.addWidget(QLabel(tr(label)), r, c)
+                grid.addWidget(lbl, r, c)
                 grid.addWidget(w, r, c + 1)
                 if c == 0:
                     c = 2
@@ -1725,8 +1736,17 @@ class MainWindow(QMainWindow):
             if w is not None:
                 enabled = bool(pred(vals))
                 w.setEnabled(enabled)
-                # Show WHY it's greyed (hover) — cleared again once enabled.
-                w.setToolTip("" if enabled else tr(reason))
+                w.setToolTip("" if enabled else tr(reason))  # extra detail on hover
+                # Show WHY it's greyed INLINE next to the label (not hover-only).
+                lt = self._field_labels.get(target)
+                if lt is not None:
+                    lbl, base = lt
+                    if enabled:
+                        lbl.setText(base)
+                        lbl.setStyleSheet("")
+                    else:
+                        lbl.setText(f"{base}  🔒 {tr(reason)}")
+                        lbl.setStyleSheet("color:#b07030;")
         for card in getattr(self, "_subset_cards", []):
             fields = card.get("fields", {})
             for col_key, driver in _SUBSET_GREY:
@@ -2459,8 +2479,70 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._preview.setPlainText(f"[preview error] {exc}")
 
+    # ----- required-field validation -------------------------------------- #
+    def _required_missing(self) -> list[tuple[str, str]]:
+        """(dest, label) of required-but-empty fields. Essentials are always
+        required (unless greyed/inert); Sampling/Validation require a cadence only
+        when their Enable group is ticked."""
+        missing: list[tuple[str, str]] = []
+
+        def _empty(dest: str) -> bool:
+            return not str(self._widget_value(dest) or "").strip()
+
+        for dest, label in (
+            ("optimizer_type", "Optimizer"),
+            ("lr_scheduler_type", "LR scheduler"),
+            ("network_module", "Network module"),
+        ):
+            w = self._widgets.get(dest)
+            if w is not None and not w.isEnabled():
+                continue  # greyed (e.g. scheduler under a schedule-free optimizer)
+            if _empty(dest):
+                missing.append((dest, label))
+
+        def _group_on(title: str) -> bool:
+            g = self._opt_groups.get(title)
+            return bool(g and g[0].isChecked())
+
+        if (
+            _group_on("Sampling")
+            and _empty("sample_every_n_steps")
+            and _empty("sample_every_n_epochs")
+        ):
+            missing.append(("sample_every_n_epochs", "Sample every N steps/epochs"))
+        if (
+            _group_on("Validation")
+            and _empty("validate_every_n_steps")
+            and _empty("validate_every_n_epochs")
+        ):
+            missing.append(("validate_every_n_epochs", "Validate every N steps/epochs"))
+        return missing
+
+    def _highlight_missing(self, missing: list[tuple[str, str]]) -> None:
+        for dest in self._highlighted:  # clear previous run's highlights
+            w = self._widgets.get(dest)
+            if w is not None:
+                w.setStyleSheet("")
+        self._highlighted = []
+        for dest, _label in missing:
+            w = self._widgets.get(dest)
+            if w is not None:
+                w.setStyleSheet("border: 1px solid #e0533a; border-radius: 3px;")
+                self._highlighted.append(dest)
+
     def _do_start(self) -> None:
         self._do_preview()
+        missing = self._required_missing()
+        if missing:
+            self._highlight_missing(missing)
+            names = "\n".join(f"• {tr(label)}" for _d, label in missing)
+            QMessageBox.warning(
+                self,
+                tr("Required fields missing"),
+                tr("Fill these before starting:") + "\n\n" + names,
+            )
+            return
+        self._highlight_missing([])  # clear any prior red borders
         res = backend.launch(self._collect())
         if not res.get("ok"):
             QMessageBox.critical(self, "Launch failed", str(res.get("error") or res))
