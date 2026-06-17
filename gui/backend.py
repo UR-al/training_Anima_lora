@@ -1944,6 +1944,29 @@ def run_masking(form: dict) -> dict:
     return _spawn_util(["tasks.py", "mask"], "mask", env)
 
 
+def run_qwen_caption(form: dict) -> dict:
+    """Auto-caption the selected images with the configured Qwen VLM, as a direct
+    subprocess (``tasks.py qwen-caption``). ``form``: images (paths), mode
+    (tags|natural), overwrite (bool). The image list rides a temp manifest file so an
+    arbitrarily long selection isn't shoved through argv."""
+    import tempfile
+
+    images = [str(p) for p in (form.get("images") or []) if str(p).strip()]
+    if not images:
+        return {"ok": False, "error": "No images selected."}
+    mode = str(form.get("mode") or "tags").strip() or "tags"
+    try:
+        fd, manifest = tempfile.mkstemp(prefix="anima-caption-", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(images))
+    except OSError as exc:
+        return {"ok": False, "error": f"manifest write failed: {exc}"}
+    argv = ["tasks.py", "qwen-caption", "--manifest", manifest, "--mode", mode]
+    if form.get("overwrite"):
+        argv.append("--overwrite")
+    return _spawn_util(argv, "qwen-caption")
+
+
 # Preprocess step → tasks.py subcommand (resize → VAE/TE/PE/pooled caches; the
 # `all` path runs the full resize→cache pipeline; reconcile drops stale caches).
 _PREPROCESS_STEPS = {

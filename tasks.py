@@ -25,6 +25,7 @@ import sys
 from scripts.experimental_tasks import inference as exp_inference
 from scripts.experimental_tasks import training as exp_training
 from scripts.tasks import (
+    captioning,
     dcw,
     downloads,
     inference,
@@ -179,6 +180,12 @@ COMMANDS = {
         preprocess.cmd_caption_index,
         "Build the typed-tag caption index (character/copyright/artist groups) "
         "at post_image_dataset/captions/caption_index.json. Pure data, no GPU.",
+    ),
+    "qwen-caption": (
+        captioning.cmd_qwen_caption,
+        "Auto-caption images with the configured Qwen VLM (dataset_tags/"
+        "qwen_caption.toml) → <stem>.txt. --manifest <file> or --paths a b …, "
+        "--mode tags|natural, --overwrite. Spawned by the Dataset tab.",
     ),
     # ── Anima Tagger ──────────────────────────────────────────────────
     "preprocess-tagger": (

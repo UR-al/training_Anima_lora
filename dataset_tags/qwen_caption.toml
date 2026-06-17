@@ -1,0 +1,27 @@
+# Qwen vision-language captioner — config for the Dataset tab "Auto-caption (Qwen)".
+#
+# ⚠ PLACEHOLDER. At home: set `model_path` to your local Qwen NSFW caption model.
+# Nothing else usually needs changing — only this file is swapped, no code change
+# (unless your model uses a different loader; then set `loader` below).
+
+# Local folder OR Hugging Face repo id of the model.
+model_path = "models/captioners/qwen-nsfw-caption"   # ← replace at home
+
+# How to load / run it:
+#   "qwen2_5_vl" — transformers Qwen2_5_VLForConditionalGeneration (default)
+#   "qwen2_vl"   — transformers Qwen2VLForConditionalGeneration
+#   "openai"     — a local OpenAI-compatible server (set base_url; no GPU here)
+loader = "qwen2_5_vl"
+base_url = ""              # only for loader = "openai" (e.g. http://127.0.0.1:8000/v1)
+dtype = "bfloat16"         # bfloat16 / float16 / auto
+max_new_tokens = 256
+max_image_side = 1280      # downscale longer side before sending (speed / VRAM)
+
+# Per-mode instruction. The GUI mode dropdown picks one. {trigger} is substituted in.
+[prompts]
+tags = "Describe this image as a comma-separated list of concise danbooru tags only (no full sentences). Order: subject count, then character names, then series, then notable visual attributes."
+natural = "Write one concise, factual descriptive sentence describing this image."
+
+# Optional trigger word prepended to every caption (blank = none). Run the tag sorter
+# afterward to push it into the keep-tokens head.
+trigger = ""

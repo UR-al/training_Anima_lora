@@ -357,7 +357,58 @@ class DatasetView(QWidget):
         self._caption.setPlaceholderText("Select an image to edit its caption…")
         rv.addWidget(self._caption, 1)
         rv.addWidget(self._build_tagtools_group())
+        rv.addWidget(self._build_autocaption_group())
         return right
+
+    def _build_autocaption_group(self) -> QGroupBox:
+        box = QGroupBox("Auto-caption (Qwen)")
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+        hint = QLabel(
+            "Captions the <b>selected</b> images (Ctrl/Shift-click) with the model in "
+            "dataset_tags/qwen_caption.toml. Runs in the background — watch output/logs."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#9aa4b2;")
+        v.addWidget(hint)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("mode"))
+        self._cap_mode = QComboBox()
+        self._cap_mode.addItems(["tags", "natural"])
+        row.addWidget(self._cap_mode)
+        self._cap_overwrite = QCheckBox("overwrite existing")
+        row.addWidget(self._cap_overwrite)
+        row.addStretch(1)
+        b_cap = QPushButton("✦ Caption selected")
+        b_cap.clicked.connect(self._caption_selected)
+        row.addWidget(b_cap)
+        v.addLayout(row)
+        return box
+
+    def _caption_selected(self) -> None:
+        items = self._list.selectedItems()
+        if not items or self._dir is None:
+            QMessageBox.information(
+                self, "Auto-caption", "Select one or more images (Ctrl/Shift-click)."
+            )
+            return
+        images = [str(self._dir / it.text()) for it in items]
+        res = backend.run_qwen_caption(
+            {
+                "images": images,
+                "mode": self._cap_mode.currentText(),
+                "overwrite": self._cap_overwrite.isChecked(),
+            }
+        )
+        if not res.get("ok"):
+            QMessageBox.warning(self, "Auto-caption", str(res.get("error") or res))
+            return
+        QMessageBox.information(
+            self,
+            "Auto-caption",
+            f"Captioning {len(images)} image(s) started in the background.\n"
+            "When the log shows it finished, reselect an image to see its caption.",
+        )
 
     def _build_tagtools_group(self) -> QGroupBox:
         box = QGroupBox("Tag order — keep tokens")
