@@ -130,6 +130,7 @@ _KO = {
     "Monitoring": "모니터링",
     "Metadata": "메타데이터",
     "Extra": "추가",
+    "Experimental": "실험기능",
     "Dataset": "데이터셋",
     "Preprocess": "전처리",
     "Update": "업데이트",
@@ -341,6 +342,21 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ),
                 ],
             ),
+            (
+                # Optional feature — collapsed behind an Enable checkbox (per user).
+                "Validation",
+                [
+                    ("validate_every_n_steps", "Validate every N steps", "text"),
+                    ("validate_every_n_epochs", "Validate every N epochs", "text"),
+                    ("validation_split", "Validation split", "text"),
+                    ("validation_split_num", "Validation split num", "text"),
+                    ("validation_seed", "Validation seed", "text"),
+                    ("validation_cfg_scale", "Validation CFG scale", "text"),
+                    ("validation_sample_steps", "Validation sample steps", "text"),
+                    ("max_validation_steps", "Max validation steps", "text"),
+                    ("use_cmmd", "Use CMMD metric", "bool"),
+                ],
+            ),
         ],
     ),
     (
@@ -525,6 +541,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
             ),
         ],
     ),
+    ("Experimental", []),
     ("Metadata", []),
     ("Extra", []),
 ]
@@ -661,6 +678,22 @@ def _route_tab(dest: str) -> str:
     return "Extra"
 
 
+# Groups rendered as a checkable/collapsible box: hidden + inert (excluded from the
+# command) until the user ticks the title checkbox. For non-essential features
+# (sampling, validation) so they don't clutter the always-visible essential knobs.
+_OPTIONAL_GROUPS = {"Sampling", "Validation"}
+
+# Experimental-feature flag families (the repo's `exp-*` set — BYG, Soft Tokens,
+# SPD, DirectEdit/inversion). Their schema flags route to the Experimental tab even
+# when they're Anima-specific (this check wins over the anima_lora-tab routing).
+_EXPERIMENTAL_KEYS = ("byg", "soft_tokens", "spd", "directedit", "inversion")
+_EXPERIMENTAL_TAB = "Experimental"
+
+
+def _is_experimental(dest: str) -> bool:
+    return any(k in dest for k in _EXPERIMENTAL_KEYS)
+
+
 # Subset table columns → keys consumed by backend._dataset_subsets.
 _SUBSET_COLS = [
     ("image_dir", "image_dir"),
@@ -755,6 +788,8 @@ class MainWindow(QMainWindow):
         self._scope: QComboBox | None = None
         self._widgets: dict[str, QWidget] = {}  # dest → editable widget (for greying)
         self._watch: dict[str, QWidget] = {}  # watch-party fields (NOT saved to config)
+        # title → (checkable QGroupBox, [dests]) for collapsible optional features.
+        self._opt_groups: dict[str, tuple] = {}
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -770,10 +805,15 @@ class MainWindow(QMainWindow):
                 d = arg.get("dest") or ""
                 if d in self._curated:
                     continue
-                # ONLY anima_lora's own flags (DiT + Anima arg-adders) go to the
-                # anima_lora tab; inherited sd-scripts/kohya base args stay on their
-                # normally-routed tab's "More flags".
-                tab = _ANIMA_TAB if d in anima_dests else _route_tab(d)
+                # Experimental flag families (exp-* set) win first — even when they're
+                # Anima-specific. Then ONLY anima_lora's own flags go to the anima_lora
+                # tab; inherited sd-scripts/kohya base args stay on their routed tab.
+                if _is_experimental(d):
+                    tab = _EXPERIMENTAL_TAB
+                elif d in anima_dests:
+                    tab = _ANIMA_TAB
+                else:
+                    tab = _route_tab(d)
                 self._tab_schema.setdefault(tab, []).append(arg)
 
         self._build_central()
@@ -1254,7 +1294,19 @@ class MainWindow(QMainWindow):
     # ----- curated field widgets ------------------------------------------ #
     def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
         gb = QGroupBox(tr(title))
-        grid = QGridLayout(gb)
+        optional = title in _OPTIONAL_GROUPS
+        if optional:
+            # Checkable title → collapse: unchecked hides the body AND disables its
+            # widgets (Qt), so the fields are excluded from the command (inert).
+            gb.setCheckable(True)
+            gb.setChecked(False)
+            outer = QVBoxLayout(gb)
+            outer.setContentsMargins(0, 0, 0, 0)
+            body = QWidget()
+            outer.addWidget(body)
+            grid = QGridLayout(body)
+        else:
+            grid = QGridLayout(gb)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(8)
         # Trailing spacer column absorbs slack so the capped value fields stay tight
@@ -1285,6 +1337,10 @@ class MainWindow(QMainWindow):
                 else:
                     c = 0
                     r += 1
+        if optional:
+            gb.toggled.connect(body.setVisible)
+            body.setVisible(False)
+            self._opt_groups[title] = (gb, [d for d, _l, _k in fields])
         return gb
 
     def _set_combo(self, combo: QComboBox, value) -> None:
@@ -2326,8 +2382,16 @@ class MainWindow(QMainWindow):
                         self._add_subset_card(s)
         finally:
             self._loading = False
+        self._sync_optional_groups()  # auto-enable Sampling/Validation if loaded
         self._apply_greying()  # re-evaluate once after the load changes drivers
         self._refresh_opthelp()  # refresh any open help panel once, now
+
+    def _sync_optional_groups(self) -> None:
+        """Tick a collapsible feature group (Sampling/Validation) when a loaded config
+        gave any of its fields a value — so loading doesn't silently drop them."""
+        for _title, (gb, dests) in self._opt_groups.items():
+            if any(_truthy(self._widget_value(d)) for d in dests if d in self._widgets):
+                gb.setChecked(True)
 
     # ----- actions -------------------------------------------------------- #
     def _do_preview(self) -> None:
