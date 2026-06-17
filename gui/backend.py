@@ -1967,6 +1967,40 @@ def run_qwen_caption(form: dict) -> dict:
     return _spawn_util(argv, "qwen-caption")
 
 
+def resolve_taggui_run_gui(taggui_dir: str) -> Path | None:
+    """Find taggui's ``run_gui.py`` given the folder the user pointed at — accepts the
+    repo root (``<dir>/taggui/run_gui.py``) or the inner package dir / the file itself."""
+    d = Path(taggui_dir)
+    for cand in (d / "taggui" / "run_gui.py", d / "run_gui.py", d):
+        if cand.is_file() and cand.name == "run_gui.py":
+            return cand
+    return None
+
+
+def run_taggui(form: dict) -> dict:
+    """Launch taggui (jhc13/taggui) as a DETACHED process in OUR interpreter — the
+    "run it in our deps first" experiment. It's a standalone Qt window, so it is NOT
+    tracked as the training-exclusive run (won't block Start). taggui takes no folder
+    arg; it reopens its last directory via its own QSettings. Folder via ``taggui_dir``
+    or the ``TAGGUI_DIR`` env."""
+    taggui_dir = str(
+        form.get("taggui_dir") or os.environ.get("TAGGUI_DIR") or ""
+    ).strip()
+    if not taggui_dir:
+        return {
+            "ok": False,
+            "error": "Set the TagGUI folder (or TAGGUI_DIR env) first.",
+        }
+    run_gui = resolve_taggui_run_gui(taggui_dir)
+    if run_gui is None:
+        return {"ok": False, "error": f"run_gui.py not found under {taggui_dir}"}
+    try:
+        proc = subprocess.Popen([sys.executable, str(run_gui)], cwd=str(run_gui.parent))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"failed to launch taggui: {exc}"}
+    return {"ok": True, "pid": proc.pid, "command": f"{sys.executable} {run_gui}"}
+
+
 # Preprocess step → tasks.py subcommand (resize → VAE/TE/PE/pooled caches; the
 # `all` path runs the full resize→cache pipeline; reconcile drops stale caches).
 _PREPROCESS_STEPS = {

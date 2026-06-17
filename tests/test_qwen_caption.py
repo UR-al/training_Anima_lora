@@ -36,6 +36,25 @@ def test_build_prompt_modes_and_trigger(tmp_path):
         qc.build_prompt(cfg, "bogus")
 
 
+def test_resolve_ollama_endpoint_defaults():
+    base, key = qc.resolve_openai_endpoint({}, "ollama")
+    assert base == "http://localhost:11434/v1" and key == "ollama"
+    # explicit base_url wins
+    base, key = qc.resolve_openai_endpoint({"base_url": "http://x:1/v1"}, "ollama")
+    assert base == "http://x:1/v1"
+
+
+def test_resolve_openai_endpoint_blank_falls_to_env():
+    base, key = qc.resolve_openai_endpoint({}, "openai")
+    assert base is None and key is None  # → real OpenAI + OPENAI_API_KEY env
+    base, key = qc.resolve_openai_endpoint({"api_key": "sk-x"}, "openai")
+    assert key == "sk-x"
+
+
+def test_ollama_is_openai_compat():
+    assert "ollama" in qc.OPENAI_COMPAT_LOADERS
+
+
 def test_finalize_prepends_trigger_and_tidies():
     assert qc._finalize("  a,  b ,", "char") == "char, a, b"
     # trigger already present → not duplicated

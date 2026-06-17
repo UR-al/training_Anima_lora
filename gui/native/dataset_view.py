@@ -24,6 +24,7 @@ layer at partial opacity. (Red-tinted overlay is a cosmetic follow-up.)
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
@@ -359,7 +360,41 @@ class DatasetView(QWidget):
         rv.addWidget(self._build_tagtools_group())
         rv.addWidget(self._build_autocaption_group())
         rv.addWidget(self._build_bulktags_group())
+        rv.addWidget(self._build_taggui_group())
         return right
+
+    def _build_taggui_group(self) -> QGroupBox:
+        box = QGroupBox("External: TagGUI")
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+        hint = QLabel(
+            "Launch jhc13/taggui in a separate window (its own full tag/caption tool). "
+            "Point this at your taggui checkout; it reopens its last folder."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#9aa4b2;")
+        v.addWidget(hint)
+        row = QHBoxLayout()
+        self._taggui_dir = QLineEdit(os.environ.get("TAGGUI_DIR", ""))
+        self._taggui_dir.setPlaceholderText("path to taggui checkout (or TAGGUI_DIR)")
+        row.addWidget(self._taggui_dir, 1)
+        b_open = QPushButton("Open TagGUI")
+        b_open.clicked.connect(self._open_taggui)
+        row.addWidget(b_open)
+        v.addLayout(row)
+        return box
+
+    def _open_taggui(self) -> None:
+        res = backend.run_taggui({"taggui_dir": self._taggui_dir.text().strip()})
+        if not res.get("ok"):
+            QMessageBox.warning(self, "TagGUI", str(res.get("error") or res))
+            return
+        QMessageBox.information(
+            self,
+            "TagGUI",
+            "TagGUI launched in a separate window.\n"
+            "In TagGUI, open this dataset folder (File → Load Directory).",
+        )
 
     def _build_autocaption_group(self) -> QGroupBox:
         box = QGroupBox("Auto-caption (Qwen)")

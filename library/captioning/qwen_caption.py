@@ -11,8 +11,10 @@ Layering: the config/prompt helpers are **torch-free** (importable + unit-tested
 heavy model load + generation is lazy-imported inside :func:`caption_paths`, and the
 two model-specific functions — :func:`_load_model` and :func:`_caption_one` — are
 isolated so swapping in a different Qwen build is a localized change. The shipped
-default targets transformers Qwen2.5-VL (``loader = "qwen2_5_vl"``); ``qwen2_vl`` and a
-local OpenAI-compatible server (``openai``) are also handled.
+default targets **Ollama** (``loader = "ollama"`` — Qwen3-VL-8B-NSFW-Caption, served
+on the OpenAI-compatible :11434 endpoint, no torch load here); a generic ``openai``
+server and the in-process transformers loaders (``qwen2_5_vl`` / ``qwen2_vl``) are
+also handled.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from pathlib import Path
 
 DEFAULT_CONFIG_REL = "dataset_tags/qwen_caption.toml"
 VALID_MODES = ("tags", "natural")
+# Loaders that speak the OpenAI chat-completions API (no local torch load). Ollama is
+# just an OpenAI-compatible server on :11434 — how Qwen3-VL-8B-NSFW-Caption is served.
+OPENAI_COMPAT_LOADERS = ("openai", "ollama")
 
 
 def load_caption_config(path: str | Path) -> dict:
@@ -110,6 +115,27 @@ def _caption_one(model, processor, image, prompt: str, cfg: dict) -> str:
     return processor.batch_decode(trimmed, skip_special_tokens=True)[0]
 
 
+def resolve_openai_endpoint(cfg: dict, loader: str) -> tuple[str | None, str | None]:
+    """(base_url, api_key) for an OpenAI-compatible endpoint. Ollama defaults to
+    http://localhost:11434/v1 with a throwaway key (it ignores the key, but the
+    OpenAI client demands a non-empty one). Torch/openai-free → unit-testable."""
+    base_url = str(cfg.get("base_url") or "").strip()
+    if loader == "ollama":
+        return (base_url or "http://localhost:11434/v1"), "ollama"
+    # openai: blank base_url → real api.openai.com; key from cfg else env OPENAI_API_KEY
+    return (base_url or None), (str(cfg.get("api_key") or "").strip() or None)
+
+
+def _build_openai_client(cfg: dict, loader: str):
+    """(client, model_name) for an OpenAI-compatible endpoint (openai / ollama)."""
+    from openai import OpenAI
+
+    base_url, api_key = resolve_openai_endpoint(cfg, loader)
+    return OpenAI(base_url=base_url, api_key=api_key), str(
+        cfg.get("model_path") or ""
+    ).strip()
+
+
 def _caption_one_openai(
     client, model_name: str, image_b64: str, prompt: str, cfg: dict
 ):
@@ -152,14 +178,11 @@ def caption_paths(
     max_side = int(cfg.get("max_image_side") or 0)
     loader = str(cfg.get("loader") or "qwen2_5_vl").lower()
 
-    if loader == "openai":
+    if loader in OPENAI_COMPAT_LOADERS:
         import base64
         import io
 
-        from openai import OpenAI
-
-        client = OpenAI(base_url=str(cfg.get("base_url") or "").strip() or None)
-        model_name = str(cfg.get("model_path") or "").strip()
+        client, model_name = _build_openai_client(cfg, loader)
         model = processor = None
     else:
         client = None
@@ -176,7 +199,7 @@ def caption_paths(
             image = Image.open(img_path).convert("RGB")
             if max_side and max(image.size) > max_side:
                 image.thumbnail((max_side, max_side))
-            if loader == "openai":
+            if loader in OPENAI_COMPAT_LOADERS:
                 buf = io.BytesIO()
                 image.save(buf, format="PNG")
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")

@@ -10,6 +10,7 @@ loads in the GUI process. Caption/prompt logic lives in
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from ._common import ROOT
@@ -58,3 +59,26 @@ def cmd_qwen_caption(extra):
         f"loader={cfg.get('loader')}, model={cfg.get('model_path')}"
     )
     qc.caption_paths(paths, args.mode, args.overwrite, cfg)
+
+
+def cmd_taggui(extra):
+    """Launch taggui (jhc13/taggui) in this interpreter — the "run it in our deps"
+    experiment. Point --dir (or TAGGUI_DIR) at your taggui checkout."""
+    from gui.backend import resolve_taggui_run_gui
+
+    from ._common import PY, run
+
+    ap = argparse.ArgumentParser(prog="tasks.py taggui")
+    ap.add_argument(
+        "--dir",
+        default=os.environ.get("TAGGUI_DIR", ""),
+        help="taggui checkout folder (or set TAGGUI_DIR)",
+    )
+    args = ap.parse_args(extra)
+    if not args.dir:
+        raise SystemExit("set --dir or TAGGUI_DIR to your taggui checkout folder")
+    run_gui = resolve_taggui_run_gui(args.dir)
+    if run_gui is None:
+        raise SystemExit(f"run_gui.py not found under {args.dir}")
+    print(f"Launching taggui: {run_gui}")
+    run([PY, str(run_gui)])

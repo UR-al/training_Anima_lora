@@ -4,16 +4,19 @@
 # Nothing else usually needs changing — only this file is swapped, no code change
 # (unless your model uses a different loader; then set `loader` below).
 
-# Local folder OR Hugging Face repo id of the model.
-model_path = "models/captioners/qwen-nsfw-caption"   # ← replace at home
+# Model id. For loader = "ollama" this is the Ollama tag (check `ollama list`);
+# for the transformers loaders it's a local folder OR a Hugging Face repo id.
+model_path = "Qwen3-VL-8B-NSFW-Caption"   # ← confirm the exact tag with `ollama list`
 
 # How to load / run it:
-#   "qwen2_5_vl" — transformers Qwen2_5_VLForConditionalGeneration (default)
+#   "ollama"     — local Ollama server (OpenAI-compatible; default :11434) ← this model
+#   "openai"     — any other OpenAI-compatible server (set base_url)
+#   "qwen2_5_vl" — transformers Qwen2_5_VLForConditionalGeneration (in-process, GPU)
 #   "qwen2_vl"   — transformers Qwen2VLForConditionalGeneration
-#   "openai"     — a local OpenAI-compatible server (set base_url; no GPU here)
-loader = "qwen2_5_vl"
-base_url = ""              # only for loader = "openai" (e.g. http://127.0.0.1:8000/v1)
-dtype = "bfloat16"         # bfloat16 / float16 / auto
+loader = "ollama"
+base_url = ""              # blank → Ollama default http://localhost:11434/v1
+api_key = ""               # only for loader = "openai" (else uses OPENAI_API_KEY env)
+dtype = "bfloat16"         # transformers loaders only: bfloat16 / float16 / auto
 max_new_tokens = 256
 max_image_side = 1280      # downscale longer side before sending (speed / VRAM)
 

@@ -184,8 +184,13 @@ COMMANDS = {
     "qwen-caption": (
         captioning.cmd_qwen_caption,
         "Auto-caption images with the configured Qwen VLM (dataset_tags/"
-        "qwen_caption.toml) → <stem>.txt. --manifest <file> or --paths a b …, "
-        "--mode tags|natural, --overwrite. Spawned by the Dataset tab.",
+        "qwen_caption.toml; default Ollama Qwen3-VL-8B-NSFW-Caption) → <stem>.txt. "
+        "--manifest <file> or --paths a b …, --mode tags|natural, --overwrite.",
+    ),
+    "taggui": (
+        captioning.cmd_taggui,
+        "Launch taggui (jhc13/taggui) in this interpreter to try it on our deps. "
+        "--dir <taggui checkout> or set TAGGUI_DIR.",
     ),
     # ── Anima Tagger ──────────────────────────────────────────────────
     "preprocess-tagger": (
