@@ -539,6 +539,17 @@ def save_form_to_toml(form: dict) -> str:
     subs = server._dataset_subsets(form)
     if subs:
         d["datasets"] = [{"subsets": subs}]
+    # _method_preset_extra emits the COMPUTED output_dir (<base>/<output_name>) +
+    # logging_dir (<base>/<name>/log). Storing those verbatim would re-nest one level
+    # deeper on every save→load round-trip (output/lora → output/lora/lora → …). The
+    # GUI recomputes both from output_dir + output_name at launch, so persist only the
+    # user's base and drop the derived logging_dir.
+    base = (form.get("output_dir") or "").strip().rstrip("/\\ ")
+    if base:
+        d["output_dir"] = base
+    else:
+        d.pop("output_dir", None)
+    d.pop("logging_dir", None)
     header = (
         "# Saved from the Anima GUI — runnable as:\n"
         "#   python train.py --config_file <this file>\n"

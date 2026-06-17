@@ -29,6 +29,7 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -289,13 +290,18 @@ class DatasetView(QWidget):
         lv = QVBoxLayout(panel)
         lv.setContentsMargins(0, 0, 0, 0)
         self._list = QListWidget()
+        # Ctrl-click toggles / Shift-click ranges → multi-select (delete many at once).
+        self._list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._list.currentItemChanged.connect(self._on_select)
         lv.addWidget(self._list, 1)
         self._count_label = QLabel("")
         self._count_label.setStyleSheet("color:#9aa4b2;")
         lv.addWidget(self._count_label)
         b_del = QPushButton("🗑 Delete selected (+caption+mask)")
-        b_del.setToolTip("Remove the image AND its .txt caption and mask together.")
+        b_del.setToolTip(
+            "Remove the image AND its .txt caption and mask together. "
+            "Ctrl/Shift-click to select multiple."
+        )
         b_del.clicked.connect(self._delete_selected)
         lv.addWidget(b_del)
         return panel
@@ -660,26 +666,31 @@ class DatasetView(QWidget):
         return removed
 
     def _delete_selected(self) -> None:
-        item = self._list.currentItem()
-        if item is None or self._dir is None:
+        items = self._list.selectedItems()
+        if not items or self._dir is None:
             return
-        img = self._dir / item.text()
-        extras = [
-            p.name
-            for p in (img.with_suffix(".txt"), self._mask_path(img))
-            if p.exists()
-        ]
-        tail = (" + " + " + ".join(extras)) if extras else ""
+        imgs = [self._dir / it.text() for it in items]
+        if len(imgs) == 1:
+            extras = [
+                p.name
+                for p in (imgs[0].with_suffix(".txt"), self._mask_path(imgs[0]))
+                if p.exists()
+            ]
+            tail = (" + " + " + ".join(extras)) if extras else ""
+            msg = f"Delete {imgs[0].name}{tail}?"
+        else:
+            msg = f"Delete {len(imgs)} selected images (+ caption + mask each)?"
         if (
-            QMessageBox.question(self, "Delete image", f"Delete {img.name}{tail}?")
+            QMessageBox.question(self, "Delete image", msg)
             != QMessageBox.StandardButton.Yes
         ):
             return
-        self._delete_image(img)
-        if self._current == img:
-            self._current = None
-            self._view.set_image(None)
-            self._caption.setPlainText("")
+        for img in imgs:
+            self._delete_image(img)
+            if self._current == img:
+                self._current = None
+                self._view.set_image(None)
+                self._caption.setPlainText("")
         self._apply_filter()
 
     # ----- dataset validation: near-duplicate detection ------------------- #

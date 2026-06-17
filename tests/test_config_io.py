@@ -392,6 +392,17 @@ def test_subset_cards_round_trip():
     assert "--logging_dir" not in (back.get("extra_flags") or "")
 
 
+def test_output_dir_does_not_nest_on_round_trip():
+    """save emits the COMPUTED output_dir (<base>/<name>); persisting that verbatim
+    would re-nest a level deeper every save→load cycle. Regression: it stays put."""
+    form = {"method": "lora", "output_name": "mylora", "output_dir": "output"}
+    for _ in range(3):
+        text = save_form_to_toml(form)
+        form = load_toml_to_form(text)
+        assert form.get("output_dir") == "output"
+        assert "--logging_dir" not in (form.get("extra_flags") or "")
+
+
 def test_native_subsets_dedup_same_folder():
     """A kohya multiscale config lists the same folder under N resolution blocks —
     collapse to ONE native subset card (mirrors the ds_* dedup)."""
@@ -408,6 +419,7 @@ def test_native_subsets_dedup_same_folder():
 
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
     test_subset_cards_round_trip()
+    test_output_dir_does_not_nest_on_round_trip()
     test_native_subsets_dedup_same_folder()
     test_known_dests_pass_schema_args_to_fields_not_extra_flags()
     test_load_maps_dedicated_fields()
