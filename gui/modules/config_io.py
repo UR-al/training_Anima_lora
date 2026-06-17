@@ -208,6 +208,9 @@ _DROP = {
     "log_prefix_mode",
     "run_name_mode",
     "edm2_loss_weighting",
+    # Derived at save from output_dir/output_name (logging_dir = <out>/log) — drop on
+    # load so it isn't folded into extra_flags as a stray --logging_dir token.
+    "logging_dir",
 }
 # Anima-VALID store_true flags with no dedicated GUI field: emit `--flag` ONLY when
 # truthy. A plain store_true has no `--no-<flag>` form, so routing a false value through
@@ -285,6 +288,64 @@ def _fill_subset_block(
         form[f"{prefix}gradient_checkpointing"] = True
 
 
+def _extract_native_subsets(data: dict, form: dict) -> None:
+    """Rebuild the native GUI's dynamic subset cards (``form['subsets']``) from the
+    ``[[datasets]]`` blueprint a GUI save writes (see save_form_to_toml). Values are
+    stringified for the card line-edits; flip_aug/random_crop/is_val stay bool; the
+    per-subset gradient_checkpointing toggle is reconstructed from a tier match against
+    ``gradient_checkpointing_resolutions`` (it isn't stored as a subset key). Mutates
+    ``form`` in place; sets nothing when there are no subset blocks (legacy flat configs
+    still fall through to _extract_dataset's ds_* path)."""
+    blocks = data.get("datasets")
+    if not isinstance(blocks, list) or not blocks:
+        return
+    gc_edges = {
+        int(x)
+        for x in (data.get("gradient_checkpointing_resolutions") or [])
+        if str(x).isdigit()
+    }
+    out: list[dict] = []
+    seen: set[str] = set()  # dedup same-folder subsets (kohya multiscale lists 1/res)
+    for blk in blocks:
+        if not isinstance(blk, dict):
+            continue
+        blk_bs = blk.get("batch_size")
+        for s in blk.get("subsets") or []:
+            if not isinstance(s, dict):
+                continue
+            img = str(s.get("image_dir") or "").strip()
+            if not img or img in seen:
+                continue
+            seen.add(img)
+            row: dict = {"image_dir": img}
+            if str(s.get("cache_dir") or "").strip():
+                row["cache_dir"] = str(s["cache_dir"]).strip()
+            for k in (
+                "num_repeats",
+                "keep_tokens",
+                "caption_dropout_rate",
+                "caption_extension",
+            ):
+                if s.get(k) is not None:
+                    row[k] = str(s[k])
+            bs = s.get("batch_size", blk_bs)
+            if bs is not None:
+                row["batch_size"] = str(bs)
+            tier_ints: set[int] = set()
+            t = s.get("tiers")
+            if isinstance(t, (list, tuple)) and t:
+                row["tiers"] = ",".join(str(x) for x in t)
+                tier_ints = {int(x) for x in t if str(x).isdigit()}
+            for fk in ("flip_aug", "random_crop", "is_val"):
+                if s.get(fk):
+                    row[fk] = True
+            if gc_edges and tier_ints and (tier_ints & gc_edges):
+                row["gradient_checkpointing"] = True
+            out.append(row)
+    if out:
+        form["subsets"] = out
+
+
 def _extract_dataset(data: dict, form: dict) -> None:
     """Harvest the ``[[datasets]]`` blocks into the per-subset block fields: the first
     subset fills ds_*, further subsets ds2_*/ds3_*/… (up to N). Resolutions across
@@ -348,8 +409,10 @@ def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
     form: dict = {}
     extra: list[str] = []  # CLI tokens for the extra_flags field
 
-    # 0) Harvest the dataset blueprint into the ds_* / target_res panel, then drop
+    # 0) Harvest the dataset blueprint: first into the native GUI's dynamic subset
+    #    cards (form['subsets']), then the legacy ds_* / target_res panel, then drop
     #    the (nested) sections so the flat-key router below never sees them.
+    _extract_native_subsets(data, form)
     _extract_dataset(data, form)
     for sec in _SKIP_SECTIONS:
         data.pop(sec, None)
@@ -469,6 +532,13 @@ def save_form_to_toml(form: dict) -> str:
 
     method, preset, extra = server._method_preset_extra(form)
     d = _argv_to_toml_dict(method, preset, extra)
+    # Serialize the dynamic subset cards as a [[datasets]] blueprint — _method_preset_extra
+    # consumes form['subsets'] only for --gradient_checkpointing_resolutions, so without
+    # this every per-subset field (image_dir, caption_extension, flip_aug/random_crop/
+    # is_val, num_repeats…) would be dropped and the cards couldn't be restored on load.
+    subs = server._dataset_subsets(form)
+    if subs:
+        d["datasets"] = [{"subsets": subs}]
     header = (
         "# Saved from the Anima GUI — runnable as:\n"
         "#   python train.py --config_file <this file>\n"

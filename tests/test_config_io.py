@@ -352,7 +352,63 @@ def test_known_dests_pass_schema_args_to_fields_not_extra_flags():
     assert "dynamo_backend" not in (known.get("extra_flags") or "")
 
 
+def test_subset_cards_round_trip():
+    """The native GUI's dynamic subset cards (form['subsets']) survive save→load:
+    image_dir + caption_extension dropdown + flip_aug/is_val toggles + numeric values
+    + per-subset tiers + reconstructed gradient_checkpointing. Regression for "saved
+    config drops subsets / their dropdowns + ON/OFF toggles don't restore"."""
+    form = {
+        "method": "lora",
+        "preset": "default",
+        "subsets": [
+            {
+                "image_dir": "image_dataset/cat",
+                "num_repeats": "4",
+                "keep_tokens": "1",
+                "caption_extension": ".txt",
+                "caption_dropout_rate": "0.1",
+                "flip_aug": True,
+                "random_crop": False,
+                "is_val": False,
+                "gradient_checkpointing": True,
+                "tiers": "1024,768",
+                "batch_size": "2",
+            },
+            {"image_dir": "image_dataset/val", "num_repeats": "1", "is_val": True},
+        ],
+    }
+    back = load_toml_to_form(save_form_to_toml(form))
+    subs = back.get("subsets")
+    assert isinstance(subs, list) and len(subs) == 2, subs
+    a, b = subs
+    assert a["image_dir"] == "image_dataset/cat"
+    assert a["caption_extension"] == ".txt"  # dropdown
+    assert a["num_repeats"] == "4" and a["keep_tokens"] == "1"  # values
+    assert a["flip_aug"] is True and "random_crop" not in a  # ON kept, OFF dropped
+    assert a["tiers"] == "1024,768"
+    assert a["gradient_checkpointing"] is True  # reconstructed from gc_resolutions
+    assert b["image_dir"] == "image_dataset/val" and b["is_val"] is True
+    # logging_dir is derived on save → must NOT leak into extra_flags on load
+    assert "--logging_dir" not in (back.get("extra_flags") or "")
+
+
+def test_native_subsets_dedup_same_folder():
+    """A kohya multiscale config lists the same folder under N resolution blocks —
+    collapse to ONE native subset card (mirrors the ds_* dedup)."""
+    text = (
+        "[[datasets]]\nresolution = 768\n  [[datasets.subsets]]\n"
+        '  image_dir = "C:/d/char"\n  num_repeats = 3\n'
+        "[[datasets]]\nresolution = 1024\n  [[datasets.subsets]]\n"
+        '  image_dir = "C:/d/char"\n  num_repeats = 3\n'
+    )
+    subs = load_toml_to_form(text).get("subsets")
+    assert isinstance(subs, list) and len(subs) == 1, subs
+    assert subs[0]["image_dir"] == "C:/d/char"
+
+
 if __name__ == "__main__":  # allow `python tests/test_config_io.py`
+    test_subset_cards_round_trip()
+    test_native_subsets_dedup_same_folder()
     test_known_dests_pass_schema_args_to_fields_not_extra_flags()
     test_load_maps_dedicated_fields()
     test_load_renames_to_dedicated_fields()
