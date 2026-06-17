@@ -27,10 +27,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QGroupBox,
@@ -198,7 +199,25 @@ class DatasetView(QWidget):
         self._series_path = Path(backend.ROOT) / tag_sort.DEFAULT_SERIES_REL
         self._characters = tag_sort.load_name_set(self._chars_path)
         self._series = tag_sort.load_name_set(self._series_path)
+        self._all_names: list[str] = []  # every image in the folder (filter source)
+        self._cap_cache: dict[str, str] = {}  # name → lowercased caption (lazy)
+        self._size_cache: dict[str, int] = {}  # name → pixel count (lazy, header-only)
+        self._min_px = self._load_min_pixels()
         self._build()
+
+    @staticmethod
+    def _load_min_pixels() -> int:
+        """The preprocess low-res threshold (configs/preprocess.toml) — reused for the
+        'low-res' list filter. Falls back to 500k if the file/key is absent."""
+        try:
+            import tomllib
+
+            p = Path(backend.ROOT) / "configs" / "preprocess.toml"
+            if p.is_file():
+                return int(tomllib.loads(p.read_text(encoding="utf-8"))["min_pixels"])
+        except (OSError, ValueError, KeyError, ImportError):
+            pass
+        return 500_000
 
     def _build(self) -> None:
         outer = QVBoxLayout(self)
@@ -216,14 +235,39 @@ class DatasetView(QWidget):
         top.addWidget(load)
         outer.addLayout(top)
 
-        # dataset validation: group near-duplicates by perceptual-hash similarity
+        # filter / search bar
+        flt = QHBoxLayout()
+        self._filter_text = QLineEdit()
+        self._filter_text.setPlaceholderText("filter… (tag or caption text)")
+        self._filter_text.textChanged.connect(self._apply_filter)
+        self._filter_mode = QComboBox()
+        self._filter_mode.addItems(["caption contains", "tag present", "tag absent"])
+        self._filter_mode.currentIndexChanged.connect(self._apply_filter)
+        self._f_nomask = QCheckBox("no mask")
+        self._f_nomask.toggled.connect(self._apply_filter)
+        self._f_lowres = QCheckBox(f"low-res (<{self._min_px // 1000}k px)")
+        self._f_lowres.toggled.connect(self._apply_filter)
+        flt.addWidget(QLabel("🔍"))
+        flt.addWidget(self._filter_text, 1)
+        flt.addWidget(self._filter_mode)
+        flt.addWidget(self._f_nomask)
+        flt.addWidget(self._f_lowres)
+        outer.addLayout(flt)
+
+        # dataset hygiene: validate + near-duplicate grouping
         val = QHBoxLayout()
-        b_dupes = QPushButton("Validate: find duplicates")
+        b_validate = QPushButton("Validate dataset")
+        b_validate.setToolTip(
+            "Find captionless images, orphan .txt, and missing masks."
+        )
+        b_validate.clicked.connect(self._validate_dataset)
+        b_dupes = QPushButton("Find duplicates")
         b_dupes.clicked.connect(self._find_duplicates)
         self._dup_thresh = QSpinBox()
         self._dup_thresh.setRange(0, 32)
         self._dup_thresh.setValue(10)
         self._dup_thresh.setToolTip("Max Hamming distance (bits) — lower = stricter")
+        val.addWidget(b_validate)
         val.addWidget(b_dupes)
         val.addWidget(QLabel("max distance"))
         val.addWidget(self._dup_thresh)
@@ -231,9 +275,7 @@ class DatasetView(QWidget):
         outer.addLayout(val)
 
         split = QSplitter(Qt.Horizontal)
-        self._list = QListWidget()
-        self._list.currentItemChanged.connect(self._on_select)
-        split.addWidget(self._list)
+        split.addWidget(self._build_list_panel())
         split.addWidget(self._build_center())
         split.addWidget(self._build_caption_panel())
         split.setStretchFactor(0, 1)
@@ -241,6 +283,22 @@ class DatasetView(QWidget):
         split.setStretchFactor(2, 2)
         outer.addWidget(split, 1)
         self._load_folder()
+
+    def _build_list_panel(self) -> QWidget:
+        panel = QWidget()
+        lv = QVBoxLayout(panel)
+        lv.setContentsMargins(0, 0, 0, 0)
+        self._list = QListWidget()
+        self._list.currentItemChanged.connect(self._on_select)
+        lv.addWidget(self._list, 1)
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet("color:#9aa4b2;")
+        lv.addWidget(self._count_label)
+        b_del = QPushButton("🗑 Delete selected (+caption+mask)")
+        b_del.setToolTip("Remove the image AND its .txt caption and mask together.")
+        b_del.clicked.connect(self._delete_selected)
+        lv.addWidget(b_del)
+        return panel
 
     def _build_center(self) -> QWidget:
         center = QWidget()
@@ -386,14 +444,77 @@ class DatasetView(QWidget):
             self._load_folder()
 
     def _load_folder(self) -> None:
-        self._list.clear()
         d = Path(self._folder.text().strip())
         self._dir = d
-        if not d.is_dir():
+        self._all_names = []
+        self._cap_cache.clear()
+        self._size_cache.clear()
+        if d.is_dir():
+            self._all_names = [
+                f.name
+                for f in sorted(d.iterdir())
+                if f.is_file() and f.suffix.lower() in _IMG_EXTS
+            ]
+        self._apply_filter()
+
+    # ----- filter / search ------------------------------------------------ #
+    def _caption_text(self, name: str) -> str:
+        """Lowercased caption text for ``name`` (cached; '' when no .txt)."""
+        if name in self._cap_cache:
+            return self._cap_cache[name]
+        txt = (self._dir / name).with_suffix(".txt") if self._dir else None
+        s = ""
+        if txt is not None and txt.exists():
+            try:
+                s = txt.read_text(encoding="utf-8").lower()
+            except OSError:
+                s = ""
+        self._cap_cache[name] = s
+        return s
+
+    def _pixels(self, name: str) -> int:
+        """Pixel count via QImageReader (header only — no full decode); cached."""
+        if name in self._size_cache:
+            return self._size_cache[name]
+        sz = QImageReader(str(self._dir / name)).size() if self._dir else QSize()
+        px = sz.width() * sz.height() if sz.isValid() else 0
+        self._size_cache[name] = px
+        return px
+
+    def _passes(self, name: str) -> bool:
+        q = self._filter_text.text().strip().lower()
+        if q:
+            mode = self._filter_mode.currentText()
+            cap = self._caption_text(name)
+            if mode == "caption contains":
+                if q not in cap:
+                    return False
+            else:  # tag present / tag absent — exact comma-token match
+                present = any(t.strip() == q for t in cap.split(","))
+                if mode == "tag present" and not present:
+                    return False
+                if mode == "tag absent" and present:
+                    return False
+        if self._f_nomask.isChecked() and self._mask_path(self._dir / name).exists():
+            return False
+        if self._f_lowres.isChecked() and self._pixels(name) >= self._min_px:
+            return False
+        return True
+
+    def _apply_filter(self) -> None:
+        if self._dir is None:
             return
-        for f in sorted(d.iterdir()):
-            if f.is_file() and f.suffix.lower() in _IMG_EXTS:
-                self._list.addItem(f.name)
+        self._list.blockSignals(True)
+        self._list.clear()
+        shown = [n for n in self._all_names if self._passes(n)]
+        self._list.addItems(shown)
+        self._list.blockSignals(False)
+        total = len(self._all_names)
+        self._count_label.setText(
+            f"{len(shown)} / {total} shown"
+            if len(shown) != total
+            else f"{total} images"
+        )
 
     def _mask_path(self, image: Path) -> Path:
         rel = image.name
@@ -462,7 +583,8 @@ class DatasetView(QWidget):
             QMessageBox.question(
                 self,
                 "Sort ALL captions",
-                f"Reorder tags in all {n} captions in:\n{self._dir}\n\n"
+                f"Reorder tags in all {n} shown caption(s) in:\n{self._dir}\n"
+                "(filter the list first to sort only a subset.)\n\n"
                 "The .txt files are overwritten in place. Continue?",
             )
             != QMessageBox.StandardButton.Yes
@@ -498,6 +620,7 @@ class DatasetView(QWidget):
                 except OSError:
                     pass
         prog.setValue(n)
+        self._cap_cache.clear()  # captions changed on disk → drop stale filter cache
         # Refresh the open caption (it may have just been rewritten on disk).
         if self._current is not None:
             cur = self._current.with_suffix(".txt")
@@ -515,8 +638,49 @@ class DatasetView(QWidget):
             self._current.with_suffix(".txt").write_text(
                 self._caption.toPlainText().strip() + "\n", encoding="utf-8"
             )
+            self._cap_cache.pop(self._current.name, None)  # invalidate filter cache
         except OSError as exc:
             QMessageBox.warning(self, "Save caption", str(exc))
+
+    # ----- safe delete (image + caption + mask together) ------------------ #
+    def _delete_image(self, img: Path) -> int:
+        """Delete the image and its .txt + mask. Returns the number of files removed."""
+        removed = 0
+        for p in (img, img.with_suffix(".txt"), self._mask_path(img)):
+            try:
+                if p.exists():
+                    p.unlink()
+                    removed += 1
+            except OSError:
+                pass
+        for cache in (self._cap_cache, self._size_cache):
+            cache.pop(img.name, None)
+        if img.name in self._all_names:
+            self._all_names.remove(img.name)
+        return removed
+
+    def _delete_selected(self) -> None:
+        item = self._list.currentItem()
+        if item is None or self._dir is None:
+            return
+        img = self._dir / item.text()
+        extras = [
+            p.name
+            for p in (img.with_suffix(".txt"), self._mask_path(img))
+            if p.exists()
+        ]
+        tail = (" + " + " + ".join(extras)) if extras else ""
+        if (
+            QMessageBox.question(self, "Delete image", f"Delete {img.name}{tail}?")
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        self._delete_image(img)
+        if self._current == img:
+            self._current = None
+            self._view.set_image(None)
+            self._caption.setPlainText("")
+        self._apply_filter()
 
     # ----- dataset validation: near-duplicate detection ------------------- #
     @staticmethod
@@ -578,7 +742,35 @@ class DatasetView(QWidget):
             top.setExpanded(True)
         tree.itemDoubleClicked.connect(lambda it, _c: self._goto_image(it))
         lv.addWidget(tree, 1)
+        if groups:
+            b_resolve = QPushButton("Keep highest-res, delete the rest (+caption+mask)")
+            b_resolve.clicked.connect(lambda: self._resolve_dupes(groups, dlg))
+            lv.addWidget(b_resolve)
         dlg.exec()
+
+    def _resolve_dupes(self, groups: list[list[str]], dlg: QDialog) -> None:
+        """Keep the highest-resolution image in each group, safely delete the others."""
+        losers = [
+            n for g in groups for n in g if n != max(g, key=lambda x: self._pixels(x))
+        ]
+        if not losers:
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Resolve duplicates",
+                f"Delete {len(losers)} lower-res duplicate(s) across {len(groups)} "
+                "group(s), keeping the highest-res of each (image + caption + mask)?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        for name in losers:
+            if self._dir is not None:
+                self._delete_image(self._dir / name)
+        dlg.accept()
+        self._apply_filter()
+        QMessageBox.information(self, "Resolve duplicates", f"Deleted {len(losers)}.")
 
     def _goto_image(self, item: QTreeWidgetItem) -> None:
         if item.childCount():  # a group header, not a file
@@ -586,3 +778,77 @@ class DatasetView(QWidget):
         matches = self._list.findItems(item.text(0), Qt.MatchExactly)
         if matches:
             self._list.setCurrentItem(matches[0])
+
+    # ----- dataset validation: orphans / captionless / missing masks ------ #
+    def _validate_dataset(self) -> None:
+        if self._dir is None or not self._dir.is_dir():
+            QMessageBox.information(self, "Validate", "Load an image folder first.")
+            return
+        stems = {Path(n).stem for n in self._all_names}
+        captionless, nomask = [], []
+        for n in self._all_names:
+            cap = (self._dir / n).with_suffix(".txt")
+            if not cap.exists() or not self._caption_text(n).strip():
+                captionless.append(n)
+            if not self._mask_path(self._dir / n).exists():
+                nomask.append(n)
+        orphans = sorted(
+            f.name
+            for f in self._dir.iterdir()
+            if f.is_file() and f.suffix.lower() == ".txt" and f.stem not in stems
+        )
+        self._show_validation(captionless, orphans, nomask)
+
+    def _show_validation(
+        self, captionless: list[str], orphans: list[str], nomask: list[str]
+    ) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Dataset validation")
+        dlg.resize(460, 540)
+        lv = QVBoxLayout(dlg)
+        total = len(self._all_names)
+        clean = not (captionless or orphans or nomask)
+        lv.addWidget(
+            QLabel(
+                f"{total} images — no issues found ✓"
+                if clean
+                else f"{total} images. Double-click an image row to open it."
+            )
+        )
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["item", ""])
+        for title, names in (
+            (f"Captionless / empty .txt ({len(captionless)})", captionless),
+            (f"Orphan .txt — no image ({len(orphans)})", orphans),
+            (f"Missing mask ({len(nomask)})", nomask),
+        ):
+            top = QTreeWidgetItem([title, ""])
+            for name in names:
+                top.addChild(QTreeWidgetItem([name, ""]))
+            top.setExpanded(bool(names) and len(names) <= 50)
+            tree.addTopLevelItem(top)
+        tree.itemDoubleClicked.connect(lambda it, _c: self._goto_image(it))
+        lv.addWidget(tree, 1)
+        if orphans:
+            b_orphans = QPushButton(f"Delete {len(orphans)} orphan .txt")
+            b_orphans.clicked.connect(lambda: self._delete_orphans(orphans, dlg))
+            lv.addWidget(b_orphans)
+        dlg.exec()
+
+    def _delete_orphans(self, orphans: list[str], dlg: QDialog) -> None:
+        if (
+            QMessageBox.question(
+                self, "Delete orphans", f"Delete {len(orphans)} caption file(s)?"
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        removed = 0
+        for name in orphans:
+            try:
+                (self._dir / name).unlink()
+                removed += 1
+            except OSError:
+                pass
+        dlg.accept()
+        QMessageBox.information(self, "Delete orphans", f"Deleted {removed}.")
