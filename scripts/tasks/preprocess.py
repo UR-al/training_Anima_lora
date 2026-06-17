@@ -77,6 +77,19 @@ def _target_res_args(extra) -> list[str]:
     return ["--target_res", *(str(e) for e in edges)]
 
 
+def _freefit_args(extra) -> list[str]:
+    """``--freefit`` when the merged config enables it (preprocess.toml ``freefit``).
+
+    Free-fit resizes to the image's native aspect ratio within the tier's token
+    band (crop ≈ 0). CLI ARGS already carrying ``--freefit`` wins (no duplicate).
+    """
+    if "--freefit" in extra:
+        return []
+    from ._common import _path_overrides
+
+    return ["--freefit"] if _path_overrides().get("freefit") else []
+
+
 def _preprocess_path_pattern_args(extra) -> list[str]:
     """``--path_pattern <glob>`` for GUI preprocess subset filtering.
 
@@ -153,6 +166,7 @@ def _resolve_lowres_filter(extra) -> tuple[list[str], list[str]]:
 def cmd_preprocess_resize(extra):
     mp_args, extra = _resolve_lowres_filter(extra)
     tr_args = _target_res_args(extra)
+    ff_args = _freefit_args(extra)
     pp_args = _preprocess_path_pattern_args(extra)
     run(
         [
@@ -166,6 +180,7 @@ def cmd_preprocess_resize(extra):
             "--recursive",
             *mp_args,
             *tr_args,
+            *ff_args,
             *pp_args,
             *extra,
         ]
@@ -186,6 +201,7 @@ def cmd_preprocess_reconcile(extra):
     tr_args = _target_res_args(extra)
     if not tr_args and "--target_res" not in extra:
         tr_args = ["--target_res", "1024"]
+    ff_args = _freefit_args(extra)  # must match how resize built the caches
     run(
         [
             PY,
@@ -199,6 +215,7 @@ def cmd_preprocess_reconcile(extra):
             "--mask-dir",
             _path("mask_dir", "post_image_dataset/masks"),
             *tr_args,
+            *ff_args,
             *extra,
         ]
     )
@@ -469,14 +486,24 @@ def cmd_preprocess_multiscale(extra):
     )
     shuffle = os.environ.get("CAPTION_SHUFFLE_VARIANTS", "4")
     tagdrop = os.environ.get("CAPTION_TAG_DROPOUT_RATE", "0.1")
-    do_mask = os.environ.get("MULTISCALE_MASK", "").strip() not in ("", "0", "false", "no")
+    do_mask = os.environ.get("MULTISCALE_MASK", "").strip() not in (
+        "",
+        "0",
+        "false",
+        "no",
+    )
     # Skip (anima equivalent of kohya skip_image_resolution): a tier only takes
     # source images at least this big — so small images aren't upscaled into a high
     # tier. Per-tier skip RESOLUTION (edge px) comes from MULTISCALE_SKIP
     # ("512:0,1024:512,1536:512" → tier:skip_edge); min_pixels = skip_edge². When a
     # tier isn't listed: MULTISCALE_NO_SKIP=1 → 0 (allow upscaling), else the
     # auto default = the next-lower tier's edge (1536→1024, 1024→512, 512→0).
-    no_skip = os.environ.get("MULTISCALE_NO_SKIP", "").strip() not in ("", "0", "false", "no")
+    no_skip = os.environ.get("MULTISCALE_NO_SKIP", "").strip() not in (
+        "",
+        "0",
+        "false",
+        "no",
+    )
     skip_map: dict[int, int] = {}
     for part in os.environ.get("MULTISCALE_SKIP", "").split(","):
         if ":" in part:
@@ -504,25 +531,53 @@ def cmd_preprocess_multiscale(extra):
         )
         run(
             [
-                PY, "tools/resize_images.py",
-                "--src", src, "--dst", rdst,
-                "--target_res", t, "--min_pixels", min_px, "--recursive",
+                PY,
+                "tools/resize_images.py",
+                "--src",
+                src,
+                "--dst",
+                rdst,
+                "--target_res",
+                t,
+                "--min_pixels",
+                min_px,
+                "--recursive",
             ]
         )
         run(
             [
-                PY, "tools/cache_latents.py",
-                "--dir", rdst, "--cache_dir", cdir,
-                "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
+                PY,
+                "tools/cache_latents.py",
+                "--dir",
+                rdst,
+                "--cache_dir",
+                cdir,
+                "--vae",
+                vae,
+                "--batch_size",
+                "4",
+                "--chunk_size",
+                "64",
+                "--recursive",
             ]
         )
         run(
             [
-                PY, "tools/cache_text_embeddings.py",
-                "--dir", src, "--cache_dir", cdir,
-                "--qwen3", qwen3, "--dit", dit,
-                "--caption_shuffle_variants", shuffle,
-                "--caption_tag_dropout_rate", tagdrop, "--recursive",
+                PY,
+                "tools/cache_text_embeddings.py",
+                "--dir",
+                src,
+                "--cache_dir",
+                cdir,
+                "--qwen3",
+                qwen3,
+                "--dit",
+                dit,
+                "--caption_shuffle_variants",
+                shuffle,
+                "--caption_tag_dropout_rate",
+                tagdrop,
+                "--recursive",
             ]
         )
         if do_mask:
@@ -567,25 +622,39 @@ def cmd_preprocess_manifest(extra):
     # each subset's cache dir so the chained train job's repa_pe_features resolve.
     repa_encoder = None
     if str(spec.get("use_repa", "")).strip().lower() in ("1", "true", "yes"):
-        repa_encoder = str(spec.get("repa_encoder") or "pe_spatial").strip() or "pe_spatial"
+        repa_encoder = (
+            str(spec.get("repa_encoder") or "pe_spatial").strip() or "pe_spatial"
+        )
     entries = spec.get("entries") or []
     for i, e in enumerate(entries):
         tr = str(e.get("target_res", "")).split()
-        print(f"\n=== manifest entry {i + 1}/{len(entries)}: {e['src']} → {e['resized']} ===")
+        print(
+            f"\n=== manifest entry {i + 1}/{len(entries)}: {e['src']} → {e['resized']} ==="
+        )
         # random_crop bakes a random window into the resized PNG (LoRA_Easy parity).
         # NOT forced --overwrite: the baked crop stays stable across re-runs (so it
         # matches the already-cached latents) — clear the cache dir to re-roll.
         rc_args = (
-            ["--random_crop", "--random_crop_padding_percent",
-             str(e.get("random_crop_padding_percent", 0.05))]
-            if e.get("random_crop") else []
+            [
+                "--random_crop",
+                "--random_crop_padding_percent",
+                str(e.get("random_crop_padding_percent", 0.05)),
+            ]
+            if e.get("random_crop")
+            else []
         )
         run(
             [
-                PY, "tools/resize_images.py",
-                "--src", e["src"], "--dst", e["resized"],
+                PY,
+                "tools/resize_images.py",
+                "--src",
+                e["src"],
+                "--dst",
+                e["resized"],
                 *(["--target_res", *tr] if tr else []),
-                "--min_pixels", str(e.get("min_pixels", "0")), "--recursive",
+                "--min_pixels",
+                str(e.get("min_pixels", "0")),
+                "--recursive",
                 *rc_args,
             ]
         )
@@ -597,27 +666,53 @@ def cmd_preprocess_manifest(extra):
         )
         run(
             [
-                PY, "tools/cache_latents.py",
-                "--dir", e["resized"], "--cache_dir", e["cache"],
-                "--vae", vae, "--batch_size", "4", "--chunk_size", "64", "--recursive",
+                PY,
+                "tools/cache_latents.py",
+                "--dir",
+                e["resized"],
+                "--cache_dir",
+                e["cache"],
+                "--vae",
+                vae,
+                "--batch_size",
+                "4",
+                "--chunk_size",
+                "64",
+                "--recursive",
                 *vae2d,
             ]
         )
         run(
             [
-                PY, "tools/cache_text_embeddings.py",
-                "--dir", e["src"], "--cache_dir", e["cache"],
-                "--qwen3", qwen3, "--dit", dit,
-                "--caption_shuffle_variants", shuffle,
-                "--caption_tag_dropout_rate", tagdrop, "--recursive",
+                PY,
+                "tools/cache_text_embeddings.py",
+                "--dir",
+                e["src"],
+                "--cache_dir",
+                e["cache"],
+                "--qwen3",
+                qwen3,
+                "--dit",
+                dit,
+                "--caption_shuffle_variants",
+                shuffle,
+                "--caption_tag_dropout_rate",
+                tagdrop,
+                "--recursive",
             ]
         )
         if repa_encoder is not None:
             run(
                 [
-                    PY, "tools/cache_pe_encoder.py",
-                    "--dir", e["resized"], "--cache_dir", e["cache"],
-                    "--encoder", repa_encoder, "--recursive",
+                    PY,
+                    "tools/cache_pe_encoder.py",
+                    "--dir",
+                    e["resized"],
+                    "--cache_dir",
+                    e["cache"],
+                    "--encoder",
+                    repa_encoder,
+                    "--recursive",
                 ]
             )
         if e.get("mask"):

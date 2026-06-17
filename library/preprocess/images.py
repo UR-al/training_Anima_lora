@@ -21,6 +21,8 @@ from library.datasets.buckets import (
     BucketManager,
     buckets_for_edges,
     choose_edge,
+    freefit_band_for_edge,
+    freefit_bucket,
 )
 from library.preprocess._dataset import PreprocessStats, walk_images
 from library.preprocess._progress import ProgressFn
@@ -84,8 +86,11 @@ def process_image(
     """
     # 6th element (target_res) is optional so pre-multiscale 5-tuple callers
     # still work.
+    # 6th/7th bucket_args (target_res, freefit) are optional so pre-multiscale
+    # 5-tuple callers still work.
     max_reso, min_size, max_size, reso_steps, use_constant, *rest = bucket_args
     target_res = rest[0] if rest else None
+    freefit = rest[1] if len(rest) > 1 else False
     bucket_mgr = BucketManager(
         max_reso=max_reso,
         min_size=min_size,
@@ -96,23 +101,34 @@ def process_image(
     src_img = Image.open(image_path)
     w, h = src_img.size  # header-only read; no pixel decode yet
 
-    if use_constant:
-        # Pick the tier that resizes this image the least (nearest bucket by
-        # cover-scale), then the nearest-aspect bucket within it. target_res is
-        # absent when no preprocess.toml / config value supplies it (or it's a
-        # bare [1024], which tasks.py strips); default to the canonical 1024
-        # tier rather than the full multi-tier catalog. NOT defaulting here lets
-        # make_buckets fall back to all_constant_token_buckets() (every tier),
-        # whose aspect-only select_bucket happily UPSCALES a 0.7MP portrait into
-        # a 1536-tier 1024x2160 bucket — the multi-tier resize regression.
+    if use_constant and freefit:
+        # Free-fit: keep the image's NATIVE aspect ratio. Pick the tier (token
+        # band) that resizes it the least, then solve for a custom (W,H) filling
+        # that band at the native aspect — crop ≈ 0 (sub-patch residual) instead
+        # of snapping/cropping to a discrete bucket. Token count stays in-band so
+        # the dynamic-seq compile graph (auto-enabled for freefit) still covers it.
         tier = target_res or list(DEFAULT_TARGET_RES)
         edge = choose_edge(w, h, tier)
-        bucket_mgr.set_predefined_resos(buckets_for_edges([edge]))
+        bw, bh = freefit_bucket(w, h, freefit_band_for_edge(edge))
+        bucket_reso = (bw, bh)
     else:
-        bucket_mgr.make_buckets(constant_token_buckets=False)
-
-    bucket_reso, _, _ = bucket_mgr.select_bucket(w, h)
-    bw, bh = bucket_reso
+        if use_constant:
+            # Pick the tier that resizes this image the least (nearest bucket by
+            # cover-scale), then the nearest-aspect bucket within it. target_res
+            # is absent when no preprocess.toml / config value supplies it (or
+            # it's a bare [1024], which tasks.py strips); default to the canonical
+            # 1024 tier rather than the full multi-tier catalog. NOT defaulting
+            # here lets make_buckets fall back to all_constant_token_buckets()
+            # (every tier), whose aspect-only select_bucket happily UPSCALES a
+            # 0.7MP portrait into a 1536-tier 1024x2160 bucket — the multi-tier
+            # resize regression.
+            tier = target_res or list(DEFAULT_TARGET_RES)
+            edge = choose_edge(w, h, tier)
+            bucket_mgr.set_predefined_resos(buckets_for_edges([edge]))
+        else:
+            bucket_mgr.make_buckets(constant_token_buckets=False)
+        bucket_reso, _, _ = bucket_mgr.select_bucket(w, h)
+        bw, bh = bucket_reso
 
     target_dir = out_dir / rel_dir if rel_dir else out_dir
     out_path = target_dir / f"{image_path.stem}.png"
@@ -184,6 +200,7 @@ def resize_to_buckets(
     bucket_reso_steps: int = 64,
     constant_token_buckets: bool = True,
     target_res: list[int] | None = None,
+    freefit: bool = False,
     workers: int = 4,
     min_pixels: int = 500_000,
     copy_captions: bool = True,
@@ -215,6 +232,7 @@ def resize_to_buckets(
         bucket_reso_steps,
         constant_token_buckets,
         target_res,
+        freefit,
     )
 
     # walk_images enforces per-subfolder stem uniqueness (same-folder stem
@@ -255,6 +273,8 @@ def resize_to_buckets(
                 if target_res
                 else "constant-token"
             )
+            if freefit:
+                mode = f"free-fit native-aspect, {mode}"
         print(f"Resizing {len(image_files)} images to {mode} buckets")
 
     def _rel_for(p: Path) -> str:

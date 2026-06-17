@@ -342,6 +342,16 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         ),
     )
     parser.add_argument(
+        "--freefit",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Free-fit preprocessing (native-aspect resize into each tier's token "
+        "band, crop ≈ 0). Dual-use like target_res: seeded from preprocess.toml so "
+        "training auto-enables compile_dynamic_seq — the cached latents carry a "
+        "token band, not just the 2 family counts. Inert if the caches weren't "
+        "built with free-fit.",
+    )
+    parser.add_argument(
         "--dynamo_backend",
         type=str,
         default="inductor",

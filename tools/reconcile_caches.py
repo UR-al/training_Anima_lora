@@ -43,6 +43,12 @@ def main() -> None:
         help=f"Active tiers (allowed: {' '.join(map(str, ALLOWED_TARGET_RES))})",
     )
     parser.add_argument(
+        "--freefit",
+        action="store_true",
+        help="Caches were built with free-fit (native-aspect grids). Must match how "
+        "they were built, else every cache is reported stale.",
+    )
+    parser.add_argument(
         "--delete", action="store_true", help="Actually remove stale caches"
     )
     args = parser.parse_args()
@@ -60,6 +66,7 @@ def main() -> None:
         Path(args.cache_dir),
         Path(args.mask_dir),
         args.target_res,
+        freefit=args.freefit,
         delete=args.delete,
     )
 

@@ -29,7 +29,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from library.datasets.buckets import BucketManager, buckets_for_edges, choose_edge
+from library.datasets.buckets import (
+    BucketManager,
+    buckets_for_edges,
+    choose_edge,
+    freefit_band_for_edge,
+    freefit_bucket,
+)
 
 NPZ_RE = re.compile(r"^(?P<stem>.+)_(?P<w>\d{4})x(?P<h>\d{4})_anima\.npz$")
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
@@ -58,9 +64,15 @@ class StaleCaches:
         return [*self.npz, *self.png, *self.pe, *self.mask]
 
 
-def _correct_bucket(w: int, h: int, target_res: list[int]) -> tuple[int, int]:
-    """Mirror ``process_image``: ``choose_edge`` → nearest-aspect bucket in tier."""
+def _correct_bucket(
+    w: int, h: int, target_res: list[int], freefit: bool = False
+) -> tuple[int, int]:
+    """Mirror ``process_image``: ``choose_edge`` → tier, then either the
+    nearest-aspect discrete bucket or (``freefit``) the native-aspect free-fit
+    grid. Must track ``process_image`` exactly or reconcile flags every cache."""
     edge = choose_edge(w, h, target_res)
+    if freefit:
+        return freefit_bucket(w, h, freefit_band_for_edge(edge))
     mgr = BucketManager()
     mgr.set_predefined_resos(buckets_for_edges([edge]))
     reso, _, _ = mgr.select_bucket(w, h)
@@ -99,18 +111,20 @@ def find_stale_caches(
     lora_cache_dir: Path,
     mask_dir: Path,
     target_res: list[int],
+    freefit: bool = False,
 ) -> StaleCaches:
     """Scan caches and return everything inconsistent with ``target_res``.
 
     Iterates native images (not cache files) so every artifact is reconciled
     regardless of which caches happen to exist — an image may be mid-pipeline
-    with only some of its caches built.
+    with only some of its caches built. ``freefit`` must match how the caches were
+    built (native-aspect grid vs snap bucket), else every cache looks stale.
     """
     native = _native_size_index(image_dir)
     stale = StaleCaches()
 
     for (rel, stem), (w, h) in native.items():
-        correct = _correct_bucket(w, h, target_res)
+        correct = _correct_bucket(w, h, target_res, freefit)
         reldir = Path(rel) if rel else Path()
 
         # Latent npzs: a stem may carry several (multi-resolution); any whose
@@ -175,6 +189,7 @@ def reconcile_caches(
     mask_dir: Path,
     target_res: list[int],
     *,
+    freefit: bool = False,
     delete: bool = False,
 ) -> tuple[StaleCaches, Counter]:
     """Find stale caches and (when ``delete``) remove them.
@@ -182,7 +197,7 @@ def reconcile_caches(
     Returns ``(stale, removed)`` — ``removed`` is empty on a dry run.
     """
     stale = find_stale_caches(
-        image_dir, resized_dir, lora_cache_dir, mask_dir, target_res
+        image_dir, resized_dir, lora_cache_dir, mask_dir, target_res, freefit
     )
     removed = delete_stale(stale) if delete else Counter()
     return stale, removed

@@ -57,6 +57,16 @@ def main() -> None:
         help="Disable constant-token buckets",
     )
     parser.add_argument(
+        "--freefit",
+        action="store_true",
+        help=(
+            "Free-fit: resize each image to a custom (W,H) filling its tier's token "
+            "band at the image's NATIVE aspect ratio (crop ≈ 0), instead of "
+            "snapping/cropping to a discrete bucket. Token count stays in-band; "
+            "train with compile_dynamic_seq (auto-enabled when freefit is set)."
+        ),
+    )
+    parser.add_argument(
         "--target_res",
         type=int,
         nargs="+",
@@ -162,6 +172,7 @@ def main() -> None:
         bucket_reso_steps=args.bucket_reso_steps,
         constant_token_buckets=constant_token_buckets,
         target_res=args.target_res,
+        freefit=args.freefit,
         workers=args.workers,
         min_pixels=args.min_pixels,
         copy_captions=not args.no_copy_captions,

@@ -527,6 +527,13 @@ def load_method_preset(
         if "target_res" in pp_raw:
             merged["target_res"] = pp_raw["target_res"]
             provenance["target_res"] = _display_path(preprocess_path)
+        # freefit is dual-use like target_res: preprocess decides the resize, but
+        # training must know to auto-enable compile_dynamic_seq (the cached latents
+        # carry a token band, not the 2 family counts). Seeded lowest priority;
+        # preset/method/CLI still override.
+        if "freefit" in pp_raw:
+            merged["freefit"] = pp_raw["freefit"]
+            provenance["freefit"] = _display_path(preprocess_path)
 
     # preprocess.toml owns target_res; a stale copy in base.toml must not clobber
     # the seed above (preset / method / CLI may still override per run).

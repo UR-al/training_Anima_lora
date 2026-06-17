@@ -1895,7 +1895,12 @@ class AnimaTrainer:
             n_token_families, seq_range = getattr(
                 self, "_compile_token_budget", (None, None)
             )
-            dynamic_seq = bool(getattr(args, "compile_dynamic_seq", False))
+            # Free-fit caches carry a continuous token band (not 2 family counts),
+            # so they REQUIRE a seq-dynamic graph — force it on even if a config
+            # turned compile_dynamic_seq off.
+            dynamic_seq = bool(getattr(args, "compile_dynamic_seq", False)) or bool(
+                getattr(args, "freefit", False)
+            )
             # Isolate the persistent compile caches per compile signature — a
             # cached graph compiled under different seq-range bounds (e.g. an
             # inference run's canonical 4032-floored range) otherwise poisons

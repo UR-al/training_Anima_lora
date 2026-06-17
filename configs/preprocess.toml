@@ -23,6 +23,16 @@ source_image_dir = "image_dataset"
 #   make preprocess ARGS="--target_res 1024 1536"
 target_res = [1024, 896]
 
+# Free-fit (native-aspect resize). When true, each image is resized to a custom
+# (W, H) that fills its chosen tier's token band [lo, hi] at the image's OWN
+# aspect ratio (crop ≈ 0 — sub-patch residual), instead of snapping/cropping to a
+# discrete bucket. The token count stays in-band, so training stays on one
+# dynamic-seq compile graph per tier. Dual-use like target_res: load_method_preset
+# seeds it to the training side, where it auto-enables compile_dynamic_seq. Set
+# false to keep the classic snap-to-bucket (small center crop) behaviour.
+#   make preprocess ARGS="--freefit"      # force on for one run
+freefit = true
+
 # Preprocess input filter. When true, scripts/tasks/preprocess.py forwards
 # `--min_pixels = min_pixels` to both preprocess/resize_images.py and
 # preprocess/cache_text_embeddings.py so under-sized source images never

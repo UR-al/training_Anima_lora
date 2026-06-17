@@ -295,6 +295,65 @@ def choose_edge(width: int, height: int, target_res) -> int:
     return best_edge
 
 
+def freefit_band_for_edge(edge: int) -> tuple[int, int]:
+    """Token-count band ``(lo, hi)`` for a single tier — the free-fit search range.
+
+    Equals the ``(min, max)`` token count of the tier's discrete buckets (1024 →
+    ``(4032, 4200)``). Free-fit lands the patch-grid token count anywhere in this
+    closed interval, so the whole band collapses to one ``compile_dynamic_seq``
+    graph at train time. A single-family tier (e.g. 768 → ``(2160, 2160)``) has no
+    band freedom and free-fit just reproduces that family's divisor grid.
+    """
+    return token_count_range((edge,))
+
+
+def freefit_bucket(
+    width: int,
+    height: int,
+    band: tuple[int, int],
+    patch: int = 16,
+    rope_cap: int = 256,
+) -> tuple[int, int]:
+    """Native-aspect resize target whose patch grid fills the token ``band``.
+
+    Returns pixel ``(W, H)`` (both multiples of ``patch``) whose patch grid
+    ``(W//patch)*(H//patch)`` lies in ``[lo, hi]`` and whose aspect ratio is as
+    close as possible to the image's, subject to
+    ``max(W//patch, H//patch) <= rope_cap``. Deterministic in its inputs.
+
+    Aspect distortion is sub-patch by construction (the cropped residual on the
+    covering axis is < ``patch`` px), so crop is ~zero. The search is exhaustive
+    over the band — small because the band is narrow and bounded by ``rope_cap``
+    — so the result is the global aspect-error minimum, tie-broken toward the grid
+    that rescales the image the least, then a deterministic shape key.
+
+    No max-aspect clamp: the rope cap is the only bound on extreme ratios (a
+    panorama just lands at the widest in-band grid the cap allows).
+    """
+    lo, hi = int(band[0]), int(band[1])
+    if lo <= 0 or hi < lo:
+        raise ValueError(f"invalid free-fit band {band}")
+    a = width / height
+    best: tuple | None = None
+    hp_max = min(rope_cap, hi)
+    for hp in range(1, hp_max + 1):
+        wp_lo = max(1, -(-lo // hp))  # ceil(lo / hp)
+        wp_hi = min(rope_cap, hi // hp)  # floor(hi / hp)
+        for wp in range(wp_lo, wp_hi + 1):
+            aspect_err = abs(wp / hp - a)
+            cover_scale = max(wp * patch / width, hp * patch / height)
+            # aspect first, then least rescale, then a deterministic shape key.
+            key = (aspect_err, abs(math.log(cover_scale)), hp, wp)
+            if best is None or key < best:
+                best = key
+    if best is None:
+        raise ValueError(
+            f"free-fit band {band} admits no grid under rope_cap={rope_cap}"
+        )
+    _, _, hp, wp = best
+    return wp * patch, hp * patch
+
+
 # DCW v4 calibration aspect-bucket set.
 #
 # Top 5 (H, W) resolutions by frequency in post_image_dataset/lora/ (recounted
