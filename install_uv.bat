@@ -37,10 +37,16 @@ if errorlevel 1 (
 )
 
 echo.
+echo Installing nvcc for torch.compile ^(nvidia-cuda-nvcc^) - side-loaded so it does
+echo NOT perturb the locked CUDA stack. Best-effort; eager fallback covers a miss.
+uv pip install nvidia-cuda-nvcc
+
+echo.
 echo [OK] Installed. Start the GUI with  run_gui.bat   ^(or: uv run python tasks.py native-gui^)
 echo.
-echo NOTE: torch.compile / Triton needs the CUDA 13.2 toolkit ^(nvcc^). If training
-echo       errors during compile, install it from:
+echo NOTE: nvcc (for torch.compile) is installed for you via the nvidia-cuda-nvcc
+echo       wheel - no manual CUDA Toolkit needed. If nvcc is somehow missing,
+echo       training auto-falls-back to eager; a full toolkit is at:
 echo       https://developer.nvidia.com/cuda-13-2-0-download-archive
 echo.
 pause

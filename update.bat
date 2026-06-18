@@ -20,13 +20,18 @@ where uv >nul 2>nul
 if errorlevel 1 (
   if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -m pip install -e ".[gui]" --extra-index-url https://download.pytorch.org/whl/cu132 --pre
+    ".venv\Scripts\python.exe" -m pip install nvidia-cuda-nvcc
   ) else (
     echo no uv and no .venv - run install_uv.bat or install_pip.bat first.
   )
 ) else (
   REM --extra gui: the native PySide6 GUI is an OPT-IN extra. Plain "uv sync"
   REM UNINSTALLS it, breaking run_gui.bat — always keep the extra here.
-  uv sync --extra gui
+  REM --inexact: keep the side-loaded nvcc (nvidia-cuda-nvcc) — it's NOT in the lock
+  REM (adding it there re-resolves and downgrades the validated CUDA stack), so a
+  REM plain exact sync would wipe it every update.
+  uv sync --extra gui --inexact
+  uv pip install nvidia-cuda-nvcc
 )
 
 echo.

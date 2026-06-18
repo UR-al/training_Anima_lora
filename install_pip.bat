@@ -41,8 +41,13 @@ pip install -e . --no-deps
 if errorlevel 1 ( echo editable install failed. & pause & exit /b 1 )
 
 echo.
+echo Installing nvcc for torch.compile ^(nvidia-cuda-nvcc^) ...
+pip install nvidia-cuda-nvcc
+
+echo.
 echo [OK] Installed (pip). Start the GUI with  run_gui.bat
-echo NOTE: torch.compile needs the CUDA 13.2 toolkit (nvcc):
-echo       https://developer.nvidia.com/cuda-13-2-0-download-archive
+echo NOTE: nvcc (for torch.compile) was just installed (nvidia-cuda-nvcc) - no
+echo       manual CUDA Toolkit. If it's ever missing, training runs eager.
+echo       Full toolkit: https://developer.nvidia.com/cuda-13-2-0-download-archive
 echo.
 pause

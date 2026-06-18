@@ -12,7 +12,10 @@ REM extra is installed (self-heals if a plain `uv sync` ever removed it), then r
 REM in the synced .venv. Only fall back to the bare .venv python when uv isn't there.
 where uv >nul 2>nul
 if not errorlevel 1 (
-  uv run --extra gui python tasks.py native-gui %*
+  REM --no-sync: launch WITHOUT re-syncing to the lock. An exact sync here would
+  REM wipe the side-loaded nvcc (nvidia-cuda-nvcc, not in the lock) on every launch,
+  REM silently disabling torch.compile. install/update already synced the env.
+  uv run --no-sync python tasks.py native-gui %*
 ) else if exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" tasks.py native-gui %*
 ) else (

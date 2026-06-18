@@ -1851,6 +1851,22 @@ class AnimaTrainer:
         # flatten (one block graph per token-count family: 4032/4200) and raises
         # the dynamo cache-size budget itself. Matches the harness order:
         # block-swap → grad-ckpt → compile.
+        # COMPILE NEEDS nvcc. torch's wheels bundle the CUDA runtime + cuDNN but not
+        # the compiler; we ship the pip `nvidia-cuda-nvcc` wheel and point CUDA_HOME at
+        # it (a real system toolkit still wins). If nvcc is genuinely unavailable, fall
+        # back to eager instead of crashing inductor mid-run — the user can install the
+        # CUDA Toolkit (or the wheel) and re-enable compile.
+        if args.torch_compile:
+            from library.runtime.cuda_env import ensure_cuda_home, nvcc_available
+
+            ensure_cuda_home()
+            if not nvcc_available():
+                accelerator.print(
+                    "[compile] no nvcc found (CUDA Toolkit / nvidia-cuda-nvcc wheel "
+                    "missing) — disabling torch.compile, training eager. Install the "
+                    "CUDA 13 toolkit or `pip install nvidia-cuda-nvcc` to re-enable."
+                )
+                args.torch_compile = False
         if args.torch_compile:
             # Cap the AOT min-cut partitioner's saved-for-backward set. The
             # 2026-06-10 custom-autograd removal silently grew it: the old

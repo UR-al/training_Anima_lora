@@ -120,7 +120,7 @@ To get a validation curve, give the run a held-out set: either mark a subset **`
 | System RAM | 16 GB | 32 GB+ |
 | Disk | 60 GB | 200 GB+ |
 
-Python 3.13 + PyTorch 2.12 (cu132) are installed for you. `torch.compile` needs the CUDA 13.2 toolkit (nvcc).
+Python 3.13 + PyTorch 2.12 (cu132) are installed for you, **including `nvcc`** for `torch.compile` (the `nvidia-cuda-nvcc` wheel — no manual CUDA Toolkit step; `library/runtime/cuda_env.py` points `CUDA_HOME` at it, and training auto-falls-back to eager if it's ever missing). You only need an NVIDIA driver.
 
 For a manual / CI pip install, `requirements.txt` mirrors the dependencies (cu132 torch index + `--pre` baked in): `pip install -r requirements.txt && pip install -e . --no-deps`. (`pyproject.toml` + `uv.lock` remain the uv source of truth.) Fetch the model weights (Anima DiT + Qwen3 text encoder + VAE) into `models/` — they are **not** shipped here (gitignored) — or point the GUI's **Model paths** at existing forge-neo / ComfyUI files.
 
