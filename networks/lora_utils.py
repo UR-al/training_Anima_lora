@@ -19,6 +19,48 @@ import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+_ADALN_BRANCHES = "self_attn|cross_attn|mlp"
+_ADALN_RUNTIME_KEY_RE = re.compile(
+    rf"^(lora_unet_blocks_\d+_)adaln_up_({_ADALN_BRANCHES})(\..+)$"
+)
+_ADALN_COMFY_KEY_RE = re.compile(
+    rf"^(lora_unet_blocks_\d+_)adaln_modulation_({_ADALN_BRANCHES})_2(\..+)$"
+)
+
+
+def relayout_adaln_runtime_to_comfy(
+    weights_sd: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """Rename runtime AdaLN adapter keys to the ComfyUI module layout."""
+    return {
+        (
+            f"{match.group(1)}adaln_modulation_{match.group(2)}_2{match.group(3)}"
+            if (match := _ADALN_RUNTIME_KEY_RE.match(key))
+            else key
+        ): value
+        for key, value in weights_sd.items()
+    }
+
+
+def relayout_adaln_comfy_to_runtime(
+    weights_sd: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """Rename ComfyUI AdaLN adapter keys to the in-repo runtime layout."""
+    return {
+        (
+            f"{match.group(1)}adaln_up_{match.group(2)}{match.group(3)}"
+            if (match := _ADALN_COMFY_KEY_RE.match(key))
+            else key
+        ): value
+        for key, value in weights_sd.items()
+    }
+
+
+def has_comfy_adaln_keys(weights_sd: Dict[str, torch.Tensor]) -> bool:
+    """Return whether a state dict needs ComfyUI-to-runtime AdaLN relayout."""
+    return any(_ADALN_COMFY_KEY_RE.match(key) for key in weights_sd)
+
+
 def filter_lora_state_dict(
     weights_sd: Dict[str, torch.Tensor],
     include_pattern: Optional[str] = None,

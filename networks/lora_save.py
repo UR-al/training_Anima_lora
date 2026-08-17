@@ -132,6 +132,24 @@ def _convert_legacy_ortho_to_lora(
             state_dict[f"{prefix}.alpha"] = alpha
 
 
+def _relayout_adaln_to_comfy(
+    state_dict: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]]
+) -> Optional[Dict[str, str]]:
+    """Ship AdaLN adapters with the module names understood by ComfyUI."""
+    from networks.lora_utils import relayout_adaln_runtime_to_comfy
+
+    relaid = relayout_adaln_runtime_to_comfy(state_dict)
+    if relaid.keys() == state_dict.keys():
+        return metadata
+
+    state_dict.clear()
+    state_dict.update(relaid)
+    metadata = {} if metadata is None else metadata
+    metadata["ss_adaln_layout"] = "comfy"
+    logger.info("Relaid AdaLN adapter modules to the ComfyUI checkpoint layout.")
+    return metadata
+
+
 # ---------------------------------------------------------------------------
 # Back-compat shim: tests/test_global_router.py imports this name directly
 # to exercise the StackedExperts MoE writer in isolation.
@@ -227,6 +245,7 @@ def save_network_weights(
 
     # Standard (lora / ortho) write path.
     defuse_and_bake_standard(state_dict)
+    metadata = _relayout_adaln_to_comfy(state_dict, metadata)
 
     if dtype is not None:
         for key in list(state_dict.keys()):

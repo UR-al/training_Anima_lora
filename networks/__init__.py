@@ -87,6 +87,12 @@ NETWORK_KWARGS: frozenset[str] = frozenset(
         # Regex-driven per-module rank / lr overrides
         "network_reg_dims",
         "network_reg_lrs",
+        "network_reg_alphas",
+        # Per-block AdaLN modulation adapters. Rank/alpha may be overridden;
+        # alpha otherwise follows the network's scale by the square-root law.
+        "train_adaln",
+        "adaln_rank",
+        "adaln_alpha",
         # HydraLoRA router (+ σ-router MLP) LR multiplier on top of unet_lr / reg_lr
         "network_router_lr_scale",
         # LoRA+

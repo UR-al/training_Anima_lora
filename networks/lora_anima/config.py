@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Mapping, Optional, Type, Union
 
@@ -217,6 +218,9 @@ class LoRANetworkCfg:
     # per-module rank / lr regex overrides
     reg_dims: Optional[Dict[str, int]] = None
     reg_lrs: Optional[Dict[str, float]] = None
+    # Per-pattern alpha override. Matches module paths with re.fullmatch,
+    # independently of reg_dims.
+    reg_alphas: Optional[Dict[str, float]] = None
 
     # T-LoRA
     use_timestep_mask: bool = False
@@ -444,6 +448,17 @@ class LoRANetworkCfg:
         exclude_patterns = _as_str_list(kwargs.get("exclude_patterns")) or []
         exclude_patterns.append(_DEFAULT_EXCLUDE)
         include_patterns = _as_str_list(kwargs.get("include_patterns"))
+
+        # AdaLN's three per-block up projections are excluded by default. This
+        # convenience surface rescues them without turning include_patterns
+        # into a whitelist, and optionally gives them a smaller rank.
+        train_adaln = _as_bool(kwargs.get("train_adaln"))
+        adaln_rank = int(kwargs.get("adaln_rank", 0) or 0)
+        adaln_alpha = float(kwargs.get("adaln_alpha", 0.0) or 0.0)
+        if adaln_rank > 0 and not train_adaln:
+            raise ValueError("adaln_rank > 0 requires train_adaln = true")
+        if adaln_alpha > 0 and not train_adaln:
+            raise ValueError("adaln_alpha > 0 requires train_adaln = true")
 
         layer_start = kwargs.get("layer_start")
         layer_start = int(layer_start) if layer_start is not None else None
@@ -702,6 +717,22 @@ class LoRANetworkCfg:
         reg_dims = _parse_kv_pairs(reg_dims_str, is_int=True) if reg_dims_str else None
         reg_lrs_str = kwargs.get("network_reg_lrs")
         reg_lrs = _parse_kv_pairs(reg_lrs_str, is_int=False) if reg_lrs_str else None
+        reg_alphas_str = kwargs.get("network_reg_alphas")
+        reg_alphas = (
+            _parse_kv_pairs(reg_alphas_str, is_int=False) if reg_alphas_str else None
+        )
+
+        if train_adaln:
+            adaln_pattern = ".*adaln_up_.*"
+            include_patterns = (include_patterns or []) + [adaln_pattern]
+            if adaln_rank > 0:
+                reg_dims = {**(reg_dims or {}), adaln_pattern: adaln_rank}
+            if adaln_alpha <= 0:
+                resolved_rank = adaln_rank if adaln_rank > 0 else network_dim
+                adaln_alpha = network_alpha * math.sqrt(
+                    resolved_rank / max(network_dim, 1)
+                )
+            reg_alphas = {**(reg_alphas or {}), adaln_pattern: adaln_alpha}
 
         verbose = _as_bool(kwargs.get("verbose"))
 
@@ -719,6 +750,7 @@ class LoRANetworkCfg:
             module_dropout=module_dropout,
             reg_dims=reg_dims,
             reg_lrs=reg_lrs,
+            reg_alphas=reg_alphas,
             use_timestep_mask=use_timestep_mask,
             min_rank=min_rank,
             alpha_rank_scale=alpha_rank_scale,

@@ -318,6 +318,17 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
                                             else lora_dim
                                         )
                                         alpha_val = alpha
+                                if cfg.reg_alphas is not None and dim:
+                                    for reg, override_alpha in cfg.reg_alphas.items():
+                                        if re.fullmatch(reg, original_name):
+                                            alpha_val = override_alpha
+                                            logger.debug(
+                                                "Module %s matched alpha regex %r -> %s",
+                                                original_name,
+                                                reg,
+                                                override_alpha,
+                                            )
+                                            break
 
                             if dim is None or dim == 0:
                                 if is_linear or is_conv2d_1x1:
@@ -1505,6 +1516,16 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
             weights_sd = load_file(file)
         else:
             weights_sd = torch.load(file, map_location="cpu")
+
+        # Checkpoints ship AdaLN keys in ComfyUI's module layout. Convert them
+        # back before the runtime fuses/loads adapter modules.
+        from networks.lora_utils import (
+            has_comfy_adaln_keys,
+            relayout_adaln_comfy_to_runtime,
+        )
+
+        if has_comfy_adaln_keys(weights_sd):
+            weights_sd = relayout_adaln_comfy_to_runtime(weights_sd)
 
         # Stack per-expert hydra ups into fused lora_up_weight (training form).
         # Also stacks per-expert ``.lora_downs.{i}.weight`` for the

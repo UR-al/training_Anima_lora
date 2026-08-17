@@ -344,6 +344,17 @@ def create_network_from_weights(
     # Strip torch.compile '_orig_mod_' from old checkpoint keys
     weights_sd = LoRANetwork._strip_orig_mod_keys(weights_sd)
 
+    from networks.lora_utils import (
+        has_comfy_adaln_keys,
+        relayout_adaln_comfy_to_runtime,
+    )
+
+    if has_comfy_adaln_keys(weights_sd):
+        weights_sd = relayout_adaln_comfy_to_runtime(weights_sd)
+        logger.info(
+            "Renamed ComfyUI AdaLN adapter keys to runtime module names for loading."
+        )
+
     # MoE files: stack per-expert ups (and downs, for StackedExperts) and
     # fuse split q/k/v first so the fused training-runtime keys are what
     # the regular attention refuser and the downstream detection loop see.

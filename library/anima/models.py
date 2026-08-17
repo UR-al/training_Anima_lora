@@ -1673,6 +1673,23 @@ class Anima(nn.Module):
         # without pinning the canonical .default.
         limit = pin_dynamo_limit("recompile_limit", 2 * n + 8)
 
+        # Inductor's mixed-order reduction adds a guard at the 4096-token
+        # boundary. Multi-scale dynamic-seq ranges straddle that boundary, so
+        # AdaLN gradient reductions can otherwise fail on the first backward
+        # compile with ConstraintViolationError. Pin the entry default because
+        # a plain config assignment does not survive AOTAutograd's context.
+        if dynamic_seq:
+            import torch._inductor.config as inductor_config
+
+            if inductor_config.triton.mix_order_reduction:
+                from library.runtime.dynamo import pin_inductor_flag
+
+                pin_inductor_flag("triton.mix_order_reduction", False)
+                print(
+                    "Anima: inductor mix_order_reduction disabled and pinned "
+                    "for dynamic sequence compilation"
+                )
+
         # dynamic_seq does NOT use torch.compile(dynamic=True). Compile static and
         # let _run_blocks mark only the seq axis dynamic (see docstring). Derive the
         # (min, max) seq bound for that mark: passed-in seq_range (multi-tier) or the

@@ -1,4 +1,4 @@
-"""Dynamo compile-budget helpers.
+"""Dynamo and inductor compile-configuration helpers.
 
 The one knob worth a shared home: raising a ``torch._dynamo`` recompile budget
 so it survives into the *backward* compile context. A plain
@@ -53,3 +53,29 @@ def pin_dynamo_limit(name: str, value: int) -> int:
             "in the backward-compile context and spill to eager"
         )
     return target
+
+
+def pin_inductor_flag(name: str, value: object) -> None:
+    """Pin an inductor setting across forward and backward compile contexts.
+
+    Torch config assignments use a context-local override. AOTAutograd can
+    schedule backward compilation in another context, where the setting falls
+    back to its entry default. Set both so a correctness-sensitive flag cannot
+    silently revert during the first gradient-bearing compile.
+    """
+    import torch._inductor.config as cfg_mod
+
+    obj = cfg_mod
+    *parents, leaf = name.split(".")
+    for parent in parents:
+        obj = getattr(obj, parent)
+    setattr(obj, leaf, value)
+    try:
+        cfg_mod._config[name].default = value
+    except Exception as exc:  # noqa: BLE001 - torch's config API is internal
+        logger.warning(
+            "could not pin inductor %s default (%s); it may revert in the "
+            "backward compile context",
+            name,
+            exc,
+        )

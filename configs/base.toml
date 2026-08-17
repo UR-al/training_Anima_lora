@@ -77,6 +77,13 @@ use_cmmd = false
 channel_scaling_alpha = 0.5
 gradient_accumulation_steps=1
 
+# Train the three per-block AdaLN up projections as well as attention/MLP.
+# Their rank defaults to 16; alpha is derived from network rank/alpha so the
+# effective scale remains consistent. Set train_adaln=false to retain the old
+# target set.
+train_adaln = true
+adaln_rank = 16
+
 [general]
 [[datasets]]
 batch_size = 1
