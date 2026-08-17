@@ -529,6 +529,14 @@ _ARG_CLUSTERS = [
             "t_max",
         ],
     ),
+    (
+        "Sigma low-resolution",
+        ["sigma_lowres"],
+    ),
+    (
+        "Reproducibility",
+        ["deterministic", "paired_step_rng"],
+    ),
     ("Noise", ["ip_noise"]),
     ("Validation", ["validation", "validate", "cmmd", "max_validation"]),
     ("Sampling", ["sample"]),
@@ -1548,7 +1556,7 @@ def _build_precached_config(form: dict) -> str | None:
     return str(path)
 
 
-def _dataset_fingerprint(entries) -> str:
+def _dataset_fingerprint(entries, settings: dict | None = None) -> str:
     """A fast signature of an auto-preprocess run: the manifest entries (all
     settings — tiers, min_pixels, random_crop, cache/resized dirs) PLUS a
     stat-only fingerprint of every source image (relpath, size, mtime). No image
@@ -1559,7 +1567,10 @@ def _dataset_fingerprint(entries) -> str:
     import json as _json
 
     exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif")
-    parts = [_json.dumps(entries, sort_keys=True, default=str)]
+    parts = [
+        _json.dumps(entries, sort_keys=True, default=str),
+        _json.dumps(settings or {}, sort_keys=True, default=str),
+    ]
     for src in sorted({e.get("src") for e in entries if e.get("src")}):
         files = []
         try:
@@ -1742,6 +1753,44 @@ def _prepare_auto_preprocess(form: dict) -> dict:
         "caption_tag_dropout_rate": str(form.get("caption_tag_dropout_rate") or "0.1"),
         "entries": entries,
     }
+
+    def _advanced_value(dest: str, default=None):
+        """Read a native-GUI schema value from ``adv`` by dest or CLI flag.
+
+        Native schema widgets intentionally live in ``form['adv']`` so every
+        argparse option shares one command/save path.  Auto-preprocess needs a
+        small subset of those values before the train command is built.
+        """
+        direct = form.get(dest)
+        if direct not in (None, ""):
+            return direct
+        flag = "--" + dest
+        for item in form.get("adv") or []:
+            if item.get("dest") != dest and item.get("flag") != flag:
+                continue
+            if item.get("on", True) is False:
+                continue
+            if item.get("is_bool"):
+                return bool(item.get("value"))
+            value = item.get("value")
+            return default if value in (None, "") else value
+        return default
+
+    # v1.15 sigma-lowres training consumes lower-resolution latent siblings.
+    # When the native GUI enables it, generate the exact route siblings during
+    # the same one-click auto-preprocess chain.  Defaults mirror base.toml so a
+    # user only has to enable the checkbox for the shipped two-route recipe.
+    sigma_enabled = str(_advanced_value("sigma_lowres", False)).strip().lower()
+    if sigma_enabled not in {"", "0", "false", "no", "off", "none"}:
+        routes: list[str] = []
+        for dest, default in (
+            ("sigma_lowres_route", "1024:896"),
+            ("sigma_lowres_route2", "1024:768"),
+        ):
+            value = str(_advanced_value(dest, default) or "").strip()
+            if value and value.lower() not in {"off", "none", "false", "0"}:
+                routes.append(value)
+        manifest["sigma_demote"] = list(dict.fromkeys(routes))
     for mk, fk in (("vae", "vae_path"), ("qwen3", "te_path"), ("dit", "dit_path")):
         v = (form.get(fk) or "").strip()
         if v:
@@ -1774,7 +1823,10 @@ def _prepare_auto_preprocess(form: dict) -> dict:
     mf_path = STORE_DIR / f"manifest_{name}.json"
     mf_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
 
-    sig = _dataset_fingerprint(entries)
+    sig = _dataset_fingerprint(
+        entries,
+        {"sigma_demote": manifest.get("sigma_demote", [])},
+    )
     marker = str(ROOT / base_cache / ".anima_preprocess.json")
     env = {
         "MANIFEST_FILE": str(mf_path),

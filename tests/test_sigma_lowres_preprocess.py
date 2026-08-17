@@ -7,6 +7,7 @@ from PIL import Image
 from library.datasets.buckets import demote_bucket_for, demoted_token_counts
 from library.io.cache_names import demoted_latents_key
 from library.preprocess.latents import cache_demoted_latents, get_latents_npz_path
+from gui import backend
 
 
 class _DummyVAE:
@@ -57,3 +58,43 @@ def test_demoted_latent_is_appended_inside_native_npz(tmp_path: Path) -> None:
         assert "latents_128x126" in cached
         assert key in cached
         assert cached[key].shape == (16, bucket[1] // 8, bucket[0] // 8)
+
+
+def test_native_gui_auto_preprocess_caches_enabled_sigma_routes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "images"
+    source.mkdir()
+    Image.new("RGB", (1024, 1024), "white").save(source / "sample.png")
+    store = tmp_path / "store"
+    datasets = tmp_path / "datasets"
+    monkeypatch.setattr(backend, "ROOT", tmp_path)
+    monkeypatch.setattr(backend, "STORE_DIR", store)
+    monkeypatch.setattr(backend, "DATASET_DIR", datasets)
+
+    form = {
+        "output_name": "sigma-gui",
+        "subsets": [{"image_dir": str(source), "tiers": "1024"}],
+        "target_res": [1024],
+        "adv": [
+            {
+                "flag": "--sigma_lowres",
+                "is_bool": True,
+                "value": True,
+                "on": True,
+            },
+            {"flag": "--sigma_lowres_route", "value": "1024:896", "on": True},
+            {"flag": "--sigma_lowres_route2", "value": "1024:768", "on": True},
+        ],
+    }
+
+    prepared = backend._prepare_auto_preprocess(form)
+    manifest = __import__("json").loads(
+        Path(prepared["extra_env"]["MANIFEST_FILE"]).read_text(encoding="utf-8")
+    )
+    assert manifest["sigma_demote"] == ["1024:896", "1024:768"]
+
+    without_sigma = dict(form)
+    without_sigma["adv"] = []
+    prepared_without = backend._prepare_auto_preprocess(without_sigma)
+    assert prepared_without["_sig"] != prepared["_sig"]

@@ -128,6 +128,9 @@ _KO = {
     "Parameters": "학습 파라미터",
     "Basic": "기본",
     "Advanced": "고급 설정",
+    "Sigma low-resolution": "Sigma 저해상도 학습",
+    "Reproducibility": "재현성",
+    "needs sigma_lowres enabled": "sigma_lowres를 먼저 켜야 합니다",
     "Samples": "샘플",
     "Show": "펼치기",
     "Hide": "접기",
@@ -862,6 +865,24 @@ _GREY_RULES: list[tuple[str, object, str]] = [
         lambda v: v.get("__scope__") != 1,
         "UNet-only scope: TE LR unused",
     ),
+    *[
+        (
+            dest,
+            lambda v: _truthy(v.get("sigma_lowres")),
+            "needs sigma_lowres enabled",
+        )
+        for dest in (
+            "sigma_lowres_route",
+            "sigma_lowres_threshold",
+            "sigma_lowres_threshold_max",
+            "sigma_lowres_yarnsig",
+            "sigma_lowres_route2",
+            "sigma_lowres_threshold2",
+            "sigma_lowres_threshold2_max",
+            "sigma_lowres_span",
+            "sigma_lowres_span2",
+        )
+    ],
 ]
 # Driver dests whose change re-evaluates the rules above + the subset-column greying.
 # (__scope__ is the curated train-scope combo, injected by _apply_greying.)
@@ -877,6 +898,7 @@ _GREY_DRIVERS = [
     "ip_noise_gamma",
     "network_weights",
     "lr_scheduler_type",
+    "sigma_lowres",
 ]
 # Subset table columns greyed by a cache driver (live-encoding-only knobs are inert
 # once the cache is on): (col_key, driver_dest).
@@ -1327,16 +1349,16 @@ class MainWindow(QMainWindow):
         column.setSpacing(10)
 
         intro = QLabel(
-            tr("Configure Anima LoRA training from top to bottom. Advanced and "
-               "optional sections stay folded until needed.")
+            tr(
+                "Configure Anima LoRA training from top to bottom. Advanced and "
+                "optional sections stay folded until needed."
+            )
         )
         intro.setObjectName("pageIntro")
         intro.setWordWrap(True)
         column.addWidget(intro)
 
-        configuration = self._new_section(
-            column, "Configuration", opened=False
-        )
+        configuration = self._new_section(column, "Configuration", opened=False)
         configuration.content.addWidget(self._build_configuration_controls())
 
         source = self._new_section(column, "Source model", opened=True)
@@ -1403,9 +1425,7 @@ class MainWindow(QMainWindow):
         self._add_curated_group(network, "Network", "LyCORIS")
         self._add_schema_groups(
             network,
-            self._take_schema(
-                tabs={"Network"}
-            )
+            self._take_schema(tabs={"Network"})
             + self._take_schema(
                 tabs={"Optimizer"}, clusters={"Per-layer LR", "LLM adapter"}
             ),
@@ -1443,9 +1463,7 @@ class MainWindow(QMainWindow):
             opened=False,
             parent=parameters,
         )
-        self._add_curated_group(
-            loss, "Optimizer", "Loss / timestep / weighting"
-        )
+        self._add_curated_group(loss, "Optimizer", "Loss / timestep / weighting")
         self._add_schema_groups(
             loss,
             self._take_schema(
@@ -1457,6 +1475,21 @@ class MainWindow(QMainWindow):
                     "Cond-diff loss",
                     "Functional loss",
                 },
+            ),
+        )
+
+        sigma_lowres = self._new_section(
+            parameters.content,
+            "Sigma low-resolution",
+            key="Parameters / Sigma low-resolution",
+            opened=False,
+            parent=parameters,
+        )
+        self._add_schema_groups(
+            sigma_lowres,
+            self._take_schema(
+                tabs={"Optimizer", "anima_lora", "Extra"},
+                clusters={"Sigma low-resolution"},
             ),
         )
 
@@ -1472,9 +1505,7 @@ class MainWindow(QMainWindow):
             self._take_schema(tabs={"Optimizer", "anima_lora"}),
         )
 
-        samples = self._new_section(
-            column, "Samples", opened=False, enableable=True
-        )
+        samples = self._new_section(column, "Samples", opened=False, enableable=True)
         self._add_curated_group(samples, "Folder", "Sampling")
         self._add_schema_groups(
             samples,
@@ -1497,16 +1528,12 @@ class MainWindow(QMainWindow):
 
         monitoring = self._new_section(column, "Monitoring", opened=False)
         self._add_curated_group(monitoring, "Monitoring", "Web monitor")
-        self._add_schema_groups(
-            monitoring, self._take_schema(tabs={"Monitoring"})
-        )
+        self._add_schema_groups(monitoring, self._take_schema(tabs={"Monitoring"}))
         self._with_section(monitoring, "Monitoring")
         monitoring.content.addWidget(self._build_watch_party_box())
 
         experimental = self._new_section(column, "Experimental", opened=False)
-        self._add_schema_groups(
-            experimental, self._take_schema(tabs={"Experimental"})
-        )
+        self._add_schema_groups(experimental, self._take_schema(tabs={"Experimental"}))
 
         extra = self._new_section(column, "Extra", opened=False)
         self._add_schema_groups(extra, self._take_schema())
@@ -1529,9 +1556,7 @@ class MainWindow(QMainWindow):
         enableable: bool = False,
         parent: _AccordionSection | None = None,
     ) -> _AccordionSection:
-        section = _AccordionSection(
-            title, opened=opened, enableable=enableable
-        )
+        section = _AccordionSection(title, opened=opened, enableable=enableable)
         section.parent_accordion = parent
         layout.addWidget(section)
         self._sections[key or title] = section
@@ -1595,9 +1620,7 @@ class MainWindow(QMainWindow):
                 out.append(arg)
         return out
 
-    def _add_schema_groups(
-        self, section: _AccordionSection, args: list[dict]
-    ) -> None:
+    def _add_schema_groups(self, section: _AccordionSection, args: list[dict]) -> None:
         if not args:
             return
         self._with_section(section, section._title)
@@ -1635,9 +1658,7 @@ class MainWindow(QMainWindow):
         if section.enable is None:
             return
         dests = [
-            dest
-            for dest, owner in self._field_sections.items()
-            if owner is section
+            dest for dest, owner in self._field_sections.items() if owner is section
         ]
         self._opt_groups[title] = (section.enable, dests)
 
@@ -2113,6 +2134,8 @@ class MainWindow(QMainWindow):
     def _build_adv_field(self, arg: dict) -> QWidget:
         flag = arg.get("flag")
         help_txt = arg.get("help") or ""
+        if _LANG == "ko":
+            help_txt = ARG_HELP.get(arg.get("dest") or "", help_txt)
         if arg.get("negatable"):
             combo = _Combo()
             combo.addItems(["default", "on", "off"])
@@ -2253,8 +2276,12 @@ class MainWindow(QMainWindow):
             w = self._widgets.get(target)
             if w is not None:
                 enabled = bool(pred(vals))
+                base_tooltip = w.property("baseToolTip")
+                if base_tooltip is None:
+                    base_tooltip = w.toolTip()
+                    w.setProperty("baseToolTip", base_tooltip)
                 w.setEnabled(enabled)
-                w.setToolTip("" if enabled else tr(reason))  # extra detail on hover
+                w.setToolTip(str(base_tooltip) if enabled else tr(reason))
                 # Show WHY it's greyed INLINE next to the label (not hover-only).
                 lt = self._field_labels.get(target)
                 if lt is not None:
