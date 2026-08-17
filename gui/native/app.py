@@ -2,25 +2,15 @@
 """PySide6 desktop UI for the Anima LoRA trainer.
 
 Two parent tabs — **Training** and **Utils** — over the shared, torch-free
-:mod:`gui.backend`, so this panel emits the same ``train.py`` commands as the
-Gradio one; only the UI differs (native dialogs, real tables, no localhost).
+:mod:`gui.backend`.  The Training page follows kohya_ss' familiar vertical flow:
+Configuration → Source model → Folders → Dataset preparation → Parameters
+(Basic / Network / Optimizer / Scheduler / Loss / Advanced) → Samples →
+Validation → Metadata → Monitoring → Experimental → Extra.
 
-Training child tabs (curated fields + schema args routed in by keyword):
-- **Folder**: every path/folder picker; sample / validation / save / logging /
-  resume args land here.
-- **Subset**: the subset table (→ ``form['subsets']``; per-subset multi-scale
-  ``tiers`` + ``gradient_checkpointing``) + an Auto-preprocess toggle + global
-  caption/shuffle flags.
-- **Network**: adapter selection — method (LoRA type), network module/dim/alpha/
-  args, LyCORIS preset + algo.
-- **Optimizer**: the training-settings mega-tab — optimizer/scheduler (+args),
-  loss/SNR/prior, the LR family + train-scope, norms/dropout, noise, and the
-  core/hardware knobs (epochs/steps/batch/precision/swap/compile/seed) +
-  flow-matching/timestep params.
-- **Monitoring**: web-monitor flags.
-- **Metadata**: metadata_* + no_metadata.
-- **Extra**: everything uncaught (inference stacks: dcw/spectrum/spd/… ) + a raw
-  ``extra_flags`` box.
+Every existing curated field and every schema-discovered ``train.py`` flag is
+still rendered.  This module only owns presentation; command construction,
+config round-tripping, preprocessing, queueing, and process control remain in
+``gui.backend``.
 
 Utils child tabs: Dataset (image+caption viewer/editor, tag sorter, mask overlay),
 Preprocess (resize → VAE/TE/PE/pooled caches), Update (git pull + uv sync),
@@ -131,6 +121,18 @@ _KO = {
     "Metadata": "메타데이터",
     "Extra": "추가",
     "Experimental": "실험기능",
+    "Configuration": "설정",
+    "Source model": "원본 모델",
+    "Folders": "폴더",
+    "Dataset preparation": "데이터셋 준비",
+    "Parameters": "학습 파라미터",
+    "Basic": "기본",
+    "Advanced": "고급 설정",
+    "Samples": "샘플",
+    "Show": "펼치기",
+    "Hide": "접기",
+    "Enable": "사용",
+    "Configure Anima LoRA training from top to bottom. Advanced and optional sections stay folded until needed.": "위에서 아래 순서로 Anima LoRA 학습을 설정합니다. 고급 및 선택 항목은 필요할 때만 펼치세요.",
     # required-field validation
     "Required fields missing": "필수값 누락",
     "Fill these before starting:": "시작 전에 아래 값을 입력하세요:",
@@ -889,6 +891,71 @@ _SUBSET_GREY = [
 _ANIMA_TAB = "anima_lora"
 
 
+class _AccordionSection(QFrame):
+    """A compact native equivalent of a kohya_ss ``gr.Accordion``.
+
+    Expansion and feature activation are deliberately separate.  Optional
+    sections (Samples / Validation) can stay expanded for editing while their
+    values remain inert until the Enable checkbox is selected.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        opened: bool = False,
+        enableable: bool = False,
+    ) -> None:
+        super().__init__()
+        self.setObjectName("accordionSection")
+        self._title = title
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("accordionHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(12, 7, 10, 7)
+        row.setSpacing(8)
+
+        self.toggle = QPushButton()
+        self.toggle.setObjectName("accordionToggle")
+        self.toggle.setCheckable(True)
+        self.toggle.setChecked(opened)
+        self.toggle.setCursor(Qt.PointingHandCursor)
+        row.addWidget(self.toggle, 1)
+
+        self.enable: QCheckBox | None = None
+        if enableable:
+            self.enable = QCheckBox(tr("Enable"))
+            self.enable.setObjectName("accordionEnable")
+            row.addWidget(self.enable)
+        outer.addWidget(header)
+
+        self.body = QWidget()
+        self.body.setObjectName("accordionBody")
+        self.content = QVBoxLayout(self.body)
+        self.content.setContentsMargins(12, 10, 12, 12)
+        self.content.setSpacing(10)
+        self.body.setVisible(opened)
+        outer.addWidget(self.body)
+
+        self.toggle.toggled.connect(self._set_open)
+        self._set_open(opened)
+        if self.enable is not None:
+            self.body.setEnabled(False)
+            self.enable.toggled.connect(self.body.setEnabled)
+
+    def _set_open(self, opened: bool) -> None:
+        self.body.setVisible(opened)
+        arrow = "▾" if opened else "▸"
+        self.toggle.setText(f"{arrow}  {tr(self._title)}")
+
+    def open(self) -> None:
+        self.toggle.setChecked(True)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -905,6 +972,11 @@ class MainWindow(QMainWindow):
         self._opt_groups: dict[str, tuple] = {}
         # dest → (QLabel, base_text) for inline grey-reason display.
         self._field_labels: dict[str, tuple] = {}
+        self._field_sections: dict[str, _AccordionSection] = {}
+        self._field_section_names: dict[str, str] = {}
+        self._sections: dict[str, _AccordionSection] = {}
+        self._active_section: _AccordionSection | None = None
+        self._active_section_name = ""
         self._highlighted: list[str] = []  # dests flagged by required-field validation
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
@@ -950,6 +1022,11 @@ class MainWindow(QMainWindow):
         """(Re)build the tabs + run panel into the central widget. Re-callable so a
         language switch can rebuild the whole UI in the new language."""
         self._opthelp_panels: list[tuple[str, QWidget, QWidget]] = []
+        self._field_sections = {}
+        self._field_section_names = {}
+        self._sections = {}
+        self._active_section = None
+        self._active_section_name = ""
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._build_parent_tabs())
         splitter.addWidget(self._build_run_panel())
@@ -1015,6 +1092,11 @@ class MainWindow(QMainWindow):
         self._scope = None
         self._widgets = {}
         self._watch = {}
+        self._opt_groups = {}
+        self._field_labels = {}
+        self._field_sections = {}
+        self._field_section_names = {}
+        self._sections = {}
         self._build_central()
         for d, v in saved.items():
             setter = self._setters.get(d)
@@ -1063,10 +1145,12 @@ class MainWindow(QMainWindow):
         ui = getattr(self, "_utils_inner", None)
         if ui is not None:
             st["utils"] = ui.currentIndex()
-        st["scrolls"] = [
-            sc.verticalScrollBar().value()
-            for sc in getattr(self, "_training_scrolls", [])
-        ]
+        st["sections"] = {
+            name: section.toggle.isChecked()
+            for name, section in getattr(self, "_sections", {}).items()
+        }
+        sc = getattr(self, "_training_scroll", None)
+        st["training_scroll"] = sc.verticalScrollBar().value() if sc else 0
         return st
 
     def _restore_view_state(self, st: dict) -> None:
@@ -1079,13 +1163,15 @@ class MainWindow(QMainWindow):
         ui = getattr(self, "_utils_inner", None)
         if ui is not None and "utils" in st:
             ui.setCurrentIndex(st["utils"])
-        scrolls = getattr(self, "_training_scrolls", [])
-        vals = st.get("scrolls") or []
-        # Scrollbar maximum isn't valid until the layout settles → defer the set.
-        for sc, val in zip(scrolls, vals):
-            QTimer.singleShot(
-                0, lambda sc=sc, val=val: sc.verticalScrollBar().setValue(val)
-            )
+        for name, opened in (st.get("sections") or {}).items():
+            section = getattr(self, "_sections", {}).get(name)
+            if section is not None:
+                section.toggle.setChecked(bool(opened))
+        sc = getattr(self, "_training_scroll", None)
+        if sc is not None:
+            val = int(st.get("training_scroll") or 0)
+            # Scrollbar maximum isn't valid until the layout settles.
+            QTimer.singleShot(0, lambda: sc.verticalScrollBar().setValue(val))
 
     def _set_widget_value(self, dest: str, value: object) -> None:
         """Set a field's value by dest onto whatever widget now backs it — used to
@@ -1109,13 +1195,10 @@ class MainWindow(QMainWindow):
 
     # ----- Ctrl+F argument search ----------------------------------------- #
     def _build_search_index(self) -> list[dict]:
-        """Searchable field index: every curated + schema field with a live widget →
-        its containing Training-tab index + searchable label + Korean help. Rebuilt on
-        each open so it tracks the current language and any rebuild."""
+        """Index every live training field by its kohya-style accordion section."""
         idx: list[dict] = []
-        tab_order = {name: i for i, (name, _g) in enumerate(_TRAINING_TABS)}
         seen: set[str] = set()
-        for tname, groups in _TRAINING_TABS:  # curated fields (carry a human label)
+        for _tname, groups in _TRAINING_TABS:  # curated fields carry human labels
             for _title, fields in groups:
                 for dest, label, _kind in fields:
                     w = self._widgets.get(dest)
@@ -1127,14 +1210,12 @@ class MainWindow(QMainWindow):
                             "dest": dest,
                             "label": label,
                             "ko": ARG_HELP.get(dest, ""),
-                            "tab": tab_order.get(tname, 0),
+                            "section": self._field_section_names.get(dest, ""),
+                            "accordion": self._field_sections.get(dest),
                             "w": w,
                         }
                     )
-        for tname, args in (self._tab_schema or {}).items():  # schema (auto) fields
-            ti = tab_order.get(tname)
-            if ti is None:
-                continue
+        for _tname, args in (self._tab_schema or {}).items():  # schema fields
             for arg in args:
                 dest = arg.get("dest") or ""
                 w = self._widgets.get(dest)
@@ -1146,7 +1227,8 @@ class MainWindow(QMainWindow):
                         "dest": dest,
                         "label": dest,  # arg name stays English
                         "ko": ARG_HELP.get(dest, (arg.get("help") or "")),
-                        "tab": ti,
+                        "section": self._field_section_names.get(dest, ""),
+                        "accordion": self._field_sections.get(dest),
                         "w": w,
                     }
                 )
@@ -1182,13 +1264,12 @@ class MainWindow(QMainWindow):
     def _search_filter(self, text: str) -> None:
         q = (text or "").strip().lower()
         self._search_results.clear()
-        tab_names = [tr(n) for n, _g in _TRAINING_TABS]
         for entry in getattr(self, "_search_data", []):
             hay = f"{entry['dest']} {entry['label']} {entry['ko']}".lower()
             if q and q not in hay:
                 continue
-            tn = tab_names[entry["tab"]] if 0 <= entry["tab"] < len(tab_names) else ""
-            disp = f"[{tn}] {entry['dest']}"
+            section = tr(entry.get("section") or "Training")
+            disp = f"[{section}] {entry['dest']}"
             if entry["label"] and entry["label"] != entry["dest"]:
                 disp += f" — {tr(entry['label'])}"
             it = QListWidgetItem(disp)
@@ -1205,13 +1286,14 @@ class MainWindow(QMainWindow):
             return
         if getattr(self, "_parent_tabs", None) is not None:
             self._parent_tabs.setCurrentIndex(0)  # Training parent
-        ti = entry["tab"]
-        if getattr(self, "_training_inner", None) is not None:
-            self._training_inner.setCurrentIndex(ti)
-        scrolls = getattr(self, "_training_scrolls", [])
+        section = entry.get("accordion")
+        while section is not None:
+            section.open()
+            section = getattr(section, "parent_accordion", None)
         w = entry["w"]
-        if 0 <= ti < len(scrolls):
-            scrolls[ti].ensureWidgetVisible(w)
+        sc = getattr(self, "_training_scroll", None)
+        if sc is not None:
+            QTimer.singleShot(0, lambda: sc.ensureWidgetVisible(w, 20, 20))
         # Flash a gold border so the field is easy to spot, then clear it.
         w.setStyleSheet("border: 2px solid #FACC15; border-radius: 4px;")
         QTimer.singleShot(1600, lambda w=w: w.setStyleSheet(""))
@@ -1229,15 +1311,367 @@ class MainWindow(QMainWindow):
         parent.addTab(self._build_utils_parent(), tr("Utils"))
         return parent
 
-    def _build_training_parent(self) -> QTabWidget:
-        inner = QTabWidget()
-        self._training_inner = inner
-        self._training_scrolls = []  # per-tab QScrollArea → restore scroll on rebuild
-        for tab_name, groups in _TRAINING_TABS:
-            sc = self._scroll(self._build_training_tab(tab_name, groups))
-            self._training_scrolls.append(sc)
-            inner.addTab(sc, tr(tab_name))
-        return inner
+    def _build_training_parent(self) -> QScrollArea:
+        """Build one kohya_ss-style vertical training page.
+
+        The old child-tab taxonomy remains the source of truth for routing and
+        config compatibility; this method only projects it into accordions.
+        """
+        self._training_inner = None
+        self._training_scrolls = []
+        self._rendered_schema: set[str] = set()
+
+        page = QWidget()
+        column = QVBoxLayout(page)
+        column.setContentsMargins(10, 10, 10, 14)
+        column.setSpacing(10)
+
+        intro = QLabel(
+            tr("Configure Anima LoRA training from top to bottom. Advanced and "
+               "optional sections stay folded until needed.")
+        )
+        intro.setObjectName("pageIntro")
+        intro.setWordWrap(True)
+        column.addWidget(intro)
+
+        configuration = self._new_section(
+            column, "Configuration", opened=False
+        )
+        configuration.content.addWidget(self._build_configuration_controls())
+
+        source = self._new_section(column, "Source model", opened=True)
+        self._add_curated_group(source, "Folder", "Model paths")
+
+        folders = self._new_section(column, "Folders", opened=True)
+        self._add_curated_group(folders, "Folder", "Output / resume / logs")
+        self._add_curated_group(folders, "Folder", "Dataset")
+        self._add_schema_groups(
+            folders,
+            self._take_schema(
+                tabs={"Folder"},
+                exclude_clusters={"Sampling", "Validation"},
+            ),
+        )
+
+        dataset = self._new_section(column, "Dataset preparation", opened=True)
+        self._add_curated_group(dataset, "Subset", "Preprocess")
+        self._add_curated_group(dataset, "Subset", "Caching / memory")
+        self._with_section(dataset, "Dataset preparation")
+        dataset.content.addWidget(self._build_subset_box())
+        self._add_schema_groups(dataset, self._take_schema(tabs={"Subset"}))
+
+        parameters = self._new_section(column, "Parameters", opened=True)
+        basic = self._new_section(
+            parameters.content,
+            "Basic",
+            key="Parameters / Basic",
+            opened=True,
+            parent=parameters,
+        )
+        self._add_curated_group(
+            basic,
+            "Optimizer",
+            "Core / hardware",
+            exclude_dests={"preset"},
+        )
+        self._add_curated_group(basic, "anima_lora", "Attention")
+        self._add_schema_groups(
+            basic,
+            self._take_schema(
+                tabs={"Optimizer", "anima_lora"},
+                clusters={
+                    "Precision",
+                    "Batch & steps",
+                    "Memory · checkpointing · offload",
+                    "Memory �� checkpointing �� offload",
+                    "Dataloader",
+                    "VAE / TE encode & cache",
+                    "Attention",
+                    "torch.compile",
+                },
+            ),
+        )
+
+        network = self._new_section(
+            parameters.content,
+            "Network",
+            key="Parameters / Network",
+            opened=True,
+            parent=parameters,
+        )
+        self._add_curated_group(network, "Network", "Adapter")
+        self._add_curated_group(network, "Network", "LyCORIS")
+        self._add_schema_groups(
+            network,
+            self._take_schema(
+                tabs={"Network"}
+            )
+            + self._take_schema(
+                tabs={"Optimizer"}, clusters={"Per-layer LR", "LLM adapter"}
+            ),
+        )
+
+        optimizer = self._new_section(
+            parameters.content,
+            "Optimizer",
+            key="Parameters / Optimizer",
+            opened=True,
+            parent=parameters,
+        )
+        self._add_curated_group(optimizer, "Optimizer", "Optimizer")
+        self._add_curated_group(optimizer, "Optimizer", "Learning rates / scope")
+
+        scheduler = self._new_section(
+            parameters.content,
+            "Scheduler",
+            key="Parameters / Scheduler",
+            opened=False,
+            parent=parameters,
+        )
+        self._add_curated_group(scheduler, "Optimizer", "Scheduler")
+        self._add_schema_groups(
+            scheduler,
+            self._take_schema(
+                tabs={"Optimizer"}, clusters={"Learning rate & schedule"}
+            ),
+        )
+
+        loss = self._new_section(
+            parameters.content,
+            "Loss / timestep / weighting",
+            key="Parameters / Loss",
+            opened=False,
+            parent=parameters,
+        )
+        self._add_curated_group(
+            loss, "Optimizer", "Loss / timestep / weighting"
+        )
+        self._add_schema_groups(
+            loss,
+            self._take_schema(
+                tabs={"Optimizer"},
+                clusters={
+                    "Loss",
+                    "Timestep / flow-matching",
+                    "Noise",
+                    "Cond-diff loss",
+                    "Functional loss",
+                },
+            ),
+        )
+
+        advanced = self._new_section(
+            parameters.content,
+            "Advanced",
+            key="Parameters / Advanced",
+            opened=False,
+            parent=parameters,
+        )
+        self._add_schema_groups(
+            advanced,
+            self._take_schema(tabs={"Optimizer", "anima_lora"}),
+        )
+
+        samples = self._new_section(
+            column, "Samples", opened=False, enableable=True
+        )
+        self._add_curated_group(samples, "Folder", "Sampling")
+        self._add_schema_groups(
+            samples,
+            self._take_schema(tabs={"Folder"}, clusters={"Sampling"}),
+        )
+        self._register_optional_section("Sampling", samples)
+
+        validation = self._new_section(
+            column, "Validation", opened=False, enableable=True
+        )
+        self._add_curated_group(validation, "Folder", "Validation")
+        self._add_schema_groups(
+            validation,
+            self._take_schema(tabs={"Folder"}, clusters={"Validation"}),
+        )
+        self._register_optional_section("Validation", validation)
+
+        metadata = self._new_section(column, "Metadata", opened=False)
+        self._add_schema_groups(metadata, self._take_schema(tabs={"Metadata"}))
+
+        monitoring = self._new_section(column, "Monitoring", opened=False)
+        self._add_curated_group(monitoring, "Monitoring", "Web monitor")
+        self._add_schema_groups(
+            monitoring, self._take_schema(tabs={"Monitoring"})
+        )
+        self._with_section(monitoring, "Monitoring")
+        monitoring.content.addWidget(self._build_watch_party_box())
+
+        experimental = self._new_section(column, "Experimental", opened=False)
+        self._add_schema_groups(
+            experimental, self._take_schema(tabs={"Experimental"})
+        )
+
+        extra = self._new_section(column, "Extra", opened=False)
+        self._add_schema_groups(extra, self._take_schema())
+        self._with_section(extra, "Extra")
+        extra.content.addWidget(self._build_extra_flags_box())
+        column.addStretch(1)
+
+        scroll = self._scroll(page)
+        self._training_scroll = scroll
+        self._training_scrolls = [scroll]
+        return scroll
+
+    def _new_section(
+        self,
+        layout: QVBoxLayout,
+        title: str,
+        *,
+        key: str | None = None,
+        opened: bool = False,
+        enableable: bool = False,
+        parent: _AccordionSection | None = None,
+    ) -> _AccordionSection:
+        section = _AccordionSection(
+            title, opened=opened, enableable=enableable
+        )
+        section.parent_accordion = parent
+        layout.addWidget(section)
+        self._sections[key or title] = section
+        return section
+
+    def _with_section(self, section: _AccordionSection, name: str) -> None:
+        self._active_section = section
+        self._active_section_name = name
+
+    def _curated_fields(self, tab_name: str, title: str) -> list[tuple[str, str, str]]:
+        for tab, groups in _TRAINING_TABS:
+            if tab != tab_name:
+                continue
+            for group_title, fields in groups:
+                if group_title == title:
+                    return list(fields)
+        return []
+
+    def _add_curated_group(
+        self,
+        section: _AccordionSection,
+        tab_name: str,
+        title: str,
+        *,
+        exclude_dests: set[str] | None = None,
+    ) -> None:
+        excluded = exclude_dests or set()
+        fields = [
+            field
+            for field in self._curated_fields(tab_name, title)
+            if field[0] not in excluded
+        ]
+        if not fields:
+            return
+        self._with_section(section, section._title)
+        section.content.addWidget(
+            self._build_group(title, fields, optional_group=False)
+        )
+
+    def _take_schema(
+        self,
+        *,
+        tabs: set[str] | None = None,
+        clusters: set[str] | None = None,
+        exclude_clusters: set[str] | None = None,
+    ) -> list[dict]:
+        out: list[dict] = []
+        for tab_name, args in self._tab_schema.items():
+            if tabs is not None and tab_name not in tabs:
+                continue
+            for arg in args:
+                dest = arg.get("dest") or ""
+                cluster = arg.get("cluster") or "misc"
+                if not dest or dest in self._rendered_schema:
+                    continue
+                if clusters is not None and cluster not in clusters:
+                    continue
+                if exclude_clusters and cluster in exclude_clusters:
+                    continue
+                self._rendered_schema.add(dest)
+                out.append(arg)
+        return out
+
+    def _add_schema_groups(
+        self, section: _AccordionSection, args: list[dict]
+    ) -> None:
+        if not args:
+            return
+        self._with_section(section, section._title)
+        by_cluster: dict[str, list[dict]] = {}
+        for arg in args:
+            by_cluster.setdefault(arg.get("cluster") or "misc", []).append(arg)
+        for cluster in sorted(by_cluster):
+            box = QGroupBox(tr(str(cluster)))
+            grid = QGridLayout(box)
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(7)
+            grid.setColumnStretch(2, 1)
+            rows = sorted(by_cluster[cluster], key=lambda a: a.get("dest") or "")
+            for row, arg in enumerate(rows):
+                dest = arg.get("dest") or ""
+                label = QLabel(dest or arg.get("flag"))
+                field = self._build_adv_field(arg)
+                field.setMaximumWidth(220)
+                help_text = (arg.get("help") or "").strip()
+                if _LANG == "ko":
+                    help_text = ARG_HELP.get(dest, help_text)
+                desc = QLabel(help_text)
+                desc.setObjectName("argDesc")
+                desc.setWordWrap(True)
+                grid.addWidget(label, row, 0)
+                grid.addWidget(field, row, 1)
+                grid.addWidget(desc, row, 2)
+                self._field_sections[dest] = section
+                self._field_section_names[dest] = section._title
+            section.content.addWidget(box)
+
+    def _register_optional_section(
+        self, title: str, section: _AccordionSection
+    ) -> None:
+        if section.enable is None:
+            return
+        dests = [
+            dest
+            for dest, owner in self._field_sections.items()
+            if owner is section
+        ]
+        self._opt_groups[title] = (section.enable, dests)
+
+    def _build_configuration_controls(self) -> QWidget:
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        load = QPushButton(tr("Load config…"))
+        save = QPushButton(tr("Save config…"))
+        load.clicked.connect(self._load_config)
+        save.clicked.connect(self._save_config)
+        grid.addWidget(load, 0, 0)
+        grid.addWidget(save, 0, 1)
+
+        self._with_section(self._sections["Configuration"], "Configuration")
+        preset = self._build_field("preset", "combo:presets")
+        label = QLabel(tr("Hardware preset"))
+        self._field_labels.setdefault("preset", (label, tr("Hardware preset")))
+        self._field_sections["preset"] = self._sections["Configuration"]
+        self._field_section_names["preset"] = "Configuration"
+        grid.addWidget(label, 1, 0)
+        grid.addWidget(preset, 1, 1)
+
+        grid.addWidget(QLabel(tr("Language")), 2, 0)
+        self._lang_combo = _Combo()
+        self._lang_combo.addItem("English", "en")
+        self._lang_combo.addItem("한국어", "ko")
+        self._lang_combo.setCurrentIndex(1 if _LANG == "ko" else 0)
+        self._lang_combo.currentIndexChanged.connect(
+            lambda _i: self._set_language(self._lang_combo.currentData())
+        )
+        grid.addWidget(self._lang_combo, 2, 1)
+        grid.setColumnStretch(2, 1)
+        return box
 
     # ----- saved-run queue (collapsible panel, not a tab) ----------------- #
     def _build_queue_panel(self) -> QWidget:
@@ -1408,9 +1842,15 @@ class MainWindow(QMainWindow):
         return scroll
 
     # ----- curated field widgets ------------------------------------------ #
-    def _build_group(self, title: str, fields: list[tuple[str, str, str]]) -> QGroupBox:
+    def _build_group(
+        self,
+        title: str,
+        fields: list[tuple[str, str, str]],
+        *,
+        optional_group: bool = True,
+    ) -> QGroupBox:
         gb = QGroupBox(tr(title))
-        optional = title in _OPTIONAL_GROUPS
+        optional = optional_group and title in _OPTIONAL_GROUPS
         if optional:
             # Checkable title → collapse: unchecked hides the body AND disables its
             # widgets (Qt), so the fields are excluded from the command (inert).
@@ -1438,6 +1878,11 @@ class MainWindow(QMainWindow):
             # Register the label so greying can show its reason inline (and so the
             # base text can be restored when re-enabled). First occurrence wins.
             self._field_labels.setdefault(dest, (lbl, tr(label)))
+            if self._active_section is not None:
+                self._field_sections.setdefault(dest, self._active_section)
+                self._field_section_names.setdefault(
+                    dest, self._active_section_name or self._active_section._title
+                )
             # Path pickers / args-help / scope span the full width; the compact fields
             # (text/combo/bool/tristate) — no per-field description — pack TWO per row.
             if kind in ("file", "dir", "scope", "kvblock") or kind.startswith(
@@ -2382,26 +2827,6 @@ class MainWindow(QMainWindow):
     def _build_run_panel(self) -> QWidget:
         panel = QWidget()
         vbox = QVBoxLayout(panel)
-        cfg_row = QHBoxLayout()
-        btn_load = QPushButton(tr("Load config…"))
-        btn_save = QPushButton(tr("Save config…"))
-        btn_load.clicked.connect(self._load_config)
-        btn_save.clicked.connect(self._save_config)
-        cfg_row.addWidget(btn_load)
-        cfg_row.addWidget(btn_save)
-        cfg_row.addStretch(1)
-        # Language selector — switches the whole UI live (en ⇄ 한국어), persisted.
-        cfg_row.addWidget(QLabel(tr("Language")))
-        self._lang_combo = _Combo()
-        self._lang_combo.addItem("English", "en")
-        self._lang_combo.addItem("한국어", "ko")
-        self._lang_combo.setCurrentIndex(1 if _LANG == "ko" else 0)
-        self._lang_combo.currentIndexChanged.connect(
-            lambda _i: self._set_language(self._lang_combo.currentData())
-        )
-        cfg_row.addWidget(self._lang_combo)
-        vbox.addLayout(cfg_row)
-
         vbox.addWidget(QLabel(tr("Command preview")))
         self._preview = QPlainTextEdit()
         self._preview.setReadOnly(True)
@@ -2785,6 +3210,21 @@ QPushButton#subOpt:checked {{ background: transparent; color: {text}; border-col
 QLabel#optHelpBody {{ background: {input}; color: {text}; border: 1px solid {border};
                      border-radius: 8px; padding: 8px 10px; }}
 QLabel#argDesc {{ color: {muted}; background: transparent; font-size: 12px; }}
+QLabel#pageIntro {{ color: {muted}; padding: 2px 4px 8px 4px; font-size: 12px; }}
+
+/* kohya_ss-style vertical accordions */
+QFrame#accordionSection {{ background: {card}; border: 1px solid {border};
+                           border-radius: 10px; }}
+QFrame#accordionHeader {{ background: {input}; border: none; border-radius: 9px; }}
+QWidget#accordionBody {{ background: {bg}; border: none;
+                         border-bottom-left-radius: 9px;
+                         border-bottom-right-radius: 9px; }}
+QPushButton#accordionToggle {{ background: transparent; color: {text}; border: none;
+                               border-radius: 0; padding: 3px 2px; text-align: left;
+                               font-size: 13px; font-weight: 750; }}
+QPushButton#accordionToggle:hover {{ background: transparent; color: {accent}; }}
+QPushButton#accordionToggle:checked {{ background: transparent; color: {text}; }}
+QCheckBox#accordionEnable {{ color: {muted}; font-size: 12px; }}
 
 /* Inputs */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {{
