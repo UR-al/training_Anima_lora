@@ -24,6 +24,14 @@ _flash_attn_4_func_raw = None
 flash_attn_4_func = None
 flash_attn_4_varlen_func = None
 
+_deterministic = False
+
+
+def set_deterministic(value: bool) -> None:
+    """Select deterministic FlashAttention backward for reproducible runs."""
+    global _deterministic
+    _deterministic = bool(value)
+
 try:
     from sageattention import sageattn_varlen, sageattn
 except ImportError:
@@ -288,7 +296,14 @@ def dispatch_attention(
 
     elif attn_params.attn_mode == "flash":
         if attn_params.cu_seqlens is None:  # all tokens are valid
-            x = flash_attn_func(q, k, v, drop_rate, softmax_scale=scale)  # B, L, H, D
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                drop_rate,
+                softmax_scale=scale,
+                deterministic=_deterministic,
+            )  # B, L, H, D
             del q, k, v
         else:
             # Reshape to [(bxs), a, d]
@@ -308,6 +323,7 @@ def dispatch_attention(
                 attn_params.max_seqlen,
                 drop_rate,
                 softmax_scale=scale,
+                deterministic=_deterministic,
             )
             del q, k, v
 

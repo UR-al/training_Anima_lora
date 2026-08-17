@@ -541,6 +541,88 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         "in 0.0~1.0 (NOT kohya/SD max_timestep — NOT 0~1000). Default 1.0.",
     )
     parser.add_argument(
+        "--sigma_lowres",
+        action="store_true",
+        help=(
+            "Enable upstream v1.15 sigma-conditional lower-resolution training. "
+            "Eligible steps use demoted latent siblings cached during preprocessing."
+        ),
+    )
+    parser.add_argument(
+        "--sigma_lowres_threshold",
+        type=float,
+        default=0.5,
+        help="Primary route lower sigma bound (default 0.5).",
+    )
+    parser.add_argument(
+        "--sigma_lowres_threshold_max",
+        type=float,
+        default=None,
+        help="Optional primary route upper sigma bound.",
+    )
+    parser.add_argument(
+        "--sigma_lowres_route",
+        type=str,
+        default="1024:896",
+        metavar="NATIVE:DEMOTE",
+        help="Primary latent demotion route (default 1024:896).",
+    )
+    parser.add_argument(
+        "--sigma_lowres_yarnsig",
+        type=str,
+        nargs="?",
+        const="1,4,0.35,2",
+        default=None,
+        metavar="ALPHA,BETA,CENTER,GAMMA",
+        help=(
+            "Sigma-gated YaRN RoPE parameters for primary demoted steps. "
+            "Defaults to 1,4,0.35,2 when sigma_lowres is enabled; pass off to disable."
+        ),
+    )
+    parser.add_argument(
+        "--sigma_lowres_route2",
+        type=str,
+        default=None,
+        metavar="NATIVE:DEMOTE",
+        help="Priority secondary demotion route, typically 1024:768.",
+    )
+    parser.add_argument(
+        "--sigma_lowres_threshold2",
+        type=float,
+        default=None,
+        help="Secondary route lower sigma bound; required with route2.",
+    )
+    parser.add_argument(
+        "--sigma_lowres_threshold2_max",
+        type=float,
+        default=None,
+        help="Secondary route upper sigma bound; required with route2.",
+    )
+    parser.add_argument(
+        "--sigma_lowres_span",
+        type=str,
+        default=None,
+        metavar="MODE[:FRAC]",
+        help="Primary progress gate: early, late, or spread with a fraction.",
+    )
+    parser.add_argument(
+        "--sigma_lowres_span2",
+        type=str,
+        default=None,
+        metavar="MODE[:FRAC]",
+        help="Secondary progress gate, with the same syntax as span.",
+    )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Enable deterministic torch, cuDNN, cuBLAS, and FlashAttention behavior.",
+    )
+    parser.add_argument(
+        "--paired_step_rng",
+        action="store_true",
+        help="Use per-step sigma/noise generators for controlled A/B comparisons.",
+    )
+    parser.add_argument(
         "--loss_type",
         type=str,
         default="l2",

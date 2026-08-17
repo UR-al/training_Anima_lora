@@ -808,6 +808,57 @@ class VideoRopePosition3DEmb(VideoPositionEmb):
 
         return result
 
+    def generate_embeddings_yarn(
+        self,
+        B_T_H_W_C: torch.Size,
+        h_scale: float,
+        w_scale: float,
+        alpha: float,
+        beta: float,
+        mu: float,
+        fps: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Frequency-banded spatial alignment for sigma-demoted steps."""
+        _, T, H, W, _ = B_T_H_W_C
+        h_freqs = 1.0 / ((10000.0 * self.h_ntk_factor) ** self.dim_spatial_range)
+        w_freqs = 1.0 / ((10000.0 * self.w_ntk_factor) ** self.dim_spatial_range)
+        temporal_freqs = 1.0 / (
+            (10000.0 * self.t_ntk_factor) ** self.dim_temporal_range
+        )
+
+        def band_scale(freqs: torch.Tensor, size: int, scale: float) -> torch.Tensor:
+            if mu < 1e-9:
+                return torch.ones_like(freqs)
+            rotations = size * freqs / (2 * math.pi)
+            blend = (
+                (rotations - alpha * mu) / ((beta - alpha) * mu)
+            ).clamp(0.0, 1.0)
+            return (1.0 - blend) * float(scale) + blend
+
+        half_h = torch.outer(
+            self.seq[:H], h_freqs * band_scale(h_freqs, H, h_scale)
+        )
+        half_w = torch.outer(
+            self.seq[:W], w_freqs * band_scale(w_freqs, W, w_scale)
+        )
+        if self.enable_fps_modulation and fps is not None:
+            half_t = torch.outer(
+                self.seq[:T] / fps[:1] * self.base_fps, temporal_freqs
+            )
+        else:
+            half_t = torch.outer(self.seq[:T], temporal_freqs)
+        embedding = torch.cat(
+            [
+                repeat(half_t, "t d -> t h w d", h=H, w=W),
+                repeat(half_h, "h d -> t h w d", t=T, w=W),
+                repeat(half_w, "w d -> t h w d", t=T, h=H),
+            ]
+            * 2,
+            dim=-1,
+        )
+        freqs = embedding.flatten(0, 2).unsqueeze(1).unsqueeze(1).float()
+        return torch.cos(freqs), torch.sin(freqs)
+
     @property
     def seq_dim(self) -> int:
         return 0
@@ -1798,7 +1849,12 @@ class Anima(nn.Module):
             x_B_C_T_H_W = torch.cat([x_B_C_T_H_W, padding_mask_B_1_T_H_W], dim=1)
         x_B_T_H_W_D = self.x_embedder(x_B_C_T_H_W)
 
-        if h_offset != 0 or w_offset != 0:
+        yarn = getattr(self, "_sigma_lowres_yarn", None)
+        if yarn is not None:
+            rope_cos_sin = self.pos_embedder.generate_embeddings_yarn(
+                x_B_T_H_W_D.shape, *yarn, fps=fps
+            )
+        elif h_offset != 0 or w_offset != 0:
             rope_cos_sin = self.pos_embedder.generate_embeddings_with_offset(
                 x_B_T_H_W_D.shape, h_offset=h_offset, w_offset=w_offset, fps=fps
             )

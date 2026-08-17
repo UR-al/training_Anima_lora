@@ -27,6 +27,7 @@ class SamplerContext:
     noise: torch.Tensor
     device: torch.device
     weight_dtype: torch.dtype
+    sigmas: "torch.Tensor | None" = None
 
 
 @dataclass
@@ -47,6 +48,7 @@ def _default_sampler(ctx: SamplerContext) -> SamplerOut:
         ctx.noise,
         ctx.device,
         ctx.weight_dtype,
+        sigmas=ctx.sigmas,
     )
     return SamplerOut(noisy_input=noisy_input, timesteps=timesteps, sigmas=sigmas)
 

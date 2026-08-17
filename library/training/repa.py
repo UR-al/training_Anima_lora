@@ -232,6 +232,7 @@ class REPAMethodAdapter(MethodAdapter):
     """
 
     name = "repa"
+    sigma_demote_safe = True
 
     def __init__(self) -> None:
         self._captured: Optional[torch.Tensor] = None

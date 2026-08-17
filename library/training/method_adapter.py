@@ -136,6 +136,8 @@ class MethodAdapter:
     """
 
     name: str = "base"
+    # Fixed-grid adapter streams must opt in only after validating demoted grids.
+    sigma_demote_safe: bool = False
 
     def on_network_built(self, ctx: SetupCtx) -> None:
         """Called once after ``network.apply_to``. Validate runtime contract,

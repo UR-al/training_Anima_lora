@@ -123,6 +123,12 @@ class BaseDataset(torch.utils.data.Dataset):
         self.load_repa_pe: bool = False
         self.repa_pe_encoder: str = "pe_spatial"
 
+        # Optional lower-resolution latent siblings for sigma_lowres training.
+        self._sigma_demote: Optional[Tuple[int, int]] = None
+        self._sigma_demote2: Optional[Tuple[int, int]] = None
+        self._sigma_demote_warned: set[Tuple[int, int]] = set()
+        self._demote_npz_cache = None
+
         # BYG unpaired-editing per-image text conditionings. Set via
         # `dataset.byg_text_dir = ...` after construction; None disables. Loads
         # <stem>_byg.safetensors holding the 4 role embeddings + masks (built by
@@ -1328,6 +1334,72 @@ class BaseDataset(torch.utils.data.Dataset):
             return feats.float() if feats is not None else None
         return None
 
+    def enable_sigma_demote(self, native_edge: int, demote_edge: int) -> None:
+        self._sigma_demote = (int(native_edge), int(demote_edge))
+
+    def enable_sigma_demote2(self, native_edge: int, demote_edge: int) -> None:
+        self._sigma_demote2 = (int(native_edge), int(demote_edge))
+
+    def _load_demoted_sibling(
+        self,
+        info: "ImageInfo",
+        route: Optional[Tuple[int, int]],
+    ) -> Optional[torch.Tensor]:
+        if not route or info.latents_npz is None or info.bucket_reso is None:
+            return None
+        from library.datasets.buckets import demote_bucket_for
+        from library.io.cache_names import demoted_latents_key
+
+        bucket = demote_bucket_for(
+            int(info.bucket_reso[0]),
+            int(info.bucket_reso[1]),
+            route[0],
+            route[1],
+        )
+        if bucket is None:
+            return None
+        key = demoted_latents_key(*bucket)
+        try:
+            npz = self._open_demote_npz(info.latents_npz)
+            if key not in npz:
+                if route not in self._sigma_demote_warned:
+                    self._sigma_demote_warned.add(route)
+                    logger.warning(
+                        "sigma_lowres: '%s' is missing for route %d:%d in %s; "
+                        "affected batches train at native resolution.",
+                        key,
+                        route[0],
+                        route[1],
+                        info.latents_npz,
+                    )
+                return None
+            return torch.from_numpy(npz[key].copy()).float()
+        except Exception as error:
+            self._demote_npz_cache = None
+            if route not in self._sigma_demote_warned:
+                self._sigma_demote_warned.add(route)
+                logger.warning(
+                    "sigma_lowres: failed reading %s (%s); batch trains native.",
+                    info.latents_npz,
+                    error,
+                )
+            return None
+
+    def _open_demote_npz(self, path):
+        cached = self._demote_npz_cache
+        if cached is not None and cached[0] == path:
+            return cached[1]
+        if cached is not None:
+            cached[1].close()
+        npz = np.load(path)
+        self._demote_npz_cache = (path, npz)
+        return npz
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_demote_npz_cache"] = None
+        return state
+
     def restrict_to_byg_tuples(self) -> tuple[int, int]:
         """Drop images lacking a BYG edit-tuple sidecar, then rebuild buckets.
 
@@ -1406,6 +1478,8 @@ class BaseDataset(torch.utils.data.Dataset):
         captions = []
         input_ids_list = []
         latents_list = []
+        demoted_latents_list: List[Optional[torch.Tensor]] = []
+        demoted_latents2_list: List[Optional[torch.Tensor]] = []
         # Optional condition latent (cond≠target tasks, e.g. colorization);
         # stays all-None when no subset sets cond_cache_dir.
         cond_latents_list: List[Optional[torch.Tensor]] = []
@@ -1538,6 +1612,13 @@ class BaseDataset(torch.utils.data.Dataset):
 
             images.append(image)
             latents_list.append(latents)
+            demoted = self._load_demoted_sibling(image_info, self._sigma_demote)
+            demoted2 = self._load_demoted_sibling(image_info, self._sigma_demote2)
+            if flipped:
+                demoted = torch.flip(demoted, [-1]) if demoted is not None else None
+                demoted2 = torch.flip(demoted2, [-1]) if demoted2 is not None else None
+            demoted_latents_list.append(demoted)
+            demoted_latents2_list.append(demoted2)
             cond_latents_list.append(
                 self._load_cond_latent(subset, image_info, flipped)
             )
@@ -1747,6 +1828,16 @@ class BaseDataset(torch.utils.data.Dataset):
         example["latents"] = (
             torch.stack(latents_list) if latents_list[0] is not None else None
         )
+
+        def _stack_demoted(values: List[Optional[torch.Tensor]]):
+            if not values or not all(value is not None for value in values):
+                return None
+            if len({tuple(value.shape) for value in values}) != 1:
+                return None
+            return torch.stack(values)
+
+        example["demoted_latents"] = _stack_demoted(demoted_latents_list)
+        example["demoted_latents2"] = _stack_demoted(demoted_latents2_list)
         # Condition latent for cond≠target tasks (colorization). All samples in a
         # bucket share the resolution, so the cond latents share shape with the
         # targets and a plain stack works. None when no cond_cache_dir is set.

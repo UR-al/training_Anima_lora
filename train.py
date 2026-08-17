@@ -9,6 +9,7 @@ from typing import Any, Union, Optional
 import sys
 import random
 import time
+from contextlib import contextmanager
 from multiprocessing import Value
 
 # Windows: suppress per-kernel ptxas.exe / cl.exe console flashes from
@@ -123,6 +124,16 @@ import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
+def _sigma_yarn_scope(model, value):
+    if value is not None:
+        model._sigma_lowres_yarn = value
+    try:
+        yield
+    finally:
+        model._sigma_lowres_yarn = None
+
+
 def _normalize_sample_args(args):
     """Normalize the sample-image knobs so the GUI can drive them naturally.
 
@@ -224,6 +235,7 @@ class AnimaTrainer:
         # loop audits it (step-25 early check + run end) and flags any
         # configured-but-dead feature with a greppable ``LIVENESS:`` log line.
         self._liveness = LivenessLedger()
+        self._token_step_hist: dict[int, int] = {}
 
     # region logging helpers
 
@@ -757,6 +769,288 @@ class AnimaTrainer:
             f"shape={tuple(self._state.uncond_crossattn_1.shape)}"
         )
 
+    def _paired_step_generators(self, args, device, is_train):
+        if not is_train or not getattr(args, "paired_step_rng", False):
+            return None, None
+        counter = getattr(self, "_paired_step_counter", 0) + 1
+        self._paired_step_counter = counter
+        base = (int(getattr(args, "seed", 0) or 0) * 1_000_003 + counter) * 2
+        mask = (1 << 62) - 1
+        return (
+            torch.Generator(device=device).manual_seed(base & mask),
+            torch.Generator(device=device).manual_seed((base + 1) & mask),
+        )
+
+    @staticmethod
+    def _sigma_route(args):
+        raw = str(getattr(args, "sigma_lowres_route", None) or "1024:896")
+        try:
+            native, demote = (int(value) for value in raw.split(":"))
+        except ValueError:
+            raise ValueError(
+                "--sigma_lowres_route expects NATIVE:DEMOTE, " f"got {raw!r}"
+            ) from None
+        if not native > demote > 0:
+            raise ValueError(
+                "--sigma_lowres_route needs NATIVE > DEMOTE > 0, " f"got {raw!r}"
+            )
+        return native, demote
+
+    @staticmethod
+    def _sigma_route2(args):
+        raw = getattr(args, "sigma_lowres_route2", None)
+        if not raw:
+            return None
+        try:
+            native, demote = (int(value) for value in str(raw).split(":"))
+        except ValueError:
+            raise ValueError(
+                "--sigma_lowres_route2 expects NATIVE:DEMOTE, " f"got {raw!r}"
+            ) from None
+        if not native > demote > 0:
+            raise ValueError(
+                "--sigma_lowres_route2 needs NATIVE > DEMOTE > 0, " f"got {raw!r}"
+            )
+        return native, demote
+
+    _YARNSIG_DEFAULT = "1,4,0.35,2"
+    _YARNSIG_OFF = frozenset({"", "0", "off", "no", "none", "false"})
+
+    @staticmethod
+    def _yarnsig_params(args):
+        raw = getattr(args, "sigma_lowres_yarnsig", None)
+        if raw is None and getattr(args, "sigma_lowres", False):
+            raw = AnimaTrainer._YARNSIG_DEFAULT
+            args.sigma_lowres_yarnsig = raw
+        if raw is None or str(raw).strip().lower() in AnimaTrainer._YARNSIG_OFF:
+            return None
+        cached = getattr(args, "_yarnsig_parsed", None)
+        if cached is not None:
+            return cached
+        try:
+            alpha, beta, center, gamma = (
+                float(value) for value in str(raw).split(",")
+            )
+        except ValueError:
+            raise ValueError(
+                "--sigma_lowres_yarnsig expects ALPHA,BETA,CENTER,GAMMA, "
+                f"got {raw!r}"
+            ) from None
+        if not (0 <= alpha < beta and 0 < center < 1 and gamma > 0):
+            raise ValueError(
+                "--sigma_lowres_yarnsig needs 0<=ALPHA<BETA, 0<CENTER<1, "
+                f"GAMMA>0; got {raw!r}"
+            )
+        args._yarnsig_parsed = (alpha, beta, center, gamma)
+        return args._yarnsig_parsed
+
+    @staticmethod
+    def _sigma_rule_cfg(args, rule):
+        if rule == 1:
+            return (
+                getattr(args, "sigma_lowres_threshold", 0.5),
+                getattr(args, "sigma_lowres_threshold_max", None),
+                getattr(args, "sigma_lowres_span", None),
+            )
+        if rule == 2:
+            return (
+                getattr(args, "sigma_lowres_threshold2", None),
+                getattr(args, "sigma_lowres_threshold2_max", None),
+                getattr(args, "sigma_lowres_span2", None),
+            )
+        raise ValueError(f"sigma_lowres rule must be 1 or 2, got {rule!r}")
+
+    @staticmethod
+    def _sigma_span_params(args, rule=1):
+        raw = AnimaTrainer._sigma_rule_cfg(args, rule)[2]
+        if not raw:
+            return None
+        cache_attr = "_sigma_span_parsed" if rule == 1 else "_sigma_span2_parsed"
+        cached = getattr(args, cache_attr, None)
+        if cached is not None:
+            return cached
+        parts = str(raw).split(":")
+        mode = parts[0]
+        fraction = 0.5
+        valid = mode in {"early", "late", "spread"} and len(parts) <= 2
+        if valid and len(parts) == 2:
+            try:
+                fraction = float(parts[1])
+            except ValueError:
+                valid = False
+        if not valid or not 0 < fraction < 1:
+            suffix = "" if rule == 1 else "2"
+            raise ValueError(
+                f"--sigma_lowres_span{suffix} expects "
+                f"early|late|spread[:FRAC] with 0<FRAC<1, got {raw!r}"
+            )
+        setattr(args, cache_attr, (mode, fraction))
+        return mode, fraction
+
+    @staticmethod
+    def _sigma_gate_allows(args, sigmas_flat, rule=1):
+        threshold, threshold_max, _ = AnimaTrainer._sigma_rule_cfg(args, rule)
+        threshold = 0.5 if threshold is None else float(threshold)
+        if not bool((sigmas_flat > threshold).all()):
+            return False
+        return threshold_max is None or bool(
+            (sigmas_flat < float(threshold_max)).all()
+        )
+
+    @staticmethod
+    def _sigma_span_allows(args, step_index, rule=1):
+        span = AnimaTrainer._sigma_span_params(args, rule)
+        if span is None:
+            return True
+        mode, fraction = span
+        total = int(getattr(args, "max_train_steps", 0) or 0) * int(
+            getattr(args, "gradient_accumulation_steps", 1) or 1
+        )
+        if total <= 0:
+            raise ValueError("sigma_lowres span needs finalized max_train_steps")
+        if mode == "early":
+            return step_index <= round(fraction * total)
+        if mode == "late":
+            return step_index > round((1.0 - fraction) * total)
+        seed = int(getattr(args, "seed", 0) or 0)
+        return random.Random(seed * 1_000_003 + step_index).random() < fraction
+
+    @staticmethod
+    def _validate_sigma_rules(args):
+        route = AnimaTrainer._sigma_route(args)
+        route2 = AnimaTrainer._sigma_route2(args)
+        if route2 is not None:
+            low, high, _ = AnimaTrainer._sigma_rule_cfg(args, 2)
+            if low is None or high is None:
+                raise ValueError(
+                    "--sigma_lowres_route2 requires both "
+                    "--sigma_lowres_threshold2 and --sigma_lowres_threshold2_max"
+                )
+            if not 0 <= float(low) < float(high) <= 1:
+                raise ValueError(
+                    "sigma_lowres rule2 bounds must satisfy 0 <= low < high <= 1"
+                )
+        low1, high1, _ = AnimaTrainer._sigma_rule_cfg(args, 1)
+        if high1 is not None and not 0 <= float(low1) < float(high1) <= 1:
+            raise ValueError(
+                "sigma_lowres primary bounds must satisfy 0 <= low < high <= 1"
+            )
+        AnimaTrainer._sigma_span_params(args, 1)
+        AnimaTrainer._sigma_span_params(args, 2)
+        AnimaTrainer._yarnsig_params(args)
+        return route, route2
+
+    @staticmethod
+    def _sigma_demote_choice(args, sigmas_flat, step_index):
+        if AnimaTrainer._sigma_route2(args) is not None:
+            if AnimaTrainer._sigma_gate_allows(
+                args, sigmas_flat, 2
+            ) and AnimaTrainer._sigma_span_allows(args, step_index, 2):
+                return 2
+        if AnimaTrainer._sigma_gate_allows(
+            args, sigmas_flat, 1
+        ) and AnimaTrainer._sigma_span_allows(args, step_index, 1):
+            return 1
+        return None
+
+    def _sigma_rule_dead_warn(self, args, rule):
+        warned = getattr(self, "_sigma_rule_dead_warned", set())
+        if rule in warned:
+            return
+        warned.add(rule)
+        self._sigma_rule_dead_warned = warned
+        route = self._sigma_route2(args) if rule == 2 else self._sigma_route(args)
+        logger.warning(
+            "sigma_lowres rule %d (%d:%d) passed but its sibling latent is "
+            "missing; falling back to %s.",
+            rule,
+            route[0],
+            route[1],
+            "rule 1/native" if rule == 2 else "native",
+        )
+
+    def _maybe_sigma_demote(
+        self, ctx: TrainCtx, batch, latents, is_train, generator=None
+    ):
+        args = ctx.args
+        self._yarnsig_step = None
+        if not is_train or not getattr(args, "sigma_lowres", False):
+            return latents, None
+        step_index = getattr(self, "_sigma_span_step", 0) + 1
+        self._sigma_span_step = step_index
+        demoted = batch.get("demoted_latents")
+        demoted2 = batch.get("demoted_latents2")
+        if demoted is None and demoted2 is None:
+            return latents, None
+        unsafe = [
+            adapter.name
+            for adapter in self._adapters
+            if not getattr(adapter, "sigma_demote_safe", False)
+        ]
+        if unsafe:
+            raise ValueError(
+                f"--sigma_lowres is unsupported by method adapter(s) {unsafe}"
+            )
+        sigmas_flat = noise_utils.draw_flat_sigmas(
+            args,
+            latents.shape[0],
+            latents.shape[-2],
+            latents.shape[-1],
+            ctx.accelerator.device,
+            generator=generator,
+        )
+        if sigmas_flat is None:
+            return latents, None
+        total = getattr(self, "_sigma_lowres_seen", 0) + 1
+        self._sigma_lowres_seen = total
+        choice = self._sigma_demote_choice(args, sigmas_flat, step_index)
+        if choice == 2 and demoted2 is None:
+            self._sigma_rule_dead_warn(args, 2)
+            choice = (
+                1
+                if self._sigma_gate_allows(args, sigmas_flat, 1)
+                and self._sigma_span_allows(args, step_index, 1)
+                else None
+            )
+        if choice == 1 and demoted is None:
+            self._sigma_rule_dead_warn(args, 1)
+            choice = None
+        if choice is not None:
+            native_hw = tuple(latents.shape[-2:])
+            selected = demoted2 if choice == 2 else demoted
+            latents = selected.to(device=latents.device, dtype=latents.dtype)
+            yarn = self._yarnsig_params(args) if choice == 1 else None
+            if yarn is not None:
+                alpha, beta, center, gamma = yarn
+                sigma = min(max(float(sigmas_flat.min()), 1e-6), 1 - 1e-6)
+                mu = 1 / (
+                    1
+                    + math.exp(
+                        -gamma
+                        * (
+                            math.log(sigma / (1 - sigma))
+                            - math.log(center / (1 - center))
+                        )
+                    )
+                )
+                self._yarnsig_step = (
+                    (native_hw[0] // 2) / (latents.shape[-2] // 2),
+                    (native_hw[1] // 2) / (latents.shape[-1] // 2),
+                    alpha,
+                    beta,
+                    mu,
+                )
+            demoted_count = getattr(self, "_sigma_lowres_demoted", 0) + 1
+            self._sigma_lowres_demoted = demoted_count
+            if demoted_count == 1:
+                logger.info(
+                    "sigma_lowres first demotion: %s -> %s at sigma=%s",
+                    native_hw,
+                    tuple(latents.shape[-2:]),
+                    [round(float(value), 3) for value in sigmas_flat],
+                )
+        return latents, sigmas_flat
+
     def get_noise_scheduler(
         self, args: argparse.Namespace, device: torch.device
     ) -> Any:
@@ -790,6 +1084,27 @@ class AnimaTrainer:
         if latents.ndim == 5:  # Fallback for 5D latents (old cache)
             latents = latents.squeeze(2)  # [B, C, 1, H, W] -> [B, C, H, W]
 
+        g_sigma, g_noise = self._paired_step_generators(
+            args, accelerator.device, is_train
+        )
+        latents, sigmas_flat = self._maybe_sigma_demote(
+            ctx, batch, latents, is_train, generator=g_sigma
+        )
+        if is_train and getattr(args, "sigma_lowres", False):
+            token_count = (latents.shape[-2] // 2) * (latents.shape[-1] // 2)
+            self._token_step_hist[token_count] = self._token_step_hist.get(
+                token_count, 0
+            ) + int(latents.shape[0])
+        if sigmas_flat is None and g_sigma is not None:
+            sigmas_flat = noise_utils.draw_flat_sigmas(
+                args,
+                latents.shape[0],
+                latents.shape[-2],
+                latents.shape[-1],
+                accelerator.device,
+                generator=g_sigma,
+            )
+
         # Method-adapter pre-forward priming. IP-Adapter encodes the reference
         # image and primes per-block K/V; EasyControl runs the cond pre-pass
         # and primes per-block (K_c, V_c). Both run on the 4D latent layout
@@ -804,7 +1119,15 @@ class AnimaTrainer:
             )
             for adapter in self._adapters:
                 adapter.prime_for_forward(step_ctx, batch, latents, is_train=is_train)
-        noise = torch.randn_like(latents)
+        if g_noise is None:
+            noise = torch.randn_like(latents)
+        else:
+            noise = torch.randn(
+                latents.shape,
+                generator=g_noise,
+                device=latents.device,
+                dtype=latents.dtype,
+            )
 
         # Draw noisy input + timesteps via the sampler registry (M1).
         sampler_fn = SAMPLER_REGISTRY[getattr(args, "sampler", "default") or "default"]
@@ -816,6 +1139,7 @@ class AnimaTrainer:
                 noise=noise,
                 device=accelerator.device,
                 weight_dtype=weight_dtype,
+                sigmas=sigmas_flat,
             )
         )
         noisy_model_input = sampler_out.noisy_input
@@ -918,7 +1242,11 @@ class AnimaTrainer:
             2
         )  # 4D to 5D, [B, C, H, W] -> [B, C, 1, H, W]
 
-        with torch.set_grad_enabled(is_train), accelerator.autocast():
+        with (
+            _sigma_yarn_scope(anima, getattr(self, "_yarnsig_step", None)),
+            torch.set_grad_enabled(is_train),
+            accelerator.autocast(),
+        ):
             if crossattn_emb is None:
                 model_pred = anima(
                     noisy_model_input,
@@ -1683,6 +2011,13 @@ class AnimaTrainer:
         if not resos:
             return None, None
         counts = token_counts_for_resos(resos) | self._sample_prompt_token_counts(args)
+        if getattr(args, "sigma_lowres", False):
+            from library.datasets.buckets import demoted_token_counts
+
+            counts |= demoted_token_counts(resos, *self._sigma_route(args))
+            route2 = self._sigma_route2(args)
+            if route2 is not None:
+                counts |= demoted_token_counts(resos, *route2)
         return len(counts), (min(counts), max(counts))
 
     def _sample_prompt_token_counts(self, args) -> set:
@@ -2229,6 +2564,19 @@ class AnimaTrainer:
             args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
 
+        if getattr(args, "deterministic", False):
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+            torch.use_deterministic_algorithms(True, warn_only=True)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            from networks import attention_dispatch
+
+            attention_dispatch.set_deterministic(True)
+            logger.info(
+                "deterministic mode enabled (CUBLAS_WORKSPACE_CONFIG=%s)",
+                os.environ["CUBLAS_WORKSPACE_CONFIG"],
+            )
+
         # Whether inductor will have CUDAGraphs active -- governs whether the
         # training loop needs to call torch.compiler.cudagraph_mark_step_begin()
         # each step (see the call site inside the accumulate block).
@@ -2256,6 +2604,25 @@ class AnimaTrainer:
         collator = ds.collator
         use_user_config = ds.use_user_config
         use_dreambooth_method = ds.use_dreambooth_method
+
+        if getattr(args, "sigma_lowres", False):
+            route, route2 = self._validate_sigma_rules(args)
+            enabled = 0
+            for dataset in getattr(train_dataset_group, "datasets", []):
+                if hasattr(dataset, "enable_sigma_demote"):
+                    dataset.enable_sigma_demote(*route)
+                    if route2 is not None:
+                        dataset.enable_sigma_demote2(*route2)
+                    enabled += 1
+            logger.info(
+                "sigma_lowres enabled: route %d:%d on %d training dataset(s); "
+                "validation remains native.",
+                route[0],
+                route[1],
+                enabled,
+            )
+        elif self._yarnsig_params(args) is not None:
+            raise ValueError("--sigma_lowres_yarnsig requires --sigma_lowres")
 
         # Derive the torch.compile token-family budget from the buckets the
         # selected (path_pattern-filtered) images actually populate — NOT from
@@ -2716,6 +3083,9 @@ class AnimaTrainer:
                     len(train_dataloader) / args.gradient_accumulation_steps
                 )
                 initial_step = 0  # do not skip
+
+        # Resume-aware forward counter for early/late sigma-lowres spans.
+        self._sigma_span_step = initial_step
 
         # Drop the train dataset-group local before loop entry — the
         # dataloader already holds the data it needs. Keep val_dataset_group

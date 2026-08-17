@@ -92,35 +92,65 @@ def compute_loss_weighting_for_sd3(weighting_scheme: str, sigmas=None):
     return weighting
 
 
+def _restrict_sigma_range(args, sigmas: torch.Tensor) -> torch.Tensor:
+    t_min = getattr(args, "t_min", None)
+    t_max = getattr(args, "t_max", None)
+    if t_min is not None or t_max is not None:
+        low = t_min if t_min is not None else 0.0
+        high = t_max if t_max is not None else 1.0
+        sigmas = low + sigmas * (high - low)
+    return sigmas
+
+
+def draw_flat_sigmas(
+    args,
+    bsz: int,
+    h: int,
+    w: int,
+    device,
+    generator: "torch.Generator | None" = None,
+) -> Optional[torch.Tensor]:
+    """Draw flat per-sample flow sigmas for sigma-first training paths."""
+    sigmoid_bias = getattr(args, "sigmoid_bias", 0.0)
+    if args.timestep_sampling in {"uniform", "sigmoid"}:
+        if args.timestep_sampling == "sigmoid":
+            sigmas = torch.sigmoid(
+                args.sigmoid_scale
+                * torch.randn((bsz,), device=device, generator=generator)
+                + sigmoid_bias
+            )
+        else:
+            sigmas = torch.rand((bsz,), device=device, generator=generator)
+    elif args.timestep_sampling == "shift":
+        shift = args.discrete_flow_shift
+        sigmas = torch.randn(bsz, device=device, generator=generator)
+        sigmas = (sigmas * args.sigmoid_scale + sigmoid_bias).sigmoid()
+        sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
+    elif args.timestep_sampling == "flux_shift":
+        sigmas = torch.randn(bsz, device=device, generator=generator)
+        sigmas = (sigmas * args.sigmoid_scale + sigmoid_bias).sigmoid()
+        mu = get_lin_function(y1=0.5, y2=1.15)((h // 2) * (w // 2))
+        sigmas = time_shift(mu, 1.0, sigmas)
+    else:
+        return None
+    return _restrict_sigma_range(args, sigmas)
+
+
 def get_noisy_model_input_and_timesteps(
-    args, noise_scheduler, latents: torch.Tensor, noise: torch.Tensor, device, dtype
+    args,
+    noise_scheduler,
+    latents: torch.Tensor,
+    noise: torch.Tensor,
+    device,
+    dtype,
+    sigmas: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     bsz, h, w = latents.shape[0], latents.shape[-2], latents.shape[-1]
     assert bsz > 0, "Batch size not large enough"
     num_timesteps = noise_scheduler.config.num_train_timesteps
-    # Logit-space mean shift shared by every sigmoid-based branch; >0 skews σ
-    # toward the high-noise (structure) regime, 0.0 (default) = unbiased.
-    sigmoid_bias = getattr(args, "sigmoid_bias", 0.0)
-    if args.timestep_sampling == "uniform" or args.timestep_sampling == "sigmoid":
-        if args.timestep_sampling == "sigmoid":
-            sigmas = torch.sigmoid(
-                args.sigmoid_scale * torch.randn((bsz,), device=device) + sigmoid_bias
-            )
-        else:
-            sigmas = torch.rand((bsz,), device=device)
-    elif args.timestep_sampling == "shift":
-        shift = args.discrete_flow_shift
-        sigmas = torch.randn(bsz, device=device)
-        sigmas = sigmas * args.sigmoid_scale + sigmoid_bias
-        sigmas = sigmas.sigmoid()
-        sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
-    elif args.timestep_sampling == "flux_shift":
-        sigmas = torch.randn(bsz, device=device)
-        sigmas = sigmas * args.sigmoid_scale + sigmoid_bias
-        sigmas = sigmas.sigmoid()
-        mu = get_lin_function(y1=0.5, y2=1.15)((h // 2) * (w // 2))
-        sigmas = time_shift(mu, 1.0, sigmas)
-    else:
+    if sigmas is None:
+        sigmas = draw_flat_sigmas(args, bsz, h, w, device)
+    if sigmas is None:
         u = compute_density_for_timestep_sampling(
             weighting_scheme=args.weighting_scheme,
             batch_size=bsz,
@@ -135,14 +165,7 @@ def get_noisy_model_input_and_timesteps(
         sigmas = get_sigmas(
             noise_scheduler, sched_timesteps, device, n_dim=latents.ndim, dtype=dtype
         )
-
-    # Restrict sigma range (P-GRAFT-inspired timestep restriction)
-    t_min = getattr(args, "t_min", None)
-    t_max = getattr(args, "t_max", None)
-    if t_min is not None or t_max is not None:
-        lo = t_min if t_min is not None else 0.0
-        hi = t_max if t_max is not None else 1.0
-        sigmas = lo + sigmas * (hi - lo)
+        sigmas = _restrict_sigma_range(args, sigmas)
 
     # σ∈[0,1] IS the DiT's time argument — nothing downstream rescales it (cf.
     # inference's generation.py). Keep the flat per-sample σ as the returned
