@@ -84,6 +84,18 @@ gradient_accumulation_steps=1
 train_adaln = true
 adaln_rank = 16
 
+# Upstream v1.15 sigma-conditional low-resolution recipe. Off by default. When
+# enabled, route 2 has priority inside its safe sigma window; otherwise route 1
+# handles high-sigma steps and native resolution handles the rest.
+sigma_lowres = false
+sigma_lowres_route = "1024:896"
+sigma_lowres_threshold = 0.5
+sigma_lowres_span = "late:0.75"
+sigma_lowres_route2 = "1024:768"
+sigma_lowres_threshold2 = 0.65
+sigma_lowres_threshold2_max = 0.95
+sigma_lowres_span2 = "late:0.75"
+
 [general]
 [[datasets]]
 batch_size = 1

@@ -33,6 +33,11 @@ target_res = [1024, 896]
 #   make preprocess ARGS="--freefit"      # force on for one run
 freefit = true
 
+# Pixel-space lower-resolution siblings used by sigma_lowres. Both routes are
+# stored as extra keys inside each native latent NPZ. The passes are idempotent;
+# training ignores these keys unless sigma_lowres is enabled.
+sigma_demote = "1024:896,1024:768"
+
 # Preprocess input filter. When true, scripts/tasks/preprocess.py forwards
 # `--min_pixels = min_pixels` to both preprocess/resize_images.py and
 # preprocess/cache_text_embeddings.py so under-sized source images never

@@ -15,8 +15,12 @@ from library.preprocess._dataset import (
     walk_images,
 )
 from library.preprocess._progress import ProgressFn, tqdm_progress
-from library.preprocess.images import process_image, resize_to_buckets
-from library.preprocess.latents import cache_latents, get_latents_npz_path
+from library.preprocess.images import process_image, resize_to_bucket, resize_to_buckets
+from library.preprocess.latents import (
+    cache_demoted_latents,
+    cache_latents,
+    get_latents_npz_path,
+)
 from library.preprocess.pe import (
     cache_path_for as pe_cache_path_for,
     cache_pe_features,
@@ -46,6 +50,7 @@ __all__ = [
     "tqdm_progress",
     # cache functions
     "cache_latents",
+    "cache_demoted_latents",
     "get_latents_npz_path",
     "cache_text_embeddings",
     "cache_pooled_text",
@@ -55,6 +60,7 @@ __all__ = [
     "write_pe_centroid",
     "pe_cache_path_for",
     "resize_to_buckets",
+    "resize_to_bucket",
     "process_image",
     # cache reconciliation
     "find_stale_caches",

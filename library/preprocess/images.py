@@ -30,6 +30,24 @@ from library.preprocess._progress import ProgressFn
 CAPTION_EXTENSIONS = {".txt", ".caption"}
 
 
+def resize_to_bucket(img: Image.Image, bucket: tuple[int, int]) -> Image.Image:
+    """Cover-resize with LANCZOS and center-crop to ``bucket``."""
+    bucket_w, bucket_h = bucket
+    width, height = img.size
+    image_ar = width / height
+    bucket_ar = bucket_w / bucket_h
+    if image_ar > bucket_ar:
+        new_h = bucket_h
+        new_w = round(bucket_h * image_ar)
+    else:
+        new_w = bucket_w
+        new_h = round(bucket_w / image_ar)
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    left = (new_w - bucket_w) // 2
+    top = (new_h - bucket_h) // 2
+    return img.crop((left, top, left + bucket_w, top + bucket_h))
+
+
 def _collect_metadata(src: Image.Image) -> dict:
     """Pull through metadata that ``convert("RGB")`` + a bare ``save()`` drops.
 

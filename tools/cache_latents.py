@@ -15,7 +15,7 @@ from pathlib import Path
 import torch
 
 
-from library.preprocess import cache_latents, tqdm_progress
+from library.preprocess import cache_demoted_latents, cache_latents, tqdm_progress
 from library.runtime.cli import add_io_args
 
 
@@ -57,7 +57,33 @@ def main() -> None:
             "fnmatch glob. Use | to separate alternatives. Default: *"
         ),
     )
+    parser.add_argument(
+        "--sigma_demote",
+        metavar="NATIVE:DEMOTE",
+        help=(
+            "Append a lower-resolution latent sibling to each eligible native "
+            "NPZ instead of rebuilding native latents, for example 1024:896."
+        ),
+    )
     args = parser.parse_args()
+
+    demote_route = None
+    if args.sigma_demote:
+        native_s, separator, demote_s = args.sigma_demote.partition(":")
+        try:
+            if not separator:
+                raise ValueError
+            demote_route = (int(native_s), int(demote_s))
+        except ValueError:
+            raise SystemExit(
+                "--sigma_demote expects one NATIVE:DEMOTE route, for example "
+                f"1024:896; got {args.sigma_demote!r}"
+            ) from None
+        if not demote_route[0] > demote_route[1] > 0:
+            raise SystemExit(
+                "--sigma_demote requires NATIVE > DEMOTE > 0; got "
+                f"{args.sigma_demote!r}"
+            )
 
     from library.models import qwen_vae as qwen_image_autoencoder_kl
 
@@ -79,15 +105,30 @@ def main() -> None:
     vae.requires_grad_(False)
     vae.eval()
 
-    stats = cache_latents(
-        data_dir,
-        vae,
-        cache_dir=cache_dir,
-        recursive=args.recursive,
-        path_pattern=args.path_pattern,
-        batch_size=args.batch_size,
-        progress=tqdm_progress("Caching latents"),
-    )
+    if demote_route is None:
+        stats = cache_latents(
+            data_dir,
+            vae,
+            cache_dir=cache_dir,
+            recursive=args.recursive,
+            path_pattern=args.path_pattern,
+            batch_size=args.batch_size,
+            progress=tqdm_progress("Caching latents"),
+        )
+    else:
+        stats = cache_demoted_latents(
+            data_dir,
+            vae,
+            native_edge=demote_route[0],
+            demote_edge=demote_route[1],
+            cache_dir=cache_dir,
+            recursive=args.recursive,
+            path_pattern=args.path_pattern,
+            batch_size=args.batch_size,
+            progress=tqdm_progress(
+                f"Caching demoted latents {demote_route[0]}:{demote_route[1]}"
+            ),
+        )
     print(
         f"\nLatent caching complete: {stats.written} cached, "
         f"{stats.skipped} skipped (already existed)"

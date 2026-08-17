@@ -224,6 +224,35 @@ def token_counts_for_resos(resos) -> set:
     return {(w // 16) * (h // 16) for w, h in resos}
 
 
+def demote_bucket_for(
+    width: int,
+    height: int,
+    native_edge: int,
+    demote_edge: int,
+) -> tuple[int, int] | None:
+    """Return the lower-resolution sibling grid for a native-tier bucket.
+
+    Only resolutions whose token count belongs to ``native_edge`` are eligible.
+    The sibling preserves the current aspect ratio with the existing free-fit
+    solver, so preprocessing and training derive the same deterministic grid.
+    """
+    lo, hi = freefit_band_for_edge(native_edge)
+    token_count = (width // 16) * (height // 16)
+    if not lo <= token_count <= hi:
+        return None
+    return freefit_bucket(width, height, freefit_band_for_edge(demote_edge))
+
+
+def demoted_token_counts(resos, native_edge: int, demote_edge: int) -> set:
+    """Token counts used by the demoted siblings of populated resolutions."""
+    counts: set[int] = set()
+    for width, height in resos:
+        bucket = demote_bucket_for(width, height, native_edge, demote_edge)
+        if bucket is not None:
+            counts.add((bucket[0] // 16) * (bucket[1] // 16))
+    return counts
+
+
 def snap_sample_size(width: int, height: int) -> Tuple[int, int]:
     """Snap a requested sample (W, H) to the DiT's 16px pixel grid.
 

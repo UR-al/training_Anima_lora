@@ -111,6 +111,52 @@ def _preprocess_path_pattern_args(extra) -> list[str]:
     return ["--path_pattern", pattern]
 
 
+def _sigma_demote_routes(extra) -> list[str]:
+    """Configured sigma-demote routes, expanded into one VAE pass each."""
+    if "--sigma_demote" in extra or "--sigma-demote" in extra:
+        return []
+    raw = os.environ.get("SIGMA_DEMOTE")
+    if raw is None:
+        from ._common import _path_overrides
+
+        raw = _path_overrides().get("sigma_demote")
+    if raw is None or raw is False:
+        return []
+    if raw is True:
+        return ["1024:896"]
+    value = str(raw).strip()
+    if not value or value.lower() in {"0", "false", "no", "off"}:
+        return []
+    if value.lower() in {"1", "true", "yes", "on"}:
+        return ["1024:896"]
+    routes: list[str] = []
+    for part in value.split(","):
+        route = part.strip()
+        if route and ":" in route and route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _pop_explicit_demote_routes(extra) -> tuple[list[str], list[str]]:
+    routes: list[str] = []
+    cleaned: list[str] = []
+    index = 0
+    while index < len(extra):
+        token = extra[index]
+        if token in {"--sigma_demote", "--sigma-demote"}:
+            if index + 1 >= len(extra):
+                raise SystemExit(f"{token} requires NATIVE:DEMOTE")
+            for part in str(extra[index + 1]).split(","):
+                route = part.strip()
+                if route and route not in routes:
+                    routes.append(route)
+            index += 2
+            continue
+        cleaned.append(token)
+        index += 1
+    return routes, cleaned
+
+
 def _pop_target_res(extra) -> list[str]:
     """Strip ``--target_res E1 E2 …`` (a resize-only flag) from ``extra``.
 
@@ -244,6 +290,44 @@ def cmd_preprocess_vae(extra):
             *extra,
         ]
     )
+    for route in _sigma_demote_routes(extra):
+        print(f"  [preprocess] sigma_demote={route}: caching sibling latents")
+        _run_demote_pass(route, extra)
+
+
+def _run_demote_pass(route: str, extra) -> None:
+    pp_args = _preprocess_path_pattern_args(extra)
+    run(
+        [
+            PY,
+            "tools/cache_latents.py",
+            "--dir",
+            _path("resized_image_dir", "post_image_dataset/resized"),
+            "--cache_dir",
+            _path("lora_cache_dir", "post_image_dataset/lora"),
+            "--vae",
+            _path("vae", "models/vae/qwen_image_vae.safetensors"),
+            "--batch_size",
+            "4",
+            "--chunk_size",
+            "64",
+            "--recursive",
+            "--sigma_demote",
+            route,
+            *pp_args,
+            *extra,
+        ]
+    )
+
+
+def cmd_preprocess_demote(extra):
+    """Append all configured sigma-lowres sibling routes to native NPZ caches."""
+    routes, cleaned = _pop_explicit_demote_routes(extra)
+    if not routes:
+        routes = _sigma_demote_routes(cleaned) or ["1024:896"]
+    for route in routes:
+        print(f"  [preprocess] sigma_demote={route}: caching sibling latents")
+        _run_demote_pass(route, cleaned)
 
 
 def cmd_preprocess_te(extra):
@@ -588,7 +672,7 @@ def cmd_preprocess_manifest(extra):
     """Preprocess from a JSON manifest — one entry per (dataset subset × tier).
 
     Generalizes single-folder / multi-folder / multi-scale / skip into one loop so
-    the web GUI can preprocess an arbitrary set of source folders (the subset
+    the native GUI can preprocess an arbitrary set of source folders (the subset
     builder) at training start. ``MANIFEST_FILE`` env → a JSON file::
 
         {"caption_shuffle_variants": "4", "caption_tag_dropout_rate": "0.1",
@@ -618,6 +702,13 @@ def cmd_preprocess_manifest(extra):
     )
     shuffle = str(spec.get("caption_shuffle_variants", "4"))
     tagdrop = str(spec.get("caption_tag_dropout_rate", "0.1"))
+    sigma_demote = spec.get("sigma_demote")
+    if isinstance(sigma_demote, str):
+        demote_routes = [p.strip() for p in sigma_demote.split(",") if p.strip()]
+    elif isinstance(sigma_demote, (list, tuple)):
+        demote_routes = [str(p).strip() for p in sigma_demote if str(p).strip()]
+    else:
+        demote_routes = []
     # REPA v2: when the GUI set use_repa, also cache PE-Spatial patch tokens into
     # each subset's cache dir so the chained train job's repa_pe_features resolve.
     repa_encoder = None
@@ -682,6 +773,27 @@ def cmd_preprocess_manifest(extra):
                 *vae2d,
             ]
         )
+        for route in demote_routes:
+            run(
+                [
+                    PY,
+                    "tools/cache_latents.py",
+                    "--dir",
+                    e["resized"],
+                    "--cache_dir",
+                    e["cache"],
+                    "--vae",
+                    vae,
+                    "--batch_size",
+                    "4",
+                    "--chunk_size",
+                    "64",
+                    "--recursive",
+                    "--sigma_demote",
+                    route,
+                    *vae2d,
+                ]
+            )
         run(
             [
                 PY,
@@ -719,7 +831,7 @@ def cmd_preprocess_manifest(extra):
             cmd_mask([], resized_dir=e["resized"], mask_dir=e["mask"])
 
     # Reaching here = every entry cached without error (run() raises on failure).
-    # Drop the completion marker the web GUI checks (PREPROCESS_MARKER) so a later
+    # Drop the completion marker the native GUI checks (PREPROCESS_MARKER) so a later
     # launch with the same signature (PREPROCESS_SIG) can skip the redundant
     # preprocess and train directly.
     marker = os.environ.get("PREPROCESS_MARKER")
