@@ -13,7 +13,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gui.modules.config_io import load_toml_to_form, save_form_to_toml  # noqa: E402
+from gui.modules.config_io import (  # noqa: E402
+    commented_setting_to_form,
+    extract_commented_settings,
+    load_toml_to_form,
+    save_form_to_toml,
+)
 
 # A representative slice of the user's real LETS config (flat keys only).
 _LETS = """
@@ -61,8 +66,10 @@ def test_load_maps_dedicated_fields():
     assert form["dit_path"].endswith("anima.safetensors")  # model-path rename
     assert form["vae_path"].endswith("vae.safetensors")
     assert form["te_path"].endswith("te.safetensors")
-    # LyCORIS algo/preset ride inside network_args verbatim, not extra_flags.
-    assert "algo=lokr" in form["network_args"]
+    # LyCORIS algo/preset populate their dedicated native-GUI controls.
+    assert form["algo"] == "lokr"
+    assert form["lycoris_preset"] == "unet-transformer-only"
+    assert "algo=lokr" not in form["network_args"]
     assert "algo=lokr" not in form.get("extra_flags", "")
 
 
@@ -78,7 +85,7 @@ def test_load_renames_to_dedicated_fields():
     # 0/1000 ÷1000 → flow-matching σ, as dedicated t_min/t_max fields.
     assert form["t_min"] == "0.0" and form["t_max"] == "1.0"
     # bool renames → checkbox fields.
-    assert form["use_vae_cache"] is True  # cache_latents →
+    assert form["use_vae_cache"] == "on"  # cache_latents → tri-state ON
     assert form["output_config"] is True  # save_toml →
     assert form["save_state"] is True
     assert form["gradient_checkpointing"] is True
@@ -114,10 +121,12 @@ def test_save_emits_runnable_toml_and_round_trips():
     back = load_toml_to_form(text)
     assert back["optimizer_type"] == "CAME"
     assert back["network_dim"] == "100000"
-    assert "algo=lokr" in back["network_args"]
+    assert back["algo"] == "lokr"
+    assert back["lycoris_preset"] == "unet-transformer-only"
+    assert "algo=lokr" not in back["network_args"]
     # loss_type/huber_c/use_vae_cache are dedicated fields after Phase 1b.
     assert back["loss_type"] == "huber" and back["huber_c"] == "0.1"
-    assert back["use_vae_cache"] is True
+    assert back["use_vae_cache"] == "on"
     # masked_loss is a curated tri-state now → --no-masked_loss round-trips to "off".
     assert back["masked_loss"] == "off"
 
@@ -204,8 +213,99 @@ def test_load_resume_and_caption_variant_fields():
         "use_shuffled_caption_variants = true\n"
     )
     assert form["resume"] == "output/ckpt/x-state"
-    assert form["use_text_cache"] is True
+    assert form["use_text_cache"] == "on"
     assert form["use_shuffled_caption_variants"] is True
+
+
+def test_load_lets_lycoris_direct_preset_and_tuple_args():
+    form = load_toml_to_form(
+        'network_module = "lycoris.kohya"\n'
+        'network_args = ["algo=lokr", "preset=C:/presets/my anima.toml", '
+        '"factor=4"]\n'
+        'optimizer_args = ["betas=(0.99, 0.99)", "weight_decay=0.0"]\n'
+    )
+    assert form["network_module"] == "networks.lycoris_anima"
+    assert form["algo"] == "lokr"
+    assert form["lycoris_preset"] == "<custom>"
+    assert form["lycoris_preset_custom"] == "C:/presets/my anima.toml"
+    assert form["network_args"] == "factor=4"
+    assert form["optimizer_args"].splitlines() == [
+        "betas=(0.99,0.99)",
+        "weight_decay=0.0",
+    ]
+
+    saved = save_form_to_toml(
+        {
+            "method": "lycoris",
+            "network_module": form["network_module"],
+            "algo": form["algo"],
+            "lycoris_preset": form["lycoris_preset"],
+            "lycoris_preset_custom": form["lycoris_preset_custom"],
+            "network_args": form["network_args"],
+        }
+    )
+    back = load_toml_to_form(saved)
+    assert back["lycoris_preset"] == "<custom>"
+    assert back["lycoris_preset_custom"] == "C:/presets/my anima.toml"
+
+
+def test_commented_lets_alternatives_load_off_and_parse_array_items():
+    text = """
+optimizer_type = "LoraEasyCustomOptimizer.ademamix.SimplifiedAdEMAMix"
+#optimizer_type = "LoraEasyCustomOptimizer.came.CAME"
+network_args = [
+#  "algo=loha",
+  "algo=lokr",
+  "preset=unet-only",
+]
+optimizer_args = [
+  "betas=(0.99, 0.99)",
+#  "betas=(0.9,0.999,0.9999)",
+#  "foreach=True",
+]
+#lr_scheduler_args = [
+#  "gamma=0.9",
+#]
+# this is prose = not a TOML value
+#[optimizer_args.args]
+"""
+    form = load_toml_to_form(text)
+    comments = form.pop("_commented_settings")
+    assert form["optimizer_type"].endswith("SimplifiedAdEMAMix")
+    assert form["algo"] == "lokr" and form["lycoris_preset"] == "unet-only"
+    assert form["optimizer_args"] == "betas=(0.99,0.99)"
+    assert [(c["key"], c["value"]) for c in comments] == [
+        ("optimizer_type", "LoraEasyCustomOptimizer.came.CAME"),
+        ("network_args", ["algo=loha"]),
+        ("optimizer_args", ["betas=(0.9,0.999,0.9999)"]),
+        ("optimizer_args", ["foreach=True"]),
+        ("lr_scheduler_args", ["gamma=0.9"]),
+    ]
+    assert commented_setting_to_form(comments[1]) == {"algo": "loha"}
+    assert commented_setting_to_form(comments[2]) == {
+        "optimizer_args": "betas=(0.9,0.999,0.9999)"
+    }
+
+
+def test_save_preserves_ignored_settings_as_off_comments():
+    ignored = extract_commented_settings(
+        '#optimizer_type = "CAME"\n#optimizer_args = ["foreach=True"]\n'
+    )
+    text = save_form_to_toml(
+        {
+            "method": "lora",
+            "optimizer_type": "AdamW",
+            "_commented_settings": ignored,
+        }
+    )
+    assert '# optimizer_type = "CAME"' in text
+    assert '# optimizer_args = [ "foreach=True",]' in text
+    loaded = load_toml_to_form(text)
+    comments = loaded["_commented_settings"]
+    assert [(c["key"], c["value"]) for c in comments] == [
+        ("optimizer_type", "CAME"),
+        ("optimizer_args", ["foreach=True"]),
+    ]
 
 
 _MULTI_SUBSET = """

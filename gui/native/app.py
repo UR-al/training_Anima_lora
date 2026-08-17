@@ -66,7 +66,11 @@ from PySide6.QtWidgets import (
 
 from gui import backend
 from gui.modules.arg_help import ARG_HELP  # Korean per-dest help (en fallback)
-from gui.modules.config_io import load_toml_to_form, save_form_to_toml
+from gui.modules.config_io import (
+    commented_setting_to_form,
+    load_toml_to_form,
+    save_form_to_toml,
+)
 from gui.native.tag_sort import KEEP_TOKENS_SEPARATOR
 
 
@@ -131,6 +135,12 @@ _KO = {
     "Sigma low-resolution": "Sigma 저해상도 학습",
     "Reproducibility": "재현성",
     "needs sigma_lowres enabled": "sigma_lowres를 먼저 켜야 합니다",
+    "LyCORIS preset (direct input)": "LyCORIS 프리셋 직접 입력",
+    "needs LyCORIS preset = <custom>": "LyCORIS 프리셋에서 <custom>을 선택해야 합니다",
+    "Ignored (#) settings": "무시된 (#) 설정",
+    "Commented settings load OFF. Turn one ON to apply it. Alternatives for the same field are mutually exclusive.": "# 주석 설정은 OFF 상태로 불러옵니다. 사용할 항목만 ON 하세요. 같은 필드의 대안은 하나만 선택할 수 있습니다.",
+    "No commented settings in the loaded config.": "불러온 설정에 # 주석 설정이 없습니다.",
+    "Unsupported by this Anima trainer": "현재 Anima 트레이너에서 지원하지 않는 설정",
     "Samples": "샘플",
     "Show": "펼치기",
     "Hide": "접기",
@@ -335,6 +345,32 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 ],
             ),
             (
+                "Save / checkpoints",
+                [
+                    ("save_model_as", "Save model as", "combo:safetensors,ckpt,pt"),
+                    ("save_every_n_steps", "Save every N steps", "text"),
+                    ("save_last_n_steps", "Keep last N steps", "text"),
+                    ("save_last_n_steps_state", "Keep last N step states", "text"),
+                    ("save_last_n_epochs", "Keep last N epochs", "text"),
+                    (
+                        "save_last_n_epochs_state",
+                        "Keep last N epoch states",
+                        "text",
+                    ),
+                    ("save_state_on_train_end", "Save state on train end", "bool"),
+                ],
+            ),
+            (
+                "Logging",
+                [
+                    ("log_every_n_steps", "Log every N steps", "text"),
+                    ("log_with", "Logger", "combo:tensorboard,wandb,all"),
+                    ("log_tracker_name", "Tracker name", "text"),
+                    ("wandb_run_name", "Weights & Biases run name", "text"),
+                    ("wandb_api_key", "Weights & Biases API key", "text"),
+                ],
+            ),
+            (
                 "Dataset",
                 [
                     ("dataset_config", "Dataset config TOML", "file"),
@@ -401,9 +437,38 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 [
                     ("use_vae_cache", "Cache VAE latents", "tristate"),
                     ("use_text_cache", "Cache text-encoder outputs", "tristate"),
+                    ("skip_cache_check", "Skip cache validation", "tristate"),
                     ("gradient_checkpointing", "Gradient checkpointing", "bool"),
                     ("qwen_image_vae_2d", "Qwen image VAE (2D)", "bool"),
                     ("qwen3_max_token_length", "Qwen3 max token length", "text"),
+                    ("t5_max_token_length", "T5 max token length", "text"),
+                    ("vae_batch_size", "VAE cache batch size", "text"),
+                    ("vae_disable_cache", "Disable VAE internal cache", "bool"),
+                ],
+            ),
+            (
+                "Caption variants",
+                [
+                    (
+                        "caption_shuffle_variants",
+                        "Caption shuffle variants",
+                        "text",
+                    ),
+                    (
+                        "caption_tag_dropout_rate",
+                        "Caption tag dropout rate",
+                        "text",
+                    ),
+                    (
+                        "use_shuffled_caption_variants",
+                        "Use shuffled caption variants",
+                        "bool",
+                    ),
+                    (
+                        "use_shuffled_caption_variants_only",
+                        "Use shuffled variants only",
+                        "bool",
+                    ),
                 ],
             ),
         ],
@@ -418,6 +483,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("network_module", "Network module", "combo:network_modules"),
                     ("network_dim", "Network dim (rank)", "text"),
                     ("network_alpha", "Network alpha", "text"),
+                    ("dim_from_weights", "Infer rank from weights", "bool"),
                     ("network_args", "network_args", "kvblock"),
                 ],
             ),
@@ -425,6 +491,11 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                 "LyCORIS",
                 [
                     ("lycoris_preset", "LyCORIS preset", "combo:lycoris_presets"),
+                    (
+                        "lycoris_preset_custom",
+                        "LyCORIS preset (direct input)",
+                        "file",
+                    ),
                     ("algo", "LyCORIS algo (loha/lokr/…)", "combo:lycoris_algos"),
                 ],
             ),
@@ -462,6 +533,8 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                         "opthelp:lr_scheduler_type",
                     ),
                     ("lr_warmup_steps", "Warmup steps", "text"),
+                    ("lr_scheduler_num_cycles", "Scheduler cycles", "text"),
+                    ("lr_scheduler_power", "Polynomial power", "text"),
                     # scheduler-cluster flags pulled out of "More flags" to sit here.
                     ("lr_decay_steps", "LR decay steps", "text"),
                     ("lr_scheduler_min_lr_ratio", "Min LR ratio", "text"),
@@ -495,6 +568,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("network_dropout", "Network dropout", "text"),
                     ("scale_weight_norms", "Scale weight norms", "text"),
                     ("max_grad_norm", "Max grad norm", "text"),
+                    ("masked_loss", "Masked loss", "tristate"),
                     (
                         "timestep_sampling",
                         "Timestep sampling",
@@ -520,9 +594,17 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("max_train_steps", "Max steps", "text"),
                     ("train_batch_size", "Batch size", "text"),
                     ("gradient_accumulation_steps", "Grad accumulation", "text"),
+                    ("max_data_loader_n_workers", "Data loader workers", "text"),
+                    (
+                        "persistent_data_loader_workers",
+                        "Persistent data loader workers",
+                        "bool",
+                    ),
                     ("blocks_to_swap", "Blocks to swap", "text"),
                     ("seed", "Seed", "text"),
                     ("mixed_precision", "Mixed precision", "combo:bf16,fp16,no"),
+                    ("highvram", "High VRAM mode", "bool"),
+                    ("lowram", "Low RAM mode", "bool"),
                     ("torch_compile", "torch.compile", "tristate"),
                 ],
             ),
@@ -537,6 +619,7 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
                     ("monitor", "Enable (--monitor)", "bool"),
                     ("monitor_host", "Host", "text"),
                     ("monitor_port", "Port", "text"),
+                    ("monitor_open_browser", "Open monitor on start", "bool"),
                 ],
             ),
         ],
@@ -558,7 +641,22 @@ _TRAINING_TABS: list[tuple[str, list[tuple[str, list[tuple[str, str, str]]]]]] =
         ],
     ),
     ("Experimental", []),
-    ("Metadata", []),
+    (
+        "Metadata",
+        [
+            (
+                "Model metadata",
+                [
+                    ("metadata_title", "Title", "text"),
+                    ("metadata_author", "Author", "text"),
+                    ("metadata_description", "Description", "text"),
+                    ("metadata_license", "License", "text"),
+                    ("metadata_tags", "Tags", "text"),
+                    ("training_comment", "Training comment", "text"),
+                ],
+            )
+        ],
+    ),
     ("Extra", []),
 ]
 
@@ -749,6 +847,11 @@ def _pos(v: object) -> bool:
 # is tr()'d and shown as the disabled field's tooltip so the user sees WHY it's greyed.
 _GREY_RULES: list[tuple[str, object, str]] = [
     (
+        "lycoris_preset_custom",
+        lambda v: v.get("lycoris_preset") == backend.LYCORIS_CUSTOM_PRESET,
+        "needs LyCORIS preset = <custom>",
+    ),
+    (
         "huber_c",
         lambda v: v.get("loss_type") in ("huber", "smooth_l1"),
         "needs loss_type = huber / smooth_l1",
@@ -899,6 +1002,7 @@ _GREY_DRIVERS = [
     "network_weights",
     "lr_scheduler_type",
     "sigma_lowres",
+    "lycoris_preset",
 ]
 # Subset table columns greyed by a cache driver (live-encoding-only knobs are inert
 # once the cache is on): (col_key, driver_dest).
@@ -1000,6 +1104,13 @@ class MainWindow(QMainWindow):
         self._active_section: _AccordionSection | None = None
         self._active_section_name = ""
         self._highlighted: list[str] = []  # dests flagged by required-field validation
+        # Commented LoRA_Easy alternatives are retained as explicit OFF toggles in
+        # Configuration.  They never enter the command unless the user enables one.
+        self._ignored_settings: list[dict] = []
+        self._ignored_base_form: dict = {}
+        self._ignored_rows: list[dict] = []
+        self._ignored_layout: QVBoxLayout | None = None
+        self._ignored_group: QGroupBox | None = None
         # Dests placed explicitly → excluded from schema routing (no double render).
         self._curated: set[str] = {"extra_flags", *_SCOPE_FLAGS}
         for _tab, groups in _TRAINING_TABS:
@@ -1104,6 +1215,7 @@ class MainWindow(QMainWindow):
             saved_subsets = self._collect_subsets()
         except Exception:
             saved_subsets = []
+        saved_scope = self._scope.currentIndex() if self._scope is not None else 0
         view = self._capture_view_state()  # current tab + scroll positions
         if getattr(self, "_timer", None) is not None:
             self._timer.stop()
@@ -1132,6 +1244,8 @@ class MainWindow(QMainWindow):
                 self._set_widget_value(d, v)
             except Exception:
                 pass
+        if self._scope is not None:
+            self._scope.setCurrentIndex(saved_scope)
         for k, v in saved_ab.items():  # auto-batch panel widgets (own dict)
             wdg = getattr(self, "_ab", {}).get(k)
             try:
@@ -1366,6 +1480,8 @@ class MainWindow(QMainWindow):
 
         folders = self._new_section(column, "Folders", opened=True)
         self._add_curated_group(folders, "Folder", "Output / resume / logs")
+        self._add_curated_group(folders, "Folder", "Save / checkpoints")
+        self._add_curated_group(folders, "Folder", "Logging")
         self._add_curated_group(folders, "Folder", "Dataset")
         self._add_schema_groups(
             folders,
@@ -1378,6 +1494,7 @@ class MainWindow(QMainWindow):
         dataset = self._new_section(column, "Dataset preparation", opened=True)
         self._add_curated_group(dataset, "Subset", "Preprocess")
         self._add_curated_group(dataset, "Subset", "Caching / memory")
+        self._add_curated_group(dataset, "Subset", "Caption variants")
         self._with_section(dataset, "Dataset preparation")
         dataset.content.addWidget(self._build_subset_box())
         self._add_schema_groups(dataset, self._take_schema(tabs={"Subset"}))
@@ -1524,6 +1641,7 @@ class MainWindow(QMainWindow):
         self._register_optional_section("Validation", validation)
 
         metadata = self._new_section(column, "Metadata", opened=False)
+        self._add_curated_group(metadata, "Metadata", "Model metadata")
         self._add_schema_groups(metadata, self._take_schema(tabs={"Metadata"}))
 
         monitoring = self._new_section(column, "Monitoring", opened=False)
@@ -1691,8 +1809,175 @@ class MainWindow(QMainWindow):
             lambda _i: self._set_language(self._lang_combo.currentData())
         )
         grid.addWidget(self._lang_combo, 2, 1)
+
+        self._ignored_group = QGroupBox(tr("Ignored (#) settings"))
+        ignored_outer = QVBoxLayout(self._ignored_group)
+        ignored_note = QLabel(
+            tr(
+                "Commented settings load OFF. Turn one ON to apply it. "
+                "Alternatives for the same field are mutually exclusive."
+            )
+        )
+        ignored_note.setObjectName("argDesc")
+        ignored_note.setWordWrap(True)
+        ignored_outer.addWidget(ignored_note)
+        ignored_scroll = QScrollArea()
+        ignored_scroll.setWidgetResizable(True)
+        ignored_scroll.setMaximumHeight(240)
+        ignored_host = QWidget()
+        self._ignored_layout = QVBoxLayout(ignored_host)
+        self._ignored_layout.setContentsMargins(4, 4, 4, 4)
+        self._ignored_layout.setSpacing(4)
+        ignored_scroll.setWidget(ignored_host)
+        ignored_outer.addWidget(ignored_scroll)
+        grid.addWidget(self._ignored_group, 3, 0, 1, 3)
+        self._render_ignored_settings()
+
         grid.setColumnStretch(2, 1)
         return box
+
+    @staticmethod
+    def _list_arg_items(value: object) -> list[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return []
+        if "\n" in raw:
+            return [line.strip() for line in raw.splitlines() if line.strip()]
+        return backend._arg_split(raw)
+
+    @staticmethod
+    def _list_arg_key(item: str) -> str:
+        return item.partition("=")[0].strip()
+
+    def _ignored_effects(self, partial: dict) -> set[tuple[str, str]]:
+        """Return conflict/restore keys for one commented setting.
+
+        List args conflict per individual kwarg (two ``betas=`` alternatives), not
+        per whole field, so the user may enable ``d_coef`` and ``foreach`` together.
+        """
+
+        effects: set[tuple[str, str]] = set()
+        for dest, value in partial.items():
+            if dest in {"network_args", "optimizer_args", "lr_scheduler_args"}:
+                effects.update(
+                    (dest, self._list_arg_key(item))
+                    for item in self._list_arg_items(value)
+                )
+            else:
+                effects.add((dest, ""))
+        return effects
+
+    def _set_list_arg_items(self, dest: str, incoming: object, keys: set[str]) -> None:
+        getter = self._getters.get(dest)
+        setter = self._setters.get(dest)
+        if getter is None or setter is None:
+            return
+        current = [
+            item
+            for item in self._list_arg_items(getter())
+            if self._list_arg_key(item) not in keys
+        ]
+        current.extend(self._list_arg_items(incoming))
+        setter("\n".join(current))
+
+    def _apply_ignored_row(self, row: dict, on: bool) -> None:
+        partial = row.get("partial") or {}
+        effects = row.get("effects") or set()
+        if on:
+            # Only one commented alternative may own the same scalar or kwarg.
+            for other in self._ignored_rows:
+                if other is row or not other["check"].isChecked():
+                    continue
+                if effects & (other.get("effects") or set()):
+                    other["check"].setChecked(False)
+            for dest, value in partial.items():
+                keys = {sub for d, sub in effects if d == dest and sub}
+                if keys:
+                    self._set_list_arg_items(dest, value, keys)
+                else:
+                    self._apply({dest: value})
+        else:
+            for dest in {d for d, _sub in effects}:
+                keys = {sub for d, sub in effects if d == dest and sub}
+                if keys:
+                    base = self._ignored_base_form.get(dest, "")
+                    base_items = [
+                        item
+                        for item in self._list_arg_items(base)
+                        if self._list_arg_key(item) in keys
+                    ]
+                    self._set_list_arg_items(dest, "\n".join(base_items), keys)
+                elif dest in self._ignored_base_form:
+                    self._apply({dest: self._ignored_base_form[dest]})
+                else:
+                    setter = self._setters.get(dest)
+                    if setter is not None:
+                        setter(
+                            False
+                            if isinstance(self._widgets.get(dest), QCheckBox)
+                            else ""
+                        )
+                    else:
+                        self._set_widget_value(dest, None)
+        row["entry"]["_on"] = bool(on)
+        self._apply_greying()
+        self._do_preview()
+
+    def _render_ignored_settings(self) -> None:
+        layout = self._ignored_layout
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._ignored_rows = []
+
+        if not self._ignored_settings:
+            empty = QLabel(tr("No commented settings in the loaded config."))
+            empty.setObjectName("argDesc")
+            layout.addWidget(empty)
+            return
+
+        known = set(self._widgets)
+        for entry in self._ignored_settings:
+            partial = commented_setting_to_form(entry, known_dests=known)
+            effects = self._ignored_effects(partial)
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            check = QCheckBox()
+            check.setChecked(bool(entry.get("_on")))
+            raw = str(entry.get("raw") or "").strip()
+            label = QLabel(f"L{entry.get('line', '?')}  # {raw}")
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label.setToolTip(raw)
+            if not partial:
+                check.setEnabled(False)
+                reason = tr("Unsupported by this Anima trainer")
+                check.setToolTip(reason)
+                label.setToolTip(f"{raw}\n{reason}")
+                label.setEnabled(False)
+            row_layout.addWidget(check)
+            row_layout.addWidget(label, 1)
+            row = {
+                "entry": entry,
+                "check": check,
+                "partial": partial,
+                "effects": effects,
+            }
+            self._ignored_rows.append(row)
+            check.toggled.connect(
+                lambda on, current=row: self._apply_ignored_row(current, on)
+            )
+            layout.addWidget(row_widget)
+        layout.addStretch(1)
+
+    def _set_ignored_settings(self, entries: list[dict], base_form: dict) -> None:
+        self._ignored_settings = [dict(entry, _on=False) for entry in entries]
+        self._ignored_base_form = dict(base_form)
+        self._render_ignored_settings()
 
     # ----- saved-run queue (collapsible panel, not a tab) ----------------- #
     def _build_queue_panel(self) -> QWidget:
@@ -2000,6 +2285,8 @@ class MainWindow(QMainWindow):
             combo.setMaximumWidth(360)  # don't stretch to the longest dotted-path item
             combo.addItem("")
             combo.addItems([str(x) for x in (items or [])])
+            if dest == "lycoris_preset":
+                combo.addItem(backend.LYCORIS_CUSTOM_PRESET)
             self._getters[dest] = lambda c=combo: c.currentText().strip()
             self._setters[dest] = lambda v, c=combo: self._set_combo(c, v)
             self._widgets[dest] = combo
@@ -2084,7 +2371,17 @@ class MainWindow(QMainWindow):
                 e["w"].setParent(None)
                 e["w"].deleteLater()
             rows.clear()
-            for tok in str(s or "").replace("\n", " ").split():
+            raw = str(s or "")
+            # Config imports serialize each list item on its own line. Preserve a
+            # complete line as one key=value row so tuple/list values cannot split at
+            # their internal spaces (e.g. betas=(0.99, 0.99)). A hand-entered single
+            # line still uses the shared quote-aware argument splitter.
+            tokens = (
+                [line.strip() for line in raw.splitlines() if line.strip()]
+                if "\n" in raw
+                else backend._arg_split(raw)
+            )
+            for tok in tokens:
                 k, _, val = tok.partition("=")
                 _add_row(k, val)
             if not rows:
@@ -2977,6 +3274,16 @@ class MainWindow(QMainWindow):
             adv.append({"flag": "--t5_tokenizer_path", "value": tok, "on": True})
         if adv:
             form["adv"] = adv
+        if for_save:
+            # Preserve every still-OFF alternative as commented TOML. An enabled
+            # alternative is already represented by the active field value.
+            ignored = [
+                {k: v for k, v in entry.items() if not k.startswith("_")}
+                for entry in self._ignored_settings
+                if not entry.get("_on")
+            ]
+            if ignored:
+                form["_commented_settings"] = ignored
         return form
 
     def _apply(self, form: dict) -> None:
@@ -2986,6 +3293,16 @@ class MainWindow(QMainWindow):
         # Apply greying ONCE at the end instead.
         self._loading = True
         try:
+            if self._scope is not None and (
+                "network_train_unet_only" in form
+                or "network_train_text_encoder_only" in form
+            ):
+                if _truthy(form.get("network_train_unet_only")):
+                    self._scope.setCurrentIndex(1)
+                elif _truthy(form.get("network_train_text_encoder_only")):
+                    self._scope.setCurrentIndex(2)
+                else:
+                    self._scope.setCurrentIndex(0)
             for dest, val in form.items():
                 setter = self._setters.get(dest)
                 if setter:
@@ -3113,7 +3430,14 @@ class MainWindow(QMainWindow):
                 # Pass the full set of rendered field dests so schema/advanced args
                 # (dropdowns + values) populate their fields instead of extra_flags.
                 form = load_toml_to_form(f.read(), known_dests=set(self._widgets))
+            commented = form.pop("_commented_settings", [])
             self._apply(form)
+            # Capture the fully-rendered active state after import. Turning a
+            # commented alternative back OFF restores this exact baseline.
+            self._set_ignored_settings(
+                commented,
+                self._collect(for_save=True),
+            )
             self._do_preview()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Load failed", str(exc))

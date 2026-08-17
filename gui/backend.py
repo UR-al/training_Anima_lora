@@ -224,6 +224,11 @@ _CURATED_ARGS = {
     "pretrained_model_name_or_path",
     "qwen3",
     "vae",
+    # Caption shuffling/tag dropout are baked into TE-cache variants by the
+    # preprocess chain, then selected at train time through use_shuffled_*.
+    "caption_tag_dropout_rate",
+    "use_shuffled_caption_variants",
+    "use_shuffled_caption_variants_only",
 }
 
 # Role buckets (first keyword match wins; order = display order).
@@ -668,29 +673,31 @@ _ANIMA_LYCORIS_PRESETS = {
     "anima-attn-mlp": "configs/lycoris_presets/anima_attn_mlp.toml",
     "anima-full": "configs/lycoris_presets/anima_full.toml",
 }
+LYCORIS_CUSTOM_PRESET = "<custom>"
 
 
 def list_lycoris_presets() -> list[str]:
     """LyCORIS target presets (network_args preset=...) offered in the GUI.
 
-    Anima-only: ``anima-attn-mlp`` (197 modules, attention+MLP) and ``anima-full``
-    (314, +adaln/embeds) are the presets that actually wrap the Anima DiT. The stock
-    LyCORIS built-ins (full / attn-only / unet-transformer-only / …) target standard
-    diffusers class names absent from the Anima blocks — they wrap ~3 modules (a no-op
-    run), so they're NOT offered here. _force_anima_lycoris_preset still remaps any
-    stock name that arrives via import / the free network_args field, and the importer
-    treats any name not in this list as "remap to anima-attn-mlp".
-
-    The stock names below NOW target the Anima DiT natively — the bridge registers the
+    The stock names below target the Anima DiT natively — the bridge registers the
     Anima block classes into the lycoris PRESET dict at import (see
     networks/lycoris_anima.py::_register_anima_presets), so a LoRA_Easy/kohya config with
-    preset=unet-transformer-only trains here unchanged. 'ia3' / 'unet-convblock-only' stay
-    omitted (IA3 algo / conv layers — N/A to the conv-free Anima DiT)."""
+    preset=unet-transformer-only or unet-only trains here unchanged. Custom built-in
+    names and preset TOML paths are accepted through the GUI's ``<custom>`` entry.
+    ``ia3`` / ``unet-convblock-only`` stay omitted (IA3/conv are not applicable to
+    the conv-free Anima DiT)."""
     # Stock names only — they now target the Anima DiT natively (see the registration
     # above), so there's no need for parallel "anima-*" duplicates. The anima-* names
     # still RESOLVE (via _ANIMA_LYCORIS_PRESETS) for back-compat with old saved configs,
     # they're just not offered in the dropdown.
-    return ["unet-transformer-only", "attn-mlp", "attn-only", "full", "full-lin"]
+    return [
+        "unet-transformer-only",
+        "unet-only",
+        "attn-mlp",
+        "attn-only",
+        "full",
+        "full-lin",
+    ]
 
 
 def _force_anima_lycoris_preset(nargs: list[str]) -> list[str]:
@@ -1278,8 +1285,6 @@ def _method_preset_extra(form: dict):
     for _flag, _key in (
         ("--gradient_checkpointing", "gradient_checkpointing"),
         ("--network_train_unet_only", "network_train_unet_only"),
-        ("--use_vae_cache", "use_vae_cache"),
-        ("--use_text_cache", "use_text_cache"),
         ("--use_shuffled_caption_variants", "use_shuffled_caption_variants"),
         ("--use_shuffled_caption_variants_only", "use_shuffled_caption_variants_only"),
         ("--qwen_image_vae_2d", "qwen_image_vae_2d"),
@@ -1300,8 +1305,14 @@ def _method_preset_extra(form: dict):
     # Tri-state dropdowns ("on"/"off"/blank): the flag defaults ON in base.toml, so a
     # plain checkbox couldn't disable it — emit the affirmative for "on", the
     # BooleanOptionalAction "--no-<flag>" for "off", and defer to the config chain when
-    # blank. torch_compile (speed), masked_loss + skip_cache_check (both default-on).
-    for _key in ("torch_compile", "masked_loss", "skip_cache_check"):
+    # blank. Caches and torch_compile/safety flags can all be forced either way.
+    for _key in (
+        "torch_compile",
+        "masked_loss",
+        "skip_cache_check",
+        "use_vae_cache",
+        "use_text_cache",
+    ):
         _tri = str(form.get(_key) or "").strip().lower()
         if _tri in ("on", "true", "1"):
             extra.append(f"--{_key}")
@@ -1360,7 +1371,12 @@ def _method_preset_extra(form: dict):
     _na = form.get("network_args") or ""
     nargs = _arg_split(_na)  # quote-aware (caption="a b" survives); plain k=v unchanged
     if "lycoris" in nm:  # lycoris.kohya OR networks.lycoris_anima (the Anima bridge)
-        lp = (form.get("lycoris_preset") or "").strip()
+        selected_preset = (form.get("lycoris_preset") or "").strip()
+        lp = (
+            (form.get("lycoris_preset_custom") or "").strip()
+            if selected_preset == LYCORIS_CUSTOM_PRESET
+            else selected_preset
+        )
         if lp:
             # Friendly Anima preset names → shipped TOML paths; pass others verbatim.
             lp = _ANIMA_LYCORIS_PRESETS.get(lp, lp)
@@ -2942,15 +2958,10 @@ def import_config(path: str) -> dict:
             form["lycoris_preset"] = (
                 pv  # stock name (now works) or back-compat anima-* alias
             )
-        elif pv.endswith(".toml"):
-            na_dict["preset"] = (
-                pv  # flows to network_args_extra; builder folds it through
-            )
         else:
-            form["lycoris_preset"] = "unet-transformer-only"
-            notes.append(
-                f"preset {pv!r} → unet-transformer-only (not an Anima-targeting preset)."
-            )
+            form["lycoris_preset"] = LYCORIS_CUSTOM_PRESET
+            form["lycoris_preset_custom"] = pv
+            notes.append(f"preset {pv!r} → LyCORIS direct input (kept verbatim).")
     leftover_na = _flatten_kv(na_dict)
     if leftover_na:
         form["network_args_extra"] = leftover_na

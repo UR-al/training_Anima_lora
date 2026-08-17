@@ -17,6 +17,8 @@ Two pure functions (no torch, no Gradio) so they're unit-testable:
 
 from __future__ import annotations
 
+import re
+import shlex
 import tomllib
 
 import toml
@@ -117,8 +119,6 @@ _BOOL_FIELDS = {
     "monitor",
     "gradient_checkpointing",
     "network_train_unet_only",
-    "use_vae_cache",
-    "use_text_cache",
     "use_shuffled_caption_variants",
     "use_shuffled_caption_variants_only",
     "qwen_image_vae_2d",
@@ -142,7 +142,13 @@ _BOOL_FIELDS = {
 # Tri-state dropdown fields ("on"/"off"/blank): a config bool maps to "on"/"off".
 # torch_compile/masked_loss/skip_cache_check all default ON, so a plain checkbox
 # couldn't force them off — the GUI renders them as on/off/blank dropdowns.
-_TRISTATE_FIELDS = {"torch_compile", "masked_loss", "skip_cache_check"}
+_TRISTATE_FIELDS = {
+    "torch_compile",
+    "masked_loss",
+    "skip_cache_check",
+    "use_vae_cache",
+    "use_text_cache",
+}
 # Model-path renames (kohya/LETS name → our form field).
 _MODEL_PATHS = {
     "pretrained_model_name_or_path": "dit_path",
@@ -227,6 +233,79 @@ _SKIP_SECTIONS = {"general", "datasets", "subsets"}
 # nearest one for the Dataset tier checkboxes. Kept inline so config_io stays
 # torch-free / import-light.
 _DATASET_TIERS = (512, 768, 896, 1024, 1280, 1536)
+
+
+def extract_commented_settings(toml_text: str) -> list[dict]:
+    """Return TOML assignments that were explicitly disabled with ``#``.
+
+    LoRA_Easy configs commonly keep several optimizer, scheduler, and LyCORIS
+    alternatives beside the active value.  Normal TOML parsing correctly ignores
+    those lines; the native GUI additionally exposes them as OFF toggles.  Only
+    syntactically valid TOML is accepted here, so prose comments and pseudo section
+    markers such as ``#[optimizer_args.args]`` never become settings.
+
+    A commented item inside an active list is represented as a one-item list under
+    the owning key.  For example ``# "algo=loha",`` inside ``network_args = [``
+    becomes ``{"key": "network_args", "value": ["algo=loha"]}``.
+    """
+
+    entries: list[dict] = []
+    array_key: str | None = None
+    array_start = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[\s*$")
+
+    for line_no, raw in enumerate(toml_text.splitlines(), 1):
+        stripped = raw.strip()
+
+        if not stripped.startswith("#"):
+            if array_key is not None and stripped.startswith("]"):
+                array_key = None
+                continue
+            match = array_start.match(raw)
+            if match:
+                array_key = match.group(1)
+            continue
+
+        body = stripped[1:].strip()
+        if not body or body.startswith("["):
+            continue
+        if array_key is not None and body.startswith("]"):
+            array_key = None
+            continue
+        commented_array = array_start.match(body)
+        if commented_array:
+            array_key = commented_array.group(1)
+            continue
+
+        # A disabled item inside an otherwise active TOML array.
+        if array_key is not None and body[:1] in {'"', "'"}:
+            try:
+                parsed = tomllib.loads(f"value = [{body}]")["value"]
+            except (tomllib.TOMLDecodeError, KeyError, TypeError):
+                continue
+            if len(parsed) == 1:
+                entries.append(
+                    {
+                        "key": array_key,
+                        "value": parsed,
+                        "line": line_no,
+                        "raw": body,
+                    }
+                )
+            continue
+
+        # A complete disabled assignment such as #optimizer_type = "CAME".
+        try:
+            parsed = tomllib.loads(body)
+        except tomllib.TOMLDecodeError:
+            continue
+        if len(parsed) != 1:
+            continue
+        key, value = next(iter(parsed.items()))
+        if isinstance(value, dict):
+            continue
+        entries.append({"key": key, "value": value, "line": line_no, "raw": body})
+
+    return entries
 
 
 def _nearest_tier(res) -> int | None:
@@ -403,6 +482,7 @@ def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
     loaded config populates its dropdown / field rather than the catch-all box.
     """
     known = set(known_dests or ())
+    commented_settings = extract_commented_settings(toml_text)
     data = tomllib.loads(toml_text)
     data.pop("base_config", None)  # inheritance ref — we flatten, ignore it
 
@@ -425,6 +505,21 @@ def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
             norm["t_min"] = round(float(value) / 1000.0, 6)
         elif key == "max_timestep":
             norm["t_max"] = round(float(value) / 1000.0, 6)
+        elif key.lower() == "sdpa":
+            # LoRA_Easy exposes SDPA as a bool; Anima selects it through attn_mode.
+            # A false value means "do not override" and an explicit later attn_mode
+            # remains authoritative because TOML preserves insertion order.
+            if value is True or str(value).strip().lower() in {"1", "true", "yes"}:
+                norm["attn_mode"] = "sdpa"
+        elif key == "shuffle_caption":
+            shuffled = value is True or str(value).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            if shuffled:
+                norm["caption_shuffle_variants"] = 4
+                norm["use_shuffled_caption_variants"] = True
         else:
             norm[_RENAME.get(key, key)] = value
 
@@ -444,19 +539,67 @@ def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
     if sched is not None:
         form["lr_scheduler_type"] = str(sched)
 
+    def _arg_items(value) -> list[str]:
+        if isinstance(value, (list, tuple)):
+            items = [str(item).strip() for item in value if str(item).strip()]
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return []
+            items = [line.strip() for line in raw.splitlines() if line.strip()]
+            if len(items) == 1:
+                try:
+                    items = shlex.split(items[0], posix=True)
+                except ValueError:
+                    items = items[0].split()
+        out: list[str] = []
+        for item in items:
+            key, sep, val = item.partition("=")
+            # Keep tuple/list kwargs as one CLI token. LoRA_Easy commonly writes
+            # `betas=(0.99, 0.99)`; the native key/value editor emits whitespace-
+            # separated tokens, so compact delimiter-adjacent whitespace on import.
+            if sep and val.lstrip().startswith(("(", "[", "{")):
+                val = re.sub(r"\s*,\s*", ",", val)
+                item = f"{key}={val}"
+            out.append(item)
+        return out
+
+    # LyCORIS owns algo/preset as first-class native controls. Preserve every other
+    # network kwarg as one row in the key/value block. Unknown preset names and TOML
+    # paths use the explicit <custom> field rather than being silently remapped.
+    network_items = _arg_items(norm.pop("network_args", None))
+    network_leftovers: list[str] = []
+    for item in network_items:
+        key, sep, value = item.partition("=")
+        if sep and key == "algo":
+            form["algo"] = value
+        elif sep and key == "preset":
+            from gui import backend
+
+            if (
+                value in backend.list_lycoris_presets()
+                or value in backend._ANIMA_LYCORIS_PRESETS
+            ):
+                form["lycoris_preset"] = value
+            else:
+                form["lycoris_preset"] = backend.LYCORIS_CUSTOM_PRESET
+                form["lycoris_preset_custom"] = value
+        else:
+            network_leftovers.append(item)
+    if network_leftovers:
+        form["network_args"] = "\n".join(network_leftovers)
+
     # 3) Route each normalized key.
     for key, value in norm.items():
         if key in _MODEL_PATHS:
             form[_MODEL_PATHS[key]] = str(value)
+        elif key == "network_module" and "lycoris" in str(value).lower():
+            form[key] = "networks.lycoris_anima"
         elif key in _LIST_FIELDS:
             # network/optimizer/lr_scheduler args → one `key=value` per LINE for the
             # multi-line textbox editor (the backend's _arg_split treats newlines as
             # whitespace, so the inline form still parses). Handles arbitrary length.
-            form[key] = (
-                "\n".join(str(x) for x in value)
-                if isinstance(value, (list, tuple))
-                else str(value)
-            )
+            form[key] = "\n".join(_arg_items(value))
         elif key in _TRISTATE_FIELDS:
             form[key] = "on" if bool(value) else "off"
         elif key in _BOOL_FIELDS:
@@ -477,6 +620,25 @@ def load_toml_to_form(toml_text: str, known_dests=None) -> dict:
 
     if extra:
         form["extra_flags"] = " ".join(extra)
+    if commented_settings:
+        form["_commented_settings"] = commented_settings
+    return form
+
+
+def commented_setting_to_form(entry: dict, known_dests=None) -> dict:
+    """Convert one :func:`extract_commented_settings` entry to a partial GUI form.
+
+    The normal importer is intentionally reused so all LETS renames, LyCORIS
+    algo/preset extraction, timestep conversion, and unsupported-key filtering stay
+    identical to loading an active setting from disk.
+    """
+
+    key = str(entry.get("key") or "").strip()
+    if not key:
+        return {}
+    snippet = toml.dumps({key: entry.get("value")})
+    form = load_toml_to_form(snippet, known_dests=known_dests)
+    form.pop("_commented_settings", None)
     return form
 
 
@@ -530,13 +692,15 @@ def save_form_to_toml(form: dict) -> str:
     """The GUI form → a runnable ``--config_file`` TOML (matches Start)."""
     from gui import backend as server  # pure-stdlib; safe + torch-free
 
-    method, preset, extra = server._method_preset_extra(form)
+    clean_form = dict(form)
+    commented_settings = clean_form.pop("_commented_settings", [])
+    method, preset, extra = server._method_preset_extra(clean_form)
     d = _argv_to_toml_dict(method, preset, extra)
     # Serialize the dynamic subset cards as a [[datasets]] blueprint — _method_preset_extra
     # consumes form['subsets'] only for --gradient_checkpointing_resolutions, so without
     # this every per-subset field (image_dir, caption_extension, flip_aug/random_crop/
     # is_val, num_repeats…) would be dropped and the cards couldn't be restored on load.
-    subs = server._dataset_subsets(form)
+    subs = server._dataset_subsets(clean_form)
     if subs:
         d["datasets"] = [{"subsets": subs}]
     # _method_preset_extra emits the COMPUTED output_dir (<base>/<output_name>) +
@@ -544,7 +708,7 @@ def save_form_to_toml(form: dict) -> str:
     # deeper on every save→load round-trip (output/lora → output/lora/lora → …). The
     # GUI recomputes both from output_dir + output_name at launch, so persist only the
     # user's base and drop the derived logging_dir.
-    base = (form.get("output_dir") or "").strip().rstrip("/\\ ")
+    base = (clean_form.get("output_dir") or "").strip().rstrip("/\\ ")
     if base:
         d["output_dir"] = base
     else:
@@ -554,4 +718,15 @@ def save_form_to_toml(form: dict) -> str:
         "# Saved from the Anima GUI — runnable as:\n"
         "#   python train.py --config_file <this file>\n"
     )
-    return header + toml.dumps(d)
+    text = header + toml.dumps(d)
+    if commented_settings:
+        text += (
+            "\n# Ignored (#) settings saved by the GUI. They load OFF until enabled.\n"
+        )
+        for entry in commented_settings:
+            key = str(entry.get("key") or "").strip()
+            if not key:
+                continue
+            rendered = toml.dumps({key: entry.get("value")}).strip()
+            text += "\n".join(f"# {line}" for line in rendered.splitlines()) + "\n"
+    return text
